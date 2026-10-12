@@ -12,7 +12,7 @@ if (!input) throw new Error('Usage: node synth/test_browser.cjs /path/to/stock/S
 const stock = new Uint8Array(fs.readFileSync(input));
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 
-function load(includeSynth = true, includeWaves = false) {
+function load(includeSynth = true, includeWaves = false, includeKits = false) {
   const elements = new Map();
   const get = id => {
     if (!elements.has(id)) elements.set(id, {
@@ -32,7 +32,7 @@ function load(includeSynth = true, includeWaves = false) {
       addEventListener(event, fn) { if (event === 'DOMContentLoaded') start = fn; },
       querySelectorAll() { return []; },
       getElementById(id) {
-        if (['synthPoly','synthWaves'].includes(id) && !get('doomos-patcher').innerHTML.includes('id="' + id + '"')) return null;
+        if (['synthPoly','synthWaves','synthKits'].includes(id) && !get('doomos-patcher').innerHTML.includes('id="' + id + '"')) return null;
         return get(id);
       },
     },
@@ -43,6 +43,7 @@ function load(includeSynth = true, includeWaves = false) {
   });
   if (includeSynth) vm.runInContext(fs.readFileSync(path.join(root, 'synth-data.js'), 'utf8'), context);
   if (includeWaves) vm.runInContext(fs.readFileSync(path.join(root, 'waves-data.js'), 'utf8'), context);
+  if (includeKits) vm.runInContext(fs.readFileSync(path.join(root, 'kits-data.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(root, 'doomos-patcher.js'), 'utf8'), context);
   start();
   return { context, get, api: context.module.exports, blob: () => blob };
@@ -118,7 +119,7 @@ async function choose(page, bytes, name = 'SP404MKII_APP1.bin') {
   const html = fs.readFileSync(path.join(root,'index.html'),'utf8');
   const readme = fs.readFileSync(path.join(root,'README.md'),'utf8');
   assert.match(html,/Envelope preset guide \(ENV\)/);
-  assert.match(html,/doomos-patcher\.js\?v=synth-v9-9-3-e111c584/);
+  assert.match(html,/doomos-patcher\.js\?v=kits-v9-42-11e8faa1/);
   assert.match(readme,/Sound Generator envelopes \(v9\.9\.3\)/);
   assert.match(readme,/## Scale pads \(v9\.9\.3\)/);
   assert.match(readme,/## Arpeggiator \(v9\.9\.3\)/);
@@ -180,5 +181,38 @@ async function choose(page, bytes, name = 'SP404MKII_APP1.bin') {
   assert.equal(wavePage.get('synthPoly').disabled,false,'failed patch unlocks combined option');
   assert.doesNotMatch(fs.readFileSync(path.join(root,'README.md'),'utf8'),/<img[^>]*doom-os-512/);
   assert.doesNotMatch(html,/<img[^>]*doom-os/);
-  console.log('PASS: single combined option, exact stock DOOM/poly-v4/v9.9.3 downloads, reset, header-image removal, hash gates and corrupt-overlay rejection.');
+  const kitPage = load(true,true,true);
+  assert.equal((kitPage.get('doomos-patcher').innerHTML.match(/type="checkbox"/g)||[]).length,2);
+  assert.equal(kitPage.get('synthKits').checked,false,'kits are opt-in');
+  assert.equal(kitPage.get('synthPoly').checked,false);
+  const kitOverlay=api.fromBase64(kitPage.context.window.DOOMOS_KITS_PATCH);
+  const kitResult=api.applyPatch(kitOverlay,doom.bytes);
+  assert.equal(kitResult.digest,'11e8faa1dc0ef378fbb63af842a8d6991f28608803f120bd3affa98e5f574fa5');
+  assert.equal(kitResult.bytes.length,3073792);
+  assert.equal(JSON.stringify(kitPage.context.window.DOOMOS_KITS.kit_selector_range),'[1,11]');
+  assert.throws(()=>api.applyPatch(kitOverlay,stock),/unsupported firmware/);
+  kitPage.get('synthPoly').checked=true;
+  kitPage.get('synthKits').checked=true;kitPage.get('synthKits').listeners.change();
+  assert.equal(kitPage.get('synthPoly').checked,false,'selection excludes legacy generator');
+  await choose(kitPage,stock);await kitPage.get('patch').listeners.click();
+  assert.equal(digest(new Uint8Array(await kitPage.blob().arrayBuffer())),kitResult.digest);
+  assert.match(kitPage.get('status').textContent,/Sound Generator \+ Kits v9\.42/);
+  assert.equal(kitPage.get('synthKits').disabled,true);
+  kitPage.get('reset').listeners.click();assert.equal(kitPage.get('synthKits').disabled,false);
+  assert.equal(kitPage.get('synthKits').checked,true,'reset preserves chosen kit option');
+  kitPage.get('synthPoly').checked=true;kitPage.get('synthPoly').listeners.change();
+  assert.equal(kitPage.get('synthKits').checked,false);
+  await choose(kitPage,stock);await kitPage.get('patch').listeners.click();
+  assert.equal(digest(new Uint8Array(await kitPage.blob().arrayBuffer())),waveResult.digest);
+  kitPage.get('reset').listeners.click();kitPage.get('synthPoly').checked=false;
+  await choose(kitPage,stock);await kitPage.get('patch').listeners.click();
+  assert.equal(digest(new Uint8Array(await kitPage.blob().arrayBuffer())),doom.digest);
+  kitPage.get('reset').listeners.click();kitPage.get('synthKits').checked=true;
+  const badKit=kitOverlay.slice();badKit[badKit.length-1]^=1;
+  kitPage.context.window.DOOMOS_KITS_PATCH=Buffer.from(badKit).toString('base64');
+  await choose(kitPage,stock);await kitPage.get('patch').listeners.click();
+  assert.equal(kitPage.blob(),null);assert.equal(kitPage.get('download').hidden,true);
+  assert.equal(kitPage.get('synthKits').disabled,false);
+  assert.match(kitPage.get('status').textContent,/came out wrong/);
+  console.log('PASS: optional kits, exact v9.42 output, legacy selections, reset, corruption rejection; exact stock DOOM/poly-v4/v9.9.3 downloads, reset, header-image removal, hash gates and corrupt-overlay rejection.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

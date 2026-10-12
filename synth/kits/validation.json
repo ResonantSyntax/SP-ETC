@@ -1,0 +1,213 @@
+{
+  "candidate": "v9.42-test3",
+  "app1_sha256": "11e8faa1dc0ef378fbb63af842a8d6991f28608803f120bd3affa98e5f574fa5",
+  "app1_bytes": 3073792,
+  "source_files": 21,
+  "hardware_verified": false,
+  "public_source_rebuild_matches": true,
+  "browser_checks_passed": true,
+  "host_arm": {
+    "schema": "kit-unicorn-check-v2",
+    "passed": true,
+    "control_endpoint_arm_matches": 84,
+    "machine_inventory_restrictions": true,
+    "selector_boundary_cases": 9,
+    "kits": 11,
+    "pads_sample_exact": 176,
+    "samples_per_pad": 3000,
+    "menu": {
+      "KIT": "CR8K",
+      "PAD": "1",
+      "SOUND": "C8BD",
+      "TUNE": "0",
+      "DECAY": "50%",
+      "TONE": "50%",
+      "LEVEL": "105",
+      "SWEEP": "50%",
+      "NOISE": "50%",
+      "ATTCK": "50%"
+    },
+    "hold_pad_turn": {
+      "press_selects_pad": true,
+      "turn_steps_sound": true,
+      "cursor_to_sound": true,
+      "kit_menu_without_pad": true,
+      "melodic_menu_bounded": true,
+      "gate_exits": [
+        "0x8015cb24 stock cursor step",
+        "0x8015cb2e handled"
+      ]
+    },
+    "hat_audio": [
+      {
+        "kit": 1,
+        "tail_energy_ratio": 0.0
+      },
+      {
+        "kit": 2,
+        "tail_energy_ratio": 0.0
+      },
+      {
+        "kit": 3,
+        "tail_energy_ratio": 0.0
+      },
+      {
+        "kit": 4,
+        "tail_energy_ratio": 0.0
+      },
+      {
+        "kit": 5,
+        "tail_energy_ratio": 7.649187354051841e-12
+      },
+      {
+        "kit": 7,
+        "tail_energy_ratio": 0.0
+      }
+    ],
+    "build_sha256": "11e8faa1dc0ef378fbb63af842a8d6991f28608803f120bd3affa98e5f574fa5",
+    "pcm_bank_sha256": null,
+    "pcm_flash_readonly": false,
+    "module_runtime_bytes": 135768,
+    "module_stored_bytes": 101840,
+    "module_reconstructed_sha256": "4a2b0cc20ce93a2beccc4add7a81b27285558d693a295a0049286a0366ecf708"
+  },
+  "capture_contract": {
+    "passed": true,
+    "released_pad_cases": 176,
+    "velocity_snapshot": true,
+    "ui_selection_does_not_replace_last_strike": true,
+    "melodic_capture_delegated": true,
+    "app1_sha256": "11e8faa1dc0ef378fbb63af842a8d6991f28608803f120bd3affa98e5f574fa5"
+  },
+  "native_live_rec": {
+    "assignment_cases": 176,
+    "repeated_edited_cases": 176,
+    "frames_compared_per_case": 512,
+    "all_source_frames_bit_exact": true,
+    "checker_sha256": "d7a0c2af68dcbc4c413a45f7e88c69c367effeb7b2ea2c42813763ac0f5cbca4",
+    "report_sha256": "2285c613042ae7daa2ccc8806f6a6255131b7637d70448f408c80d6da0f59ed0",
+    "method": "512 source frames through actual native live renderer and native REC export initialization; exporter stops after source comparison, without file-output validation."
+  },
+  "native_file_export": {
+    "passed": true,
+    "app1_sha256": "11e8faa1dc0ef378fbb63af842a8d6991f28608803f120bd3affa98e5f574fa5",
+    "cases": [
+      {
+        "origin": 0,
+        "recipe": null,
+        "other_drum_overlaps": false,
+        "pad_held_at_rec": false,
+        "source_samples_bit_exact": 9600,
+        "isolated_pcm_matches": true,
+        "recorded_pad": 11,
+        "record_samples": 13179
+      },
+      {
+        "origin": 48000,
+        "recipe": null,
+        "other_drum_overlaps": false,
+        "pad_held_at_rec": false,
+        "source_samples_bit_exact": 9600,
+        "isolated_pcm_matches": true,
+        "recorded_pad": 11,
+        "record_samples": 13179
+      },
+      {
+        "origin": 240000,
+        "recipe": null,
+        "other_drum_overlaps": false,
+        "pad_held_at_rec": true,
+        "source_samples_bit_exact": 9600,
+        "isolated_pcm_matches": true,
+        "recorded_pad": 11,
+        "record_samples": 13179
+      },
+      {
+        "origin": 120000,
+        "recipe": [
+          34,
+          7,
+          82,
+          18,
+          110,
+          90,
+          10,
+          80
+        ],
+        "other_drum_overlaps": false,
+        "pad_held_at_rec": false,
+        "source_samples_bit_exact": 9600,
+        "isolated_pcm_matches": true,
+        "recorded_pad": 11,
+        "record_samples": 13179
+      },
+      {
+        "origin": 240000,
+        "recipe": [
+          34,
+          251,
+          20,
+          88,
+          110,
+          0,
+          95,
+          20
+        ],
+        "other_drum_overlaps": false,
+        "pad_held_at_rec": false,
+        "source_samples_bit_exact": 9600,
+        "isolated_pcm_matches": true,
+        "recorded_pad": 11,
+        "record_samples": 13179
+      },
+      {
+        "origin": 48000,
+        "recipe": null,
+        "other_drum_overlaps": true,
+        "pad_held_at_rec": false,
+        "source_samples_bit_exact": 9600,
+        "isolated_pcm_matches": false,
+        "recorded_pad": 11,
+        "record_samples": 23483
+      }
+    ],
+    "velocity_snapshot": true,
+    "melodic_capture_delegated": true,
+    "hardware_verified": false,
+    "limits": [
+      "Overlapping live drums are a mix; REC deliberately captures only the last pressed pad.",
+      "Real-time/audio-interface and effect-chain differences are not modeled."
+    ]
+  },
+  "complete_image_panel": {
+    "checks": [
+      {
+        "name": "kit_shortcut_entry",
+        "passed": true
+      },
+      {
+        "name": "pad11_selected_and_released",
+        "passed": true
+      },
+      {
+        "name": "rec_without_holding_pad_captures",
+        "passed": true,
+        "counts": [
+          0,
+          1
+        ],
+        "page": 30
+      }
+    ],
+    "emulator_alive": true,
+    "completed": true,
+    "process_stopped": true,
+    "screenshot_reviewed": true
+  },
+  "limitations": [
+    "512-frame coverage for every assignment is not a full-tail comparison.",
+    "Full file PCM checks cover cowbell cases; all-assignment checks validate native source and REC initialization.",
+    "Live overlap mixes and parent voice-steal declicks need not equal an isolated exported pad.",
+    "Hardware CPU deadlines and output remain unverified."
+  ]
+}

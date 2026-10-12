@@ -1,5 +1,16 @@
 # Changelog
 
+## Synthesized kits v9.42 (fork PR)
+
+- Add an opt-in browser patch for eleven synthesized kits with sixteen pads,
+  shared arpeggiator and separate melodic/drum entry shortcuts and VALUE menus.
+- Tap SHIFT toggles main parameter pages; retain the synth output boost/guard.
+- Keep KIT inside machine IDs1–11: OFF can no longer change modes from the menu.
+- REC captures the last struck pad after release, preserving controls, velocity,
+  onset phase/noise seed and the most recent 808 kick circuit state.
+- Include standalone source/build/overlay publication and exact-output tests.
+  Exact v9.42 hardware timing remains unverified; APP0 is unchanged.
+
 ## 0.6.1-alpha, build ED5E (2026-10-04)
 
 **New**

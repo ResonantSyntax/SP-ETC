@@ -204,6 +204,8 @@ if (typeof module === 'object' && module.exports) {
         (window.DOOMOS_WAVES ? '> Sound Generator v9.9.3 (4 voices + 17 new waves + envelopes + 34 scales + arpeggiator)' :
           ' checked> Sound Generator (4 voices)') +
         '</label></div>' : '') +
+      (window.DOOMOS_KITS ?
+        '<div class="synth-choice"><label><input type="checkbox" id="synthKits"> Sound Generator + Kits v9.42 (11 synthesized kits)</label></div>' : '') +
       '<div class="actions">' +
       '<button type="button" class="btn" id="patch" disabled>Patch firmware</button>' +
       '<a class="btn" id="download" download="SP404MKII_APP1.bin" hidden>Download patched firmware ↓</a>' +
@@ -216,7 +218,13 @@ if (typeof module === 'object' && module.exports) {
     const input = $('file'), drop = $('drop'), big = $('dropBig'), small = $('dropSmall');
     const status = $('status'), state = $('state');
     const patchBtn = $('patch'), download = $('download'), reset = $('reset');
-    const synthPoly = $('synthPoly');
+    const synthPoly = $('synthPoly'), synthKits = $('synthKits');
+    if (synthKits) synthKits.addEventListener('change', () => {
+      if (synthKits.checked && synthPoly) synthPoly.checked = false;
+    });
+    if (synthPoly) synthPoly.addEventListener('change', () => {
+      if (synthPoly.checked && synthKits) synthKits.checked = false;
+    });
     const container = fromBase64(window.DOOMOS_PATCH);
     const versions = patchVersions(container);
     const supported = versions.map(v => v.label).join(' and ');
@@ -241,6 +249,7 @@ if (typeof module === 'object' && module.exports) {
       patchBtn.disabled = true;
       patchBtn.textContent = 'Patch firmware';
       if (synthPoly) synthPoly.disabled = false;
+      if (synthKits) synthKits.disabled = false;
       drop.classList.remove('bad');
     }
 
@@ -285,15 +294,20 @@ if (typeof module === 'object' && module.exports) {
 
     async function patch() {
       if (!source) return;
-      const addPoly = synthPoly && synthPoly.checked;
+      const addKits = synthKits && synthKits.checked;
+      const addPoly = !addKits && synthPoly && synthPoly.checked;
       const addWaves = addPoly && !!window.DOOMOS_WAVES;
       if (synthPoly) synthPoly.disabled = true;
+      if (synthKits) synthKits.disabled = true;
       patchBtn.disabled = true;
       patchBtn.textContent = 'Patching …';
       state.textContent = 'Patching';
       await new Promise(r => setTimeout(r, 20));
       try {
         let result = applyPatch(container, source);
+        if (addKits) {
+          result = applyPatch(fromBase64(window.DOOMOS_KITS_PATCH), result.bytes);
+        }
         if (addPoly) {
           result = applyPatch(fromBase64(window.DOOMOS_SYNTH_PATCHES.poly), result.bytes);
         }
@@ -305,13 +319,14 @@ if (typeof module === 'object' && module.exports) {
         download.hidden = false;
         reset.hidden = false;
         patchBtn.hidden = true;
-        say('Done. ' + (addPoly ? 'Sound Generator (4 voices' +
+        say('Done. ' + (addKits ? 'Sound Generator + Kits v9.42' : addPoly ? 'Sound Generator (4 voices' +
             (addWaves ? ', 17 new waves, envelopes, 34 scales, arpeggiator, v9.9.3)' : ')') : 'Base build without synth additions') +
             ' has been patched into firmware ' + result.label + '. '
             + 'Download it and keep the name SP404MKII_APP1.bin.', 'ok');
         state.textContent = 'Complete';
       } catch (err) {
         if (synthPoly) synthPoly.disabled = false;
+        if (synthKits) synthKits.disabled = false;
         patchBtn.textContent = 'Patch firmware';
         refuse(err.message);
       }

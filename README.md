@@ -4,9 +4,18 @@
 
 Sound Generator **v9.9.3** adds four live voices, 17 new waveforms, nine
 volume/filter-envelope presets, 34 scale choices and an arpeggiator to the SP-404MKII. Firmware processing happens
-locally in your browser; nothing is uploaded. Select the single Sound Generator
-option to include the mod. It is OFF by default; unchecked generates the base
-build without these synth additions.
+locally in your browser; nothing is uploaded. Choose the existing Sound Generator option or **Sound Generator + Kits v9.42**
+for eleven synthesized machine kits. Both start unchecked; no selection produces
+the base build. [Kit controls, reproduction and validation](synth/KITS.md).
+
+## Synthesized kits v9.42
+
+SHIFT+PATTERN EDIT opens Kits; SHIFT+RECORD SETTING opens melodic mode. Tap
+SHIFT to toggle the two parameter pages. KIT selects only machines, never OFF.
+The modes have separate VALUE menus and share the arpeggiator. All sounds are
+synthesized, with sixteen assignments per kit and same-machine variants marked
+`+`. These are independent models, not recovered Roland ACB. Exact v9.42 hardware
+confirmation and CPU headroom remain pending. APP0 is unchanged.
 
 ## What this mod adds
 
@@ -110,7 +119,7 @@ You can also download this repository as a ZIP file (under the Code button), unz
 ### Manual installation
 
 1. Download the 5.52 system update from [Roland's support page](https://www.roland.com/global/support/by_product/sp-404mk2/updates_drivers/) and unzip it.
-2. Open [our patcher](https://tracelistener.github.io/doom-os-etc./) and load the stock `SP404MKII_APP1.bin`. Select Sound Generator for v9.9.3: four voices, 17 new waves, envelopes, 34 scales, the arpeggiator and FREQ/note-off fixes. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
+2. Open [our patcher](https://tracelistener.github.io/doom-os-etc./) and load the stock `SP404MKII_APP1.bin`. Select Sound Generator for v9.9.3, or Sound Generator + Kits for v9.42 with the machine kits and mode/UI fixes. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
 3. Download the patched `SP404MKII_APP1.bin` and use it with the unchanged official 5.52 `SP404MKII_APP0.bin` for your test update. Back up first and keep your known-good update for rollback.
 4. Insert the card, hold **SHIFT** while you turn the SP on, and press the **VALUE** knob when the update menu appears.
 5. When the update is done, turn the SP off and on again.
