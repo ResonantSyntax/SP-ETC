@@ -10,7 +10,7 @@ import hashlib, importlib, json, os, re, shutil, struct, sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REVISION = "v9.43-test1"
+REVISION = "v9.43-test2"
 PCM_BANK_ADDRESS = 0x60376000
 PCM_FLASH_PLANNING_LIMIT = 0x60400000
 FLASH_BASE = 0x60080000
@@ -390,13 +390,27 @@ def main():
     if image[off:off+12]!=expected:raise ValueError('capture prologue changed')
     image[off:off+12]=builder.checked_asm(builder.jump(info['arp_symbols']['kit_capture_gate'])+'nop\n',site)
     info['kit_capture_patch']={'address':site,'original_hex':expected.hex(),'last_pressed_pad':True}
+    # Stock SG pad events end in one shared UI redraw request at 0x8015c01c
+    # (*(u16*)0x802496f0 = -1). The poly v2 all-notes-off hook moved that
+    # store into its own wrapper and NOPed the block, so the imprint
+    # destination select and preview start stopped redrawing the pads and
+    # the chosen REC pad never blinked. Put the stock instructions back.
+    site=0x8015c01c;off=builder.file_offset(bytes(image),site,14)
+    if image[off:off+14]!=b'\x00\xbf'*7:raise ValueError('SG redraw block changed: '+image[off:off+14].hex())
+    restored=bytes.fromhex('49f2f0604ff0ff31c8f224000180')
+    if builder.listing(restored,site)!=['movw r0, #0x96f0','mov.w r1, #-1','movt r0, #0x8024','strh r1, [r0]']:
+        raise ValueError('redraw block encoding')
+    image[off:off+14]=restored
+    info['sg_redraw_restore']={'address':site,'bytes':14,'replacement_hex':restored.hex(),
+        'branches_in':['0x8015c13c','0x8015c192','0x8015c1a2','0x8015c1b6','0x8015c222'],
+        'effect':'REC destination pad blinks again; identical to stock 5.52 bytes'}
     info['kit_master_gain_db']=6.0206
     info['kit_master_soft_knee']={'start_s16':24576,'ceiling_s16':32000,'live_and_export':True}
     info['kit_parameter_page']='Tap and release SHIFT toggles page, also in melodic SG; opening chords do not toggle.'
     image, ui_patches = apply_kit_ui(image, info['arp_symbols'], builder)
     info['kit_ui_patches'] = ui_patches
     info['kit_selector_range'] = [1,13]
-    info['kit_ui'] = 'CTRL1 Tune, CTRL2 Decay, CTRL3 Tone; tap SHIFT: Sweep/Noise/Attack; LEVEL readout; VALUE menu with LEVEL; one 16-pad page per kit; kit selector stays within machines1-11; melodic entry uses SHIFT+RECORD SETTING.'
+    info['kit_ui'] = 'CTRL1 Tune, CTRL2 Decay, CTRL3 Tone; tap SHIFT: Sweep/Noise/Attack; LEVEL readout; VALUE menu with LEVEL; one 16-pad page per kit; kit selector stays within machines 1-13; melodic entry uses SHIFT+RECORD SETTING.'
     info['kit_pad_assignments'] = 16
     image, info = sparsify_module(bytes(image), info, builder)
     pcm_info = None # Synthesis-only: no external audio bank is appended.

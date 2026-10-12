@@ -11,22 +11,24 @@ typedef struct {
     float out;               /* output scale */
 } kit_fm_patch;
 static const kit_fm_patch kit_fm_patches[FM_COW - FM_KICK + 1] = {
-    /* KICK: 230 Hz sweeping to 52 Hz, a 1:1 click that dies in 8 ms */
-    {230, 52, .011f,  1.0f, 1.10f, 0.00f, .008f, .18f,  .19f, .0003f,  0, 0, 0,  .95f},
-    /* SNARE: 1.57 ratio with heavy feedback for the rattle, plus bright noise */
-    {205, 182, .020f, 1.57f, 1.40f, 0.30f, .045f, .62f, .080f, .0002f, .55f, 1800, .075f, .62f},
+    /* Index and feedback are in cycles: 0.16 cycles is 1 radian, a modest
+     * DX output level. */
+    /* KICK: 220 Hz dropping to 48 Hz in 9 ms; a short 1:1 click over a clean, long body */
+    {220, 48, .009f,  1.0f, 0.30f, 0.00f, .006f, 0,    .24f, .0003f, .15f, 2000, .002f, 1.0f},
+    /* SNARE: 1.57 ratio with feedback for the rattle, plus bright noise */
+    {200, 175, .020f, 1.57f, 0.45f, 0.08f, .030f, .30f, .090f, .0002f, .55f, 1800, .075f, .62f},
     /* TOM: soft 1:1 body gliding down a fifth */
-    {168, 112, .060f, 1.0f, 0.55f, 0.05f, .030f, .10f,  .19f, .0004f,  0, 0, 0,  .90f},
+    {170, 115, .060f, 1.0f, 0.18f, 0.02f, .040f, 0,    .19f, .0004f, 0, 0, 0,  .90f},
     /* HAT: sqrt(2) ratio, high index and feedback: dense metallic noise */
-    {2650, 2650, 1.0f, 1.4142f, 2.20f, 1.30f, .060f, .55f, .045f, .0001f, .35f, 6500, .040f, .80f},
+    {2650, 2650, 1.0f, 1.4142f, 0.90f, 0.55f, .060f, .80f, .045f, .0001f, .35f, 6500, .040f, .80f},
     /* BELL: 3.5 ratio, the index fading slowly to a pure partial */
-    {620, 620, 1.0f, 3.5f, 1.10f, 0.10f, .55f, 0,    .90f, .0002f,  0, 0, 0,  .70f},
+    {620, 620, 1.0f, 3.5f, 0.35f, 0.03f, .50f, 0,    .90f, .0002f, 0, 0, 0,  .70f},
     /* PERC: woody 2.76 ratio rim/block */
-    {880, 805, .005f, 2.76f, 0.85f, 0.00f, .014f, .05f, .034f, .0001f, 0, 0, 0,  .85f},
+    {880, 805, .005f, 2.76f, 0.30f, 0.00f, .014f, 0,    .034f, .0001f, 0, 0, 0,  .85f},
     /* LOG: hollow 1:1 log drum with a downward slide and a little growl */
-    {232, 176, .045f, 1.0f, 0.70f, 0.14f, .060f, .16f, .13f,  .0008f, 0, 0, 0,  .90f},
+    {232, 176, .045f, 1.0f, 0.22f, 0.04f, .060f, .08f, .13f,  .0008f, 0, 0, 0,  .90f},
     /* COW: 1.43 ratio clang held by the index floor */
-    {565, 565, 1.0f, 1.4286f, 0.95f, 0.45f, .090f, .10f, .085f, .0002f, 0, 0, 0,  .75f},
+    {565, 565, 1.0f, 1.4286f, 0.35f, 0.18f, .090f, 0,    .085f, .0002f, 0, 0, 0,  .75f},
 };
 
 static void kitfm_start(kit_voice *v, float r, float k) {

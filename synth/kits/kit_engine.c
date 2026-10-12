@@ -155,10 +155,12 @@ EXPORT volatile u8 kit_mode;                 /* 0 OFF, 1..KIT_KITS = kit */
 EXPORT volatile u8 kit_edit_pad;             /* 0..15: physical pad */
 EXPORT volatile u8 kit_record_pad,kit_record_velocity;
 static u32 kit_hit_origin[16],kit_hit_seed[16];
-static u8 kit_hit_mode[16];
-static u8 kit_export_active,kit_export_mode;
-static u32 kit_export_origin,kit_export_seed;
-static kit_pad kit_export_recipe,kit_hit_recipe[16];
+static u8 kit_hit_mode[16],kit_hit_velocity[16];
+static u8 kit_export_active,kit_export_mode,kit_export_count,kit_export_bd_slot;
+/* REC renders up to four captured hits, each from its own recipe, seed and
+ * live origin, starting kit_export_delay frames into the recording. */
+static u32 kit_export_origin[4],kit_export_seed[4],kit_export_delay[4],kit_export_frame[4];
+static kit_pad kit_export_recipe[4],kit_hit_recipe[16];
 EXPORT volatile u8 kit_edit_changed;         /* the edit pad followed a hit: redraw */
 EXPORT kit_pad kit_pads[KIT_KITS][KIT_PADS] __attribute__((section(".data"))) = {{{0}}};
 EXPORT const u32 kit_pad_count = KIT_PADS;
@@ -782,7 +784,7 @@ static float kit808_render(kit_voice *v) {
 static void kit_start(kit_voice *v, int i, int pad) {
     kit_init_pads();
     int kit = kit_mode < 1 ? 1 : kit_mode > KIT_KITS ? KIT_KITS : kit_mode;
-    const kit_pad *P = i>=4&&kit_export_active?&kit_export_recipe:&kit_pads[kit - 1][pad & 15];
+    const kit_pad *P = i>=4&&kit_export_active?&kit_export_recipe[(i-4)&3]:&kit_pads[kit - 1][pad & 15];
     if(P->sound==KIT_OFF_SOUND){v->live=0;v->n=0;v->drum=KIT_OFF_SOUND;return;}
     float k = kit_exp2((kit_clampf((float)P->decay, 0, 100)-50) * 0.03f);         /* decay scale */
     float r = kit_exp2((float)P->tune / 12);                     /* pitch ratio */
@@ -793,13 +795,13 @@ static void kit_start(kit_voice *v, int i, int pad) {
     int j, first = i < 4 ? 0 : 4;
     kit_parameters_init(v,P);
     v->drum = (u8)(P->sound % KIT_SOUNDS); v->pad = (u8)pad; v->n = 0; v->live = 1;
-    v->source_frame = i < 4 ? kit_live_cursor[i] : kit_export_active?kit_export_origin:0;
+    v->source_frame = i < 4 ? kit_live_cursor[i] : kit_export_active?kit_export_origin[(i-4)&3]:0;
     v->source_bank = i < 4 ? 0 : 1;
     v->source_tune = P->tune < -24 ? -24 : P->tune > 24 ? 24 : P->tune;
     /* The hit clock makes every hit's noise differ, as analog noise does. */
     v->seed = 0x9E3779B9u ^ ((u32)i * 0x85EBCA6Bu) ^ ((u32)pad * 0xC2B2AE35u) ^ (v->source_frame * 0x27D4EB2Du);
     if(i<4){kit_hit_origin[pad&15]=v->source_frame;kit_hit_seed[pad&15]=v->seed;kit_hit_mode[pad&15]=(u8)kit;kit_hit_recipe[pad&15]=*P;}
-    else if(kit_export_active)v->seed=kit_export_seed;
+    else if(kit_export_active)v->seed=kit_export_seed[(i-4)&3];
     for (j = 0; j < 6; ++j) v->ph[j] = 0;
     v->lp = v->bp = v->hp1 = v->xprev = 0;
     v->amp = 1; v->namp = 0; v->ndec = 0; v->pe = 0; v->pdec = 0;
@@ -889,6 +891,15 @@ static float kit_output_slot(const u8 *s, int i) {
         }
     }
     int fresh = *(const volatile u32 *)(s + 0x18C) == 0 || KIT_ENV_RESTART[i];
+    if (i >= 4 && kit_export_active) {
+        /* A chord capture starts each hit at its own offset into the recording. */
+        int j = (i - 4) & 3;
+        if (fresh) { kit_export_frame[j] = 0; v->live = 0; }
+        u32 f = kit_export_frame[j]++;
+        KIT_ENV_PRESET(i) = 0;
+        if (f < kit_export_delay[j]) return 0;
+        fresh = f == kit_export_delay[j];
+    }
     if (fresh) {
         int pad = kit_pad_of(s);
         kit_init_pads();
@@ -904,7 +915,7 @@ static float kit_output_slot(const u8 *s, int i) {
         } else kit_start(v, i, pad);
         if (i < 4 && kit_edit_pad != (u8)pad) { kit_edit_pad = (u8)pad; kit_edit_changed = 1; }
     }
-    v->source_frame = i < 4 ? kit_live_cursor[i]++ : v->n+(kit_export_active?kit_export_origin:0);
+    v->source_frame = i < 4 ? kit_live_cursor[i]++ : v->n+(kit_export_active?kit_export_origin[(i-4)&3]:0);
     if (!v->live) return 0;
     if (v->n >= 1) KIT_ENV_PRESET(i) = 0;    /* v9 read the ENV preset on the first sample */
     float y = kit_render_slot(v, i);
@@ -1012,7 +1023,7 @@ EXPORT volatile u16 kit_pads_down;           /* pads physically held (bit = pad)
 EXPORT void kit_note_seen(int src, int vel) {
     if ((u32)src >= 16) return;
     if (vel) {
-        if(kit_mode){kit_record_bd_valid=0;kit_record_pad=(u8)src;kit_record_velocity=(u8)(vel>127?127:vel);}
+        if(kit_mode){kit_record_bd_valid=0;kit_record_pad=(u8)src;kit_record_velocity=(u8)(vel>127?127:vel);kit_hit_velocity[src]=kit_record_velocity;}
         kit_pads_down = (u16)(kit_pads_down | (1u << src));
         int logical = src;
         if (kit_mode && kit_edit_pad != (u8)logical) { kit_edit_pad = (u8)logical; kit_edit_changed = 1; }

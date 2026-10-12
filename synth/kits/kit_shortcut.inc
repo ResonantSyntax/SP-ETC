@@ -9,6 +9,13 @@ static int kit_key_down(int key){return ((int(*)(int))0x800D9F21u)(key);}
  * chord there as well as on the common release handler, so releasing SHIFT
  * first cannot retain the previous drum mode. Physical key state is read only. */
 static u8 kit_shortcut_pending,kit_shortcut_chord;
+/* Between the two REC presses the stock SG has an imprint armed: its keyboard
+ * flag (0x80591c48) is off and pads pick the destination. Switching machines
+ * there would stop every voice and move the VALUE cursor under that pending
+ * state, so both shortcuts do nothing until the imprint finishes or cancels. */
+static int kit_imprint_armed(int current){
+    return current==0x1e && !*(volatile u8*)0x80591C48u;
+}
 static void kit_shortcut_select(int kits){
     if(kit_mode)kit_last_mode=kit_mode;
     RELEASE_ALL();held_count=0;stop();kit_pads_down=0;
@@ -27,6 +34,7 @@ static void kit_shortcut_observe(void){
     int record=(flags[22>>3]>>(22&7))&1;
     int pattern=(flags[21>>3]>>(21&7))&1;
     int chord=shift?(record?2:pattern?1:0):0;
+    if(kit_imprint_armed(current)){kit_shortcut_pending=0;kit_shortcut_chord=(u8)chord;return;}
     if(chord && chord!=kit_shortcut_chord){
         kit_shortcut_pending=(u8)chord;
         if(chord==2)kit_shortcut_select(0);
@@ -41,6 +49,7 @@ EXPORT int kit_shortcut_event(void *page,const u16 *event){
     int selected=kit_shortcut_pending==intent || kit_key_down(42);
     if(current!=1&&current!=0x22&&current!=0x13&&current!=0x1e)return 0;
     if(!selected)return 0;
+    if(kit_imprint_armed(current)){kit_shortcut_pending=0;kit_shortcut_chord=0;return 1;}
     kit_shortcut_select(intent==1);
     kit_shortcut_pending=0;kit_shortcut_chord=0;
     ++kit_shortcut_trace[7];

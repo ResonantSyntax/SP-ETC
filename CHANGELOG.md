@@ -2,6 +2,23 @@
 
 ## Synthesized kits v9.43 (test candidate, not yet published)
 
+test2, after the first hardware test:
+
+- REC records drums struck together: the last struck pad plus up to three
+  others struck within 100 ms before it, each at its own offset and velocity.
+- The REC destination pad blinks again while it waits for the second REC press,
+  in melodic and drum mode. The original polyphony patch had removed the stock
+  pad redraw that ends every Sound Generator pad event; it is restored.
+- The kit shortcuts do nothing while an imprint is armed (between the two REC
+  presses), so they can no longer change state under a pending recording.
+- FM kick no longer buzzes: its modulation index was 4–6 times too high. FM
+  bells (pads 8 and 15) come down 4.4 dB to the kit's level.
+- Kicks are louder: 2–7 dB, up to 3 dB above each kit's median loudness while
+  keeping the attack clear of the limiter (808 +1.9 dB, DR-110 and KPR-77
+  limited by their peaks).
+
+test1:
+
 - Thirteen kits: Lel' UDS (Soviet drum synthesizer) replaces Digi, Korg Mini
   Pops 7 replaces SY-1, and TR707 and TR727 are new. FM is rebuilt as eight
   DX-style voices with modulator feedback, including a log drum and cowbell.

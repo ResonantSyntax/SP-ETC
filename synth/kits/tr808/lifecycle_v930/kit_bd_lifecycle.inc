@@ -139,7 +139,7 @@ static void kit_bd_start(kit_voice *v, int slot, const kit_pad *p) {
     (void)v;
     if (slot >= 4) {
         kit_bd_configure(slot - 3, p, 1);
-        if(kit_export_active&&kit_export_bd_ready)kit_bd_circuit[slot-3]=kit_export_bd_initial;
+        if(kit_export_active&&kit_export_bd_ready&&slot-4==kit_export_bd_slot)kit_bd_circuit[slot-3]=kit_export_bd_initial;
     }
 #ifdef KIT_HOST
     else if (kit_bd_preview) kit_bd_configure(1, p, 1);

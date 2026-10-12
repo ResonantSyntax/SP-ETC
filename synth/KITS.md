@@ -1,9 +1,11 @@
 # Synthesized machine kits v9.43 (test candidate)
 
-This branch carries the v9.43-test1 kit candidate: thirteen kits, every voice
-re-measured against references. It has emulator verification only and has not
-been played on hardware yet. The published patcher option is still the v9.42
-kits until this candidate passes a hardware test and `publish_kits.py` is run.
+This branch carries the v9.43-test2 kit candidate: thirteen kits, every voice
+re-measured against references. test1 was played on hardware; test2 answers that
+report (kick level, FM kick and bells, recording struck drums together, the REC
+destination pad blink). test2 itself has emulator verification only. The
+published patcher option is still the v9.42 kits until this candidate passes a
+hardware test and `publish_kits.py` is run.
 
 Select **Sound Generator + Kits** in the patcher. This separate option
 includes the melodic generator and shared arpeggiator. Both browser choices
@@ -17,9 +19,14 @@ local in your browser. The patcher produces APP1 only; APP0 remains stock.
 - Both shortcut release orders work. Tap/release SHIFT to switch parameter
   pages; you can audition pads after releasing it.
 - REC uses the last struck pad after release; you do not need to hold it.
-  Capture freezes its current controls and velocity, onset phase and noise seed.
+  Drums struck together record together: REC also takes up to three other pads
+  struck within 100 ms before the last one, each at its own offset and velocity.
+  Capture freezes each pad's controls, velocity, onset phase and noise seed.
   A retriggered 808 kick retains its initial capacitor state when controls match
   that hit; if controls changed afterward, REC renders the current recipe.
+- After the first REC press, the destination pad you choose blinks until the
+  second REC press imprints it, as in the stock firmware (melodic and drum mode).
+  The two kit shortcuts do nothing between those presses.
 - Strike a pad to select it. Hold a pad and turn VALUE outside menu edit mode
   to choose a sound from that machine's inventory.
 - KIT stays between TR808 and TR727. Turning beyond either end keeps that kit.
@@ -90,8 +97,15 @@ CR-8000 kick, snare and congas). Notable corrections in this pass:
 - DR-110 kick bends from about 335 Hz in 3 ms; its clap has three bursts 12 ms
   apart before the tail. KPR-77 toms sit at 130 and 199 Hz.
 - SDS-V drums bend slowly (pitch time constant 0.2–0.55 s), as the module does.
+- FM: modulation indexes are counted in cycles (0.16 cycle is about 1 radian).
+  test1 set the kick's index 4–6 times too high, which buzzed; the kick is now a
+  short sine thump with a light modulator click, and the bells ring cleaner.
 - Level trims follow the v9.36 policy (attack/body proxy 0.32 at LEVEL 110,
-  neutral transient cap 1.6) for all 143 sounds.
+  neutral transient cap 1.6) for all 143 sounds. Kicks are then raised to 3 dB
+  above their kit's median momentary loudness (BS.1770, 400 ms, measured after
+  the output stage) unless the raw peak would pass 1.3, where the per-voice knee
+  would flatten the attack. DR-110 and KPR-77 kicks stop at that cap, 1–4 dB
+  under. FM bells sit 1 dB above the median instead of 7–8 dB.
 
 ## Output and CPU
 
@@ -100,7 +114,7 @@ soft knee (starts at 24576, approaches 32000 on the signed 16-bit scale). Existi
 live bus audio is preserved. Later effects/mixes can still overload.
 
 ARM instruction counts per voice and 64-frame block (Unicorn, exact module):
-median 19k, worst steady 64k (TR-606 cymbal), worst onset block 125k (a TR-606
+median 19k, worst steady 65k (TR-606 cymbal), worst onset block 125k (a TR-606
 cymbal whose shared source cache rebuilds). v9.42 measured 31k, 71k and 215k.
 
 ## Reproduce
@@ -118,9 +132,16 @@ python synth/build_kits.py out/v9.6/SP404MKII_APP1.bin --zig /path/to/zig --out 
 The kit builder requires only the files in this repository. Patch sites retain
 exact-byte guards. Zero-filled module sections are packed into guarded scatter
 rows and reconstructed to verify the complete runtime image before writing APP1.
-Module: 147,544 bytes at run time (limit 319,488), 113,296 stored.
+Module: 148,216 bytes at run time (limit 319,488), 113,872 stored.
 
-## Checks (v9.43-test1, emulator)
+The kit builder also restores one stock instruction block outside the module.
+Every Sound Generator pad event ends in a shared UI redraw request at
+0x8015c01c. The original polyphony patch moved that request into its
+all-notes-off wrapper and left NOPs in its place, so choosing an imprint
+destination stopped redrawing the pads. The 14 stock bytes are written back
+behind an exact-byte guard.
+
+## Checks (v9.43-test2, emulator)
 
 - 208 factory pad renders (13 kits × 16) match host/ARM sample for sample for
   3000 samples each, plus 108 control endpoint cases (TUNE, DECAY, TONE, SWEEP,
@@ -129,6 +150,12 @@ Module: 147,544 bytes at run time (limit 319,488), 113,296 stored.
   seven hat-choke cases pass.
 - 208 compiled capture cases check released-pad selection and velocity, with
   melodic capture delegated to the original path.
+- Chord capture (TR707, TR808, CR78): two pads struck 64 frames apart export
+  as two voices, anchor first, each with its own velocity. The export renders
+  match the live voices sample for sample, the later hit after 64 silent frames.
+  A strike 107 ms earlier is left out.
+- Kit shortcuts switch machines with the keyboard flag on. With an imprint
+  armed they change nothing: no machine switch, all-stop or cursor step.
 - Every sound renders finite, without DC offset or audible cut-off clicks.
 
 Hardware timing, output and CPU headroom are not yet verified on a device.
@@ -139,6 +166,8 @@ To replay host/ARM audio checks, build the portable engine as a host library:
 zig cc -O2 -ffp-contract=off -fno-fast-math -shared -DKIT_HOST synth/kits/kit_engine.c -o out/kit_engine_host.dll
 python synth/test_kits.py out/kits-v943 out/kit_engine_host.dll
 python synth/test_kit_capture.py out/kits-v943
+python synth/test_kit_chord.py out/kits-v943
+python synth/test_kit_shortcut.py out/kits-v943
 ```
 
 Use `.so` for a supported Linux host toolchain; the build was verified on Windows.

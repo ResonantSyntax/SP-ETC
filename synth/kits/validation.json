@@ -1,12 +1,12 @@
 {
-  "candidate": "v9.43-test1",
-  "app1_sha256": "0909c816ca1b2251136cd619210e0661989674ba5ae9c5cc0a7e766f19041b13",
-  "app1_bytes": 3085248,
+  "candidate": "v9.43-test2",
+  "app1_sha256": "5509827ca47d27a74464251218fa7110dc731e2eb421e0180e73e16e7b61d19e",
+  "app1_bytes": 3085824,
   "source_files": 22,
   "hardware_verified": false,
   "public_source_rebuild_matches": null,
   "browser_checks_passed": null,
-  "notes": "Emulator checks only (synth/test_kits.py, synth/test_kit_capture.py). Browser overlay tests apply to the published patcher option, which still carries v9.42.",
+  "notes": "Emulator checks only (synth/test_kits.py, test_kit_capture.py, test_kit_chord.py, test_kit_shortcut.py). v9.43-test1 was played on hardware; test2 answers that report. Browser overlay tests apply to the published patcher option, which still carries v9.42.",
   "host_arm": {
     "schema": "kit-unicorn-check-v2",
     "passed": true,
@@ -71,9 +71,9 @@
     ],
     "pcm_bank_sha256": null,
     "pcm_flash_readonly": false,
-    "module_runtime_bytes": 147544,
-    "module_stored_bytes": 113296,
-    "module_reconstructed_sha256": "feab6ca8001800bbc9d0fbd90e18fa647ce4c7f69c947d461e520ddc3840bd9c"
+    "module_runtime_bytes": 148216,
+    "module_stored_bytes": 113872,
+    "module_reconstructed_sha256": "44c87f0e94ddb3a50e50211d2774a64471b0b8c291d7a2c695a9d4cd7a1f833d"
   },
   "capture": {
     "passed": true,
@@ -81,6 +81,69 @@
     "velocity_snapshot": true,
     "ui_selection_does_not_replace_last_strike": true,
     "melodic_capture_delegated": true,
-    "app1_sha256": "0909c816ca1b2251136cd619210e0661989674ba5ae9c5cc0a7e766f19041b13"
+    "app1_sha256": "5509827ca47d27a74464251218fa7110dc731e2eb421e0180e73e16e7b61d19e"
+  },
+  "chord_capture": {
+    "passed": true,
+    "chord_cases": {
+      "12": {
+        "pads": [
+          2,
+          0
+        ],
+        "frames": 1024,
+        "peak_a": 0.9428368806838989,
+        "peak_b": 0.8264453411102295
+      },
+      "1": {
+        "pads": [
+          9,
+          2
+        ],
+        "frames": 1024,
+        "peak_a": 0.9531973600387573,
+        "peak_b": 0.8833135962486267
+      },
+      "10": {
+        "pads": [
+          6,
+          4
+        ],
+        "frames": 1024,
+        "peak_a": 0.6822587251663208,
+        "peak_b": 0.5971395969390869
+      }
+    },
+    "outside_window_single": true,
+    "app1_sha256": "5509827ca47d27a74464251218fa7110dc731e2eb421e0180e73e16e7b61d19e"
+  },
+  "shortcut_guard": {
+    "keyboard_on": {
+      "record_setting_to": 0,
+      "pattern_edit_to": 5
+    },
+    "imprint_armed": {
+      "record_setting": "ignored",
+      "pattern_edit": "ignored",
+      "stock_calls_unchanged": true
+    },
+    "after_imprint": {
+      "pattern_edit_to": 5
+    },
+    "passed": true,
+    "app1_sha256": "5509827ca47d27a74464251218fa7110dc731e2eb421e0180e73e16e7b61d19e"
+  },
+  "sg_redraw_restore": {
+    "address": "0x8015c01c",
+    "branches_in": [
+      "0x8015c13c",
+      "0x8015c192",
+      "0x8015c1a2",
+      "0x8015c1b6",
+      "0x8015c222"
+    ],
+    "bytes": 14,
+    "effect": "REC destination pad blinks again; identical to stock 5.52 bytes",
+    "replacement_hex": "49f2f0604ff0ff31c8f224000180"
   }
 }
