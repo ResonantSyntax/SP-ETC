@@ -87,10 +87,10 @@ def main():
                 if struct.pack("<f", y) != struct.pack("<f", buf[n]): raise AssertionError(("kit/pad differs", kit, pad, n, y, buf[n]))
             checked += 1
     # Compare the new control bytes on ARM, not only neutral factory recipes.
-    hp=(ct.c_ubyte*(176*8)).in_dll(host,'kit_pads')
+    hp=(ct.c_ubyte*(kits*16*8)).in_dll(host,'kit_pads')
     factory=bytes(hp);control_checks=0
     fields=[(1,-12,12),(2,0,100),(3,0,100),(5,0,100),(6,0,100),(7,0,100)]
-    for sound in (22,23,32,37,49,61,119):
+    for sound in (0,8,9,18,23,35,109,121,141):
         for offset,lo,hi in fields:
             for value in (lo,hi):
                 recipe=bytearray(factory)
@@ -111,7 +111,7 @@ def main():
     hp[:]=factory
     uc.mem_write(base,module);uc.mem_write(S['kit_pads_ready'],b'\x01');uc.mem_write(S['kit_pads'],factory)
     uc.mem_write(S['kit_mode'],bytes([kits]))
-    inventories=[set(range(22,38)),set(range(91,97)),set(range(97,105)),set(range(105,121)),set(range(16,22)),set(range(38,45))|set(range(121,125)),set(range(45,52)),set(range(52,58)),set(range(58,62)),set(range(62,76)),set(range(76,90))]
+    inventories=[set(range(8,24)),set(range(72,78)),set(range(78,86)),set(range(90,98)),set(range(0,8)),set(range(24,31))|set(range(86,90)),set(range(31,38)),set(range(38,44)),set(range(98,113)),set(range(44,58)),set(range(58,72)),set(range(113,128)),set(range(128,143))]
     for kit,allowed in enumerate(inventories,1):
         uc.mem_write(S['kit_mode'],bytes([kit]))
         for pad in range(16):
@@ -123,7 +123,7 @@ def main():
                 sound=uc.mem_read(address,1)[0]
                 assert sound==255 if initial==255 else sound in allowed,(kit,pad,initial,sound)
     uc.mem_write(base,module);uc.mem_write(S['kit_pads_ready'],b'\x01');uc.mem_write(S['kit_pads'],factory);uc.mem_write(S['kit_mode'],bytes([kits]))
-    for mode,step,want in [(1,-1,1),(1,-100,1),(11,1,11),(11,100,11),(6,-1,5),(6,1,7),(0,-1,0),(0,1,0),(0,100,0)]:
+    for mode,step,want in [(1,-1,1),(1,-100,1),(13,1,13),(13,100,13),(6,-1,5),(6,1,7),(0,-1,0),(0,1,0),(0,100,0)]:
         uc.mem_write(S['kit_mode'],bytes([mode]));call('kit_item_step',11,step&0xffffffff)
         assert uc.mem_read(S['kit_mode'],1)[0]==want,('selector',mode,step,want)
     uc.mem_write(S['kit_mode'],bytes([kits]))
@@ -160,7 +160,7 @@ def check_turn(uc, call, S, sounds):
     if rd(S["kit_edit_pad"]) != 3 or rd(S["kit_pads_down"], 2) != 1 << 3: raise AssertionError("pad press not seen")
     before = sound(5, 3); neighbor_before = sound(5, 2)
     r, _ = call("kit_turn", 1)
-    if r != 1 or sound(5, 3) != ((before + 1) if before < 21 else 16) or rd(CURSOR, 4) != 13: raise AssertionError(("turn +", r, sound(5, 3)))
+    if r != 1 or sound(5, 3) != ((before + 1) if before < 7 else 0) or rd(CURSOR, 4) != 13: raise AssertionError(("turn +", r, sound(5, 3)))
     r, _ = call("kit_turn", 0xFFFFFFFF)
     if r != 1 or sound(5, 3) != before or rd(CURSOR, 4) != 13: raise AssertionError("turn -")
     if sound(5, 2) != neighbor_before: raise AssertionError("other pad touched")
@@ -217,7 +217,7 @@ def check_hat_audio(uc, call, S, base, module):
         _, y = call("kit_output", addr)
         uc.mem_write(addr+0x18C, struct.pack("<f", 1.0))
         return y
-    for kit, oh, ch in ((1, 3, 2), (2, 3, 2), (3, 3, 2), (4, 5, 4), (5, 5, 4), (7, 3, 2)):
+    for kit, oh, ch in ((1, 3, 2), (2, 3, 2), (3, 3, 2), (4, 3, 2), (5, 3, 2), (7, 3, 2), (12, 3, 2)):
         energies = []
         for choke in (False, True):
             uc.mem_write(base, module); uc.mem_write(S["kit_mode"], bytes([kit]))

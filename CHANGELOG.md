@@ -1,5 +1,20 @@
 # Changelog
 
+## Synthesized kits v9.43 (test candidate, not yet published)
+
+- Thirteen kits: Lel' UDS (Soviet drum synthesizer) replaces Digi, Korg Mini
+  Pops 7 replaces SY-1, and TR707 and TR727 are new. FM is rebuilt as eight
+  DX-style voices with modulator feedback, including a log drum and cowbell.
+- Every existing voice re-fitted to recordings, ACB captures and plug-in
+  captures: pitch tracks, decays, envelopes and 1/3-octave balance.
+- SWEEP 50 no longer adds a pitch blip; 50 is the authentic setting on every
+  control. TONE drives the 808 snare's snappy knob. Each hit gets fresh noise.
+- Pitch envelopes use time constants (909 kick, SDS-V bends restored); the 909
+  snare body falls instead of rising.
+- Level trims regenerated for all 143 sounds with the v9.36 policy.
+- CPU: median per-voice cost 31k → 19k instructions per block; worst onset block
+  215k → 125k. Emulator checks pass; hardware test pending.
+
 ## Synthesized kits v9.42 (fork PR)
 
 - Add an opt-in browser patch for eleven synthesized kits with sixteen pads,

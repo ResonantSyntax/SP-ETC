@@ -16,33 +16,36 @@ static void kitsds_start(kit_voice *v, float pitch, float decay, float tone) {
     v->nmix = bright;
 
     switch (v->drum) {
-    case SDS_BD: /* deep tone with a sharp pitch fall, filtered attack click */
-        v->f = (138.0f + 22.0f * (tone + 1.0f)) * pitch;
-        v->fend = 48.0f * pitch;
-        v->pe = 1.0f; v->pdec = kit_decay60(0.035f);
-        v->adec = kit_decay60(0.44f * k);
-        v->namp = (0.14f + 0.13f * (tone + 1.0f)) * bright;
-        v->ndec = kit_decay60(0.0024f);
+    case SDS_BD: /* recordings: ~145 Hz bending down (pitch tau ~200 ms),
+                  * level tau ~68 ms, bright noise ~27-33 dB under the body */
+        v->f = 145.0f * pitch * kit_exp2(0.25f * kit_clampf(tone, -1.0f, 1.0f));
+        v->fend = 20.0f * pitch;
+        v->pe = 1.0f; v->pdec = KIT_TAU(0.200f);
+        v->adec = KIT_TAU(0.068f * k);
+        v->namp = 0.42f * bright; v->ndec = KIT_TAU(0.030f);
         break;
-    case SDS_SD: /* two inharmonic head modes plus a tone-shaped noise snare */
-        v->f = 190.0f * pitch; v->fend = 174.0f * pitch;
-        v->adec = kit_decay60(0.16f * k);
+    case SDS_SD: /* recordings: ~280 Hz bending (tau ~190 ms), tau ~75 ms; noise band 1.3-4.4 kHz */
+        v->f = 280.0f * pitch; v->fend = 20.0f * pitch;
+        v->pe = 1.0f; v->pdec = KIT_TAU(0.190f);
+        v->adec = KIT_TAU(0.075f * k);
         v->namp = (0.45f + 0.34f * (tone + 1.0f)) * bright;
-        v->ndec = kit_decay60(0.20f * k);
+        v->ndec = KIT_TAU(0.070f * k);
         v->hp_a = 0.84f;
         break;
     case SDS_LT: case SDS_MT: case SDS_HT: {
-        static const float start_hz[3] = {210.0f, 285.0f, 375.0f};
-        static const float end_hz[3] = {72.0f, 105.0f, 145.0f};
-        static const float bend_s[3] = {0.060f, 0.050f, 0.043f};
+        /* Recordings (17 toms in three pitch clusters): ~140/205/400 Hz,
+         * bending with tau 0.3-0.55 s; level tau ~0.13-0.15 s; noise ~-20..-30 dB. */
+        static const float start_hz[3] = {140.0f, 205.0f, 400.0f};
+        static const float bend_s[3] = {0.40f, 0.30f, 0.55f};
+        static const float level_s[3] = {0.135f, 0.125f, 0.145f};
         j = (int)v->drum - (int)SDS_LT;
         /* Tone also varies the bend depth: useful with the shared TONE knob. */
-        v->f = start_hz[j] * pitch * (1.0f + 0.17f * (tone + 1.0f));
-        v->fend = end_hz[j] * pitch;
-        v->pe = 1.0f; v->pdec = kit_decay60(bend_s[j]);
-        v->adec = kit_decay60((0.40f - 0.045f*j) * k);
-        v->namp = (0.025f + 0.045f * (tone + 1.0f)) * bright;
-        v->ndec = kit_decay60(0.010f);
+        v->f = start_hz[j] * pitch * (1.0f + 0.17f * (tone + 1.0f)) * (1.0f/1.17f);
+        v->fend = 0.15f * start_hz[j] * pitch;
+        v->pe = 1.0f; v->pdec = KIT_TAU(bend_s[j]);
+        v->adec = KIT_TAU(level_s[j] * k);
+        v->namp = (0.60f + 0.50f * (tone + 1.0f)) * bright;
+        v->ndec = KIT_TAU(0.040f);
         break;
     }
     case SDS_ZAP: /* high resonant tom sweep, SDS-like synthetic accent */
@@ -75,10 +78,10 @@ static float kitsds_render(kit_voice *v) {
         v->ph[1] += (f * 1.47f) / KIT_FS;
         v->ph[1] -= (float)(int)v->ph[1];
         y = 0.35f * y + 0.24f * kit_sin2pi(v->ph[1]) * v->amp
-          + 0.55f * v->hp1 * v->namp;
+          + 2.2f * v->hp1 * v->namp;
     } else {
         /* A one-pole low pass makes the click/noise brightness tuneable. */
-        float cutoff = v->drum == SDS_BD ? 5200.0f : 6800.0f;
+        float cutoff = v->drum == SDS_BD ? 9000.0f : 6800.0f;
         float a = kit_clampf(cutoff * v->nmix / KIT_FS, 0.015f, 0.45f);
         v->lp += a * (noise - v->lp);
         y += v->lp * v->namp;
@@ -86,6 +89,7 @@ static float kitsds_render(kit_voice *v) {
     v->namp *= v->ndec;
     v->amp *= v->adec;
     v->n += 1;
+    v->source_frame += 1;          /* host renders; kit_output sets it on ARM */
     if (v->n > 3200 && v->amp < KIT_SILENT && v->namp < KIT_SILENT) v->live = 0;
     return y * v->gain;
 }

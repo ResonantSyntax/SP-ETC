@@ -6,7 +6,7 @@
  * Output VCA/coupling/loading/nonlinearity remain separate approximations.
  */
 #define KIT_606_BLOCK 64u
-#define KIT_606_HISTORY 512u
+#define KIT_606_HISTORY 192u   /* 384 network steps: >7 time constants of the slowest pole */
 typedef struct { float w1, w2, h1, h2, l1, l2; u32 next_frame, ready; } kit_606_state;
 typedef struct { float lo[64], hi[64]; u32 origin, tune_key, valid; } kit_606_cache;
 EXPORT kit_606_state kit_606_states[2][49] __attribute__((section(".data"))) = {{{0}}};

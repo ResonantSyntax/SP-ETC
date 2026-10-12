@@ -10,7 +10,7 @@ import hashlib, importlib, json, os, re, shutil, struct, sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REVISION = "v9.42-test3"
+REVISION = "v9.43-test1"
 PCM_BANK_ADDRESS = 0x60376000
 PCM_FLASH_PLANNING_LIMIT = 0x60400000
 FLASH_BASE = 0x60080000
@@ -280,7 +280,7 @@ def main():
     if builder.sha(app0) != builder.APP0_SHA: raise ValueError("expected stock APP0 beside the input")
     arp_source = (fork / "arp_v9_9_3.c").read_text(encoding="utf-8")
     engine, source_hashes = expand_kit_sources(HERE / "kit_engine.c")
-    required = {"kit_output.inc", "kit_parameters.inc", "kit_shortcut.inc", "kit_level_trims.inc", "kit_ui.inc", "kit909.inc", "kit606.inc", "kitprocedural.inc", "tr808/lifecycle_v930/kit_bd_lifecycle.inc"}
+    required = {"kit_output.inc", "kit_parameters.inc", "kit_shortcut.inc", "kit_level_trims.inc", "kit_ui.inc", "kit909.inc", "kit606.inc", "kitprocedural.inc", "kitfm.inc", "kitdata.inc", "tr808/lifecycle_v930/kit_bd_lifecycle.inc"}
     if not required <= source_hashes.keys():
         raise ValueError("missing kit source includes: " + str(required-source_hashes.keys()))
     out.mkdir(parents=True, exist_ok=True)
@@ -303,7 +303,7 @@ def main():
     builder.MENU = dict(builder.MENU, items=builder.MENU["items"] + ["KIT", "PAD", "SOUND", "TUNE", "DECAY", "TONE", "LEVEL", "SWEEP", "NOISE", "ATTACK"],
                         KIT=kit_names, SOUND=sound_names, PAD=[1, 16], LIVE_VOICES=4,
                         TUNE=[-12, 12], DECAY="0%..100% knob position in 1% steps; non-808 engines map to 0.354..2.828 baseline decay",
-                        TR808_BD_DECAY="Physical decay pot position 0..100%; factory 57%.",
+                        TR808_BD_DECAY="Physical decay pot position 0..100%; factory 50% (stock 808 and ACB default).",
                         TR808_BD_LIFECYCLE="One persistent live circuit, newest completed event per block owns output; four independent export circuits; selected-hit capacitor snapshot when controls match, otherwise cold; SG suspension pauses circuit time.",
                         TONE=[0, 100], LEVEL=[0, 127], SWEEP=[0,100], NOISE=[0,100], ATTACK=[0,100],
                         HOLD_PAD="hold a pad and turn VALUE (not in edit mode): that pad's SOUND")
@@ -395,7 +395,7 @@ def main():
     info['kit_parameter_page']='Tap and release SHIFT toggles page, also in melodic SG; opening chords do not toggle.'
     image, ui_patches = apply_kit_ui(image, info['arp_symbols'], builder)
     info['kit_ui_patches'] = ui_patches
-    info['kit_selector_range'] = [1,11]
+    info['kit_selector_range'] = [1,13]
     info['kit_ui'] = 'CTRL1 Tune, CTRL2 Decay, CTRL3 Tone; tap SHIFT: Sweep/Noise/Attack; LEVEL readout; VALUE menu with LEVEL; one 16-pad page per kit; kit selector stays within machines1-11; melodic entry uses SHIFT+RECORD SETTING.'
     info['kit_pad_assignments'] = 16
     image, info = sparsify_module(bytes(image), info, builder)
@@ -404,7 +404,7 @@ def main():
                 kit_turn_sites=[[s, n] for s, n, *_ in TURN_SITES], kit_turn_gate=turn_gate,
                 kit_engine_sha256=sha(engine.encode()), kit_source_sha256=source_hashes, generated_source_sha256=sha(gen.read_bytes()),
                 kit_completed_note_hooks=completed_note_hooks, synthesis_only=True,
-                kit=f"Synthesis-only kit mode: {len(kit_names)-1} kits, {len(sound_names)} procedural/modelled drums; no PCM playback or external audio bank; DR110/KPR77-inspired abstractions, original Digi drums, synthetic909 metal voices, existing808/606/SDS/SY/CR models; four voices, main-display Tune/Decay/Tone; edits RAM-only; no ACB-equivalence claim",
+                kit=f"Synthesis-only kit mode: {len(kit_names)-1} kits, {len(sound_names)} synthesized drums; no PCM playback or external audio bank; 808/909/606/SDS/CR78/CR8K/DR110/KPR77 models calibrated to recordings and ACB captures, Lel' UDS and Mini Pops 7 fitted to recordings, TR-707/727 synthesized from plug-in captures, DX-style FM; four voices, main-display Tune/Decay/Tone; edits RAM-only; no ACB-equivalence claim",
                 tests="Reproduce using synth/test_kits.py. Archived v9.41 emulator checks are summarized in synth/KITS.md; hardware confirmation remains outstanding.")
     (out / "SP404MKII_APP1.bin").write_bytes(image); (out / "SP404MKII_APP0.bin").write_bytes(app0)
     (out / "manifest.json").write_text(json.dumps(info, indent=2, sort_keys=True) + "\n", encoding="ascii", newline="\n")

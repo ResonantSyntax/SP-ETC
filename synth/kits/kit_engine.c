@@ -30,8 +30,8 @@ typedef unsigned char u8;
 #define KIT_VOICE_SIZE 0x1B0u
 #define KIT_FS 48000.0f
 #define KIT_SILENT 1e-4f
-#define KIT_BUILTIN 11                  /* existing kits, then the CR-8000 model */
-#define KIT_SOUNDS 125
+#define KIT_BUILTIN 13                  /* 808 DR110 KPR77 UDS FM 909 606 SDS MP-7 CR78 CR8K 707 727 */
+#define KIT_SOUNDS 143
 #define KIT_PADS 16
 #define KIT_OFF_SOUND 255
 
@@ -50,68 +50,104 @@ static volatile u8 kit_host_env[8 * 40];
 #define KIT_ENV_PRESET(i) (*(volatile u8 *)(KIT_ENV_SLOT_ADDR + 40u*(u32)(i) + 38u))
 #endif
 
-enum { KICK, SNARE, CLAP, RIM, CHH, OHH, CYM, BELL, TOM_L, TOM_M, TOM_H, CONGA, KICK2, SNARE2, SHAKER, ZAP,
-       FM_KICK, FM_SNARE, FM_TOM, FM_HAT, FM_BELL, FM_PERC,      /* FM_*: two-operator FM, TONE = FM depth */
+enum { FM_KICK, FM_SNARE, FM_TOM, FM_HAT, FM_BELL, FM_PERC, FM_LOG, FM_COW,   /* FM_*: DX-style operator pairs */
        T8_BD, T8_SD, T8_LT, T8_MT, T8_HT, T8_LC, T8_MC, T8_HC,   /* T8_*: the TR-808's 16 voices */
        T8_RS, T8_CL, T8_CP, T8_MA, T8_CB, T8_CY, T8_OH, T8_CH,
        T9_BD, T9_SD, T9_LT, T9_MT, T9_HT, T9_RS, T9_CP,         /* 909 analog voices only */
        T6_BD, T6_SD, T6_LT, T6_HT, T6_CY, T6_OH, T6_CH,
        SDS_BD, SDS_SD, SDS_LT, SDS_MT, SDS_HT, SDS_ZAP,
-       SY_TONE, SY_DUAL, SY_FM, SY_NOISE,
        C78_BD, C78_SD, C78_RS, C78_HH, C78_CY, C78_MA, C78_CL,
        C78_HB, C78_LB, C78_LC, C78_CB, C78_TB, C78_GU, C78_MB,
        C8K_BD, C8K_SD, C8K_LT, C8K_HT, C8K_LC, C8K_MC, C8K_HC,
-       C8K_CY, C8K_OH, C8K_CH, C8K_RS, C8K_CB, C8K_CL, C8K_CP, SUB_BD, DR_BD, DR_SD, DR_CH, DR_OH, DR_CP, DR_CY, KP_BD, KP_SD, KP_CH, KP_OH, KP_LT, KP_HT, KP_CP, KP_CY, DG_BD, DG_SUB, DG_SD, DG_CP, DG_CH, DG_OH, DG_CY, DG_RD, DG_RM, DG_CB, DG_LT, DG_MT, DG_HT, DG_ZAP, DG_SHAKE, DG_CLICK, M9_CH, M9_OH, M9_CY, M9_RD };
+       C8K_CY, C8K_OH, C8K_CH, C8K_RS, C8K_CB, C8K_CL, C8K_CP,
+       DR_BD, DR_SD, DR_CH, DR_OH, DR_CP, DR_CY,                /* procedural: DR-110, KPR-77, 909 metal */
+       KP_BD, KP_SD, KP_CH, KP_OH, KP_LT, KP_HT, KP_CP, KP_CY,
+       M9_CH, M9_OH, M9_CY, M9_RD,
+       U_BD, U_BD2, U_SD, U_SD2, U_TOM, U_CP, U_CH, U_OH,       /* table voices: Lel' UDS */
+       MP_BD, MP_SD1, MP_SD2, MP_RS, MP_CY1, MP_CY2, MP_CL, MP_CB, /* Korg Mini Pops 7 */
+       MP_BGH, MP_BGM, MP_BGL, MP_MA, MP_GU, MP_QJ, MP_TB,
+       T7_BD1, T7_BD2, T7_SD1, T7_SD2, T7_LT, T7_MT, T7_HT, T7_RS, /* TR-707 */
+       T7_CP, T7_CB, T7_TB, T7_CH, T7_OH, T7_CR, T7_RD,
+       T27_HB, T27_LB, T27_MHC, T27_OHC, T27_LC, T27_HTI, T27_LTI, T27_HAG, /* TR-727 */
+       T27_LAG, T27_CAB, T27_MAR, T27_SWH, T27_LWH, T27_QUI, T27_CHM };
 #define KIT_PROCEDURAL_FIRST DR_BD
+#define KIT_DATA_FIRST U_BD
 
 typedef struct { u8 sound; signed char tune; u8 decay; signed char tone; u8 level; u8 sweep, noise, attack; } kit_pad;
 /* Runtime decay/tone: 0..100 knob positions; tune in semitones, level 0..127.
  * Factory table below retains old recipe units, converted once at initialization. */
 typedef struct { u8 sound; signed char tune; u8 decay; signed char tone; u8 level; } kit_factory_pad;
 #define P(s, t, d, o, l) {s, t, d, o, l}
+/* GEN marks a pad outside the kit's active mask: kit_init_pads writes a generated
+ * tune/decay/tone/attack variant of the kit's own voices there. */
+#define GEN P(0, 0, 10, 0, 110)
 static const kit_factory_pad kit_factory[KIT_BUILTIN][16] = {
     { /* TR-808 */ P(T8_BD,0,12,9,110), P(T8_SD,0,10,0,105), P(T8_CH,0,10,0,100), P(T8_OH,0,10,0,100),
       P(T8_LT,0,10,0,105), P(T8_MT,0,10,0,105), P(T8_HT,0,10,0,105), P(T8_CY,0,10,0,100),
       P(T8_RS,0,10,0,100), P(T8_CP,0,10,0,105), P(T8_CB,0,10,0,100), P(T8_MA,0,10,0,100),
       P(T8_LC,0,10,0,105), P(T8_MC,0,10,0,105), P(T8_HC,0,10,0,105), P(T8_CL,0,10,0,100) },
-    { /* DR110-inspired + original supplemental voices */ P(DR_BD,0,10,0,110), P(DR_SD,0,10,0,110), P(DR_CH,0,10,0,110), P(DR_OH,0,10,0,110), P(DG_LT,0,10,0,110), P(DG_MT,0,10,0,110), P(DG_HT,0,10,0,110), P(DR_CY,0,10,0,110), P(DG_RM,0,10,0,110), P(DR_CP,0,10,0,110), P(DG_CB,0,10,0,110), P(DG_SHAKE,0,10,0,110), P(DG_SUB,0,10,0,110), P(DG_ZAP,0,10,0,110), P(DG_RD,0,10,0,110), P(DG_CLICK,0,10,0,110) },
-    { /* KPR77-inspired + original supplemental voices */ P(KP_BD,0,10,0,110), P(KP_SD,0,10,0,110), P(KP_CH,0,10,0,110), P(KP_OH,0,10,0,110), P(KP_LT,0,10,0,110), P(KP_HT,0,10,0,110), P(DG_MT,0,10,0,110), P(KP_CY,0,10,0,110), P(DG_RM,0,10,0,110), P(KP_CP,0,10,0,110), P(DG_CB,0,10,0,110), P(DG_SHAKE,0,10,0,110), P(DG_SUB,0,10,0,110), P(DG_ZAP,0,10,0,110), P(DG_RD,0,10,0,110), P(DG_CLICK,0,10,0,110) },
-    { /* Original digital/FM percussion */ P(DG_BD,0,10,0,110), P(DG_SUB,0,10,0,110), P(DG_SD,0,10,0,110), P(DG_CP,0,10,0,110), P(DG_CH,0,10,0,110), P(DG_OH,0,10,0,110), P(DG_CY,0,10,0,110), P(DG_RD,0,10,0,110), P(DG_RM,0,10,0,110), P(DG_CB,0,10,0,110), P(DG_LT,0,10,0,110), P(DG_MT,0,10,0,110), P(DG_HT,0,10,0,110), P(DG_ZAP,0,10,0,110), P(DG_SHAKE,0,10,0,110), P(DG_CLICK,0,10,0,110) },
-    { /* FM */ P(FM_KICK,0,10,0,105), P(FM_SNARE,0,10,0,100), P(FM_PERC,-5,12,0,100), P(FM_PERC,5,8,3,95),
-      P(FM_HAT,0,10,0,95), P(FM_HAT,0,40,0,90), P(FM_BELL,0,10,0,95), P(FM_BELL,-12,14,-3,95),
-      P(FM_TOM,-5,10,0,105), P(FM_TOM,0,10,0,105), P(FM_TOM,5,10,0,105), P(FM_PERC,12,6,5,90),
-      P(FM_KICK,7,5,6,100), P(FM_SNARE,5,6,6,95), P(FM_HAT,-12,20,-5,90), P(FM_BELL,7,30,4,85) },
-    { /* TR909: analog models plus recovered hat/crash/ride graphs. */
+    { /* DR110: its six voices; the other pads are generated variants. */
+      P(DR_BD,0,10,0,110), P(DR_SD,0,10,0,110), P(DR_CH,0,10,0,110), P(DR_OH,0,10,0,110),
+      GEN, GEN, GEN, P(DR_CY,0,10,0,110),
+      GEN, P(DR_CP,0,10,0,110), GEN, GEN,
+      GEN, GEN, GEN, GEN },
+    { /* KPR77: its eight voices; the other pads are generated variants. */
+      P(KP_BD,0,10,0,110), P(KP_SD,0,10,0,110), P(KP_CH,0,10,0,110), P(KP_OH,0,10,0,110),
+      P(KP_LT,0,10,0,110), P(KP_HT,0,10,0,110), GEN, P(KP_CY,0,10,0,110),
+      GEN, P(KP_CP,0,10,0,110), GEN, GEN,
+      GEN, GEN, GEN, GEN },
+    { /* Lel' UDS (Soviet drum synthesizer): eight voices and variants. */
+      P(U_BD,0,10,0,110), P(U_SD,0,10,0,105), P(U_CH,0,10,0,100), P(U_OH,0,10,0,100),
+      P(U_TOM,0,10,0,105), P(U_SD2,0,10,0,105), P(U_BD2,0,10,0,110), P(U_CP,0,10,0,105),
+      GEN, GEN, GEN, GEN,
+      GEN, GEN, GEN, GEN },
+    { /* FM: eight operator voices, then tuned variants. */
+      P(FM_KICK,0,10,0,105), P(FM_SNARE,0,10,0,100), P(FM_HAT,0,10,0,95), P(FM_HAT,0,40,0,90),
+      P(FM_TOM,-5,10,0,105), P(FM_TOM,0,10,0,105), P(FM_TOM,5,10,0,105), P(FM_BELL,0,10,0,95),
+      P(FM_PERC,0,10,0,100), P(FM_LOG,0,10,0,105), P(FM_COW,0,10,0,95), P(FM_LOG,5,10,0,105),
+      P(FM_KICK,7,5,6,100), P(FM_SNARE,5,6,6,95), P(FM_BELL,-12,14,-3,95), P(FM_LOG,-7,12,0,105) },
+    { /* TR909: analog models plus procedural hat/crash/ride stand-ins. */
       P(T9_BD,0,10,0,105), P(T9_SD,0,10,0,100), P(M9_CH,0,10,0,100), P(M9_OH,0,10,0,100),
       P(T9_LT,0,10,0,105), P(T9_MT,0,10,0,105), P(T9_HT,0,10,0,105), P(M9_CY,0,10,0,100),
-      P(T9_RS,0,10,0,100), P(T9_CP,0,10,0,100), P(M9_RD,0,10,0,100), P(T9_CP,2,7,4,100),
-      P(T9_LT,-5,16,0,105), P(T9_MT,3,8,0,105), P(T9_HT,5,7,0,105), P(T9_BD,0,20,5,100) },
+      P(T9_RS,0,10,0,100), P(T9_CP,0,10,0,100), P(M9_RD,0,10,0,100), GEN,
+      GEN, GEN, GEN, GEN },
     { /* TR606: seven voices followed by per-pad variations. */
       P(T6_BD,0,10,0,110), P(T6_SD,0,10,0,100), P(T6_CH,0,10,0,100), P(T6_OH,0,10,0,100),
-      P(T6_LT,0,10,0,105), P(T6_HT,0,10,0,105), P(T6_CY,0,10,0,100), P(T6_CY,0,20,-3,95),
-      P(T6_BD,0,6,3,110), P(T6_SD,0,6,-4,100), P(T6_CH,-3,6,-2,100), P(T6_OH,3,15,2,95),
-      P(T6_LT,-5,16,0,105), P(T6_HT,5,7,0,105), P(T6_CY,-5,7,-5,100), P(T6_BD,-5,18,-3,105) },
+      P(T6_LT,0,10,0,105), P(T6_HT,0,10,0,105), P(T6_CY,0,10,0,100), GEN,
+      GEN, GEN, GEN, GEN,
+      GEN, GEN, GEN, GEN },
     { /* SDS-V inspired: drum modules and playable tuned/swept variants. */
-      P(SDS_BD,0,10,0,105), P(SDS_SD,0,10,0,100), P(SDS_ZAP,0,8,0,100), P(SDS_ZAP,12,6,4,95),
-      P(SDS_LT,0,10,0,105), P(SDS_MT,0,10,0,105), P(SDS_HT,0,10,0,105), P(SDS_ZAP,-12,20,-3,100),
-      P(SDS_BD,0,6,5,105), P(SDS_SD,0,16,5,95), P(SDS_LT,-5,16,-3,105), P(SDS_HT,5,7,3,105),
-      P(SDS_ZAP,-5,15,5,100), P(SDS_ZAP,5,10,5,100), P(SDS_MT,12,20,-3,100), P(SDS_BD,-7,20,-3,105) },
-    { /* Pearl SY-1 inspired: four source modes in four pitch/decay groups. */
-      P(SY_TONE,-12,10,0,105), P(SY_NOISE,0,10,0,105), P(SY_FM,0,10,0,105), P(SY_DUAL,0,10,0,105),
-      P(SY_TONE,0,10,0,105), P(SY_TONE,5,10,3,105), P(SY_TONE,12,8,5,105), P(SY_DUAL,-7,16,-3,105),
-      P(SY_FM,-12,15,-4,105), P(SY_FM,7,7,5,100), P(SY_NOISE,0,4,8,105), P(SY_NOISE,0,20,-6,105),
-      P(SY_DUAL,12,20,0,105), P(SY_TONE,24,15,8,100), P(SY_FM,0,30,8,100), P(SY_TONE,-24,20,-5,105) },
+      P(SDS_BD,0,10,0,105), P(SDS_SD,0,10,0,100), P(SDS_ZAP,0,8,0,100), GEN,
+      P(SDS_LT,0,10,0,105), P(SDS_MT,0,10,0,105), P(SDS_HT,0,10,0,105), GEN,
+      GEN, GEN, GEN, GEN,
+      GEN, GEN, GEN, GEN },
+    { /* Korg Mini Pops 7: fifteen voices. */
+      P(MP_BD,0,10,0,110), P(MP_SD1,0,10,0,100), P(MP_CY1,0,10,0,95), P(MP_CY2,0,10,0,95),
+      P(MP_BGL,0,10,0,105), P(MP_BGM,0,10,0,105), P(MP_BGH,0,10,0,105), P(MP_SD2,0,10,0,100),
+      P(MP_RS,0,10,0,100), P(MP_CL,0,10,0,100), P(MP_CB,0,10,0,100), P(MP_MA,0,10,0,95),
+      P(MP_TB,0,10,0,95), P(MP_GU,0,10,0,95), P(MP_QJ,0,10,0,95), GEN },
     { /* CR-78: fourteen sources, followed by low guiro and long cymbal variants. */
       P(C78_BD,0,10,0,105), P(C78_SD,0,10,0,100), P(C78_HH,0,10,0,95), P(C78_CY,0,10,0,95),
       P(C78_HB,0,10,0,100), P(C78_LB,0,10,0,100), P(C78_LC,0,10,0,105), P(C78_MB,0,10,0,90),
       P(C78_RS,0,10,0,95), P(C78_CL,0,10,0,95), P(C78_CB,0,10,0,95), P(C78_MA,0,10,0,95),
-      P(C78_TB,0,10,0,95), P(C78_GU,0,10,0,100), P(C78_GU,0,10,-10,100), P(C78_CY,0,20,-3,90) },
+      P(C78_TB,0,10,0,95), P(C78_GU,0,10,0,100), GEN, GEN },
     { /* CR-8000 later-revision model: fourteen voices and two variants. */
       P(C8K_BD,0,10,0,105), P(C8K_SD,0,10,0,100), P(C8K_CH,0,10,0,100), P(C8K_OH,0,10,0,100),
       P(C8K_LT,0,10,0,105), P(C8K_HT,0,10,0,105), P(C8K_LC,0,10,0,105), P(C8K_CY,0,10,0,100),
       P(C8K_RS,0,10,0,100), P(C8K_CP,0,10,0,100), P(C8K_CB,0,10,0,100), P(C8K_CL,0,10,0,100),
-      P(C8K_MC,0,10,0,105), P(C8K_HC,0,10,0,105), P(C8K_LT,-5,16,0,105), P(C8K_BD,0,16,3,105) },
+      P(C8K_MC,0,10,0,105), P(C8K_HC,0,10,0,105), GEN, GEN },
+    { /* TR-707: fifteen voices in the 707's own order, then a variant. */
+      P(T7_BD1,0,10,0,110), P(T7_SD1,0,10,0,105), P(T7_CH,0,10,0,100), P(T7_OH,0,10,0,100),
+      P(T7_LT,0,10,0,105), P(T7_MT,0,10,0,105), P(T7_HT,0,10,0,105), P(T7_CR,0,10,0,95),
+      P(T7_RS,0,10,0,100), P(T7_CP,0,10,0,105), P(T7_CB,0,10,0,100), P(T7_TB,0,10,0,95),
+      P(T7_BD2,0,10,0,110), P(T7_SD2,0,10,0,105), P(T7_RD,0,10,0,95), GEN },
+    { /* TR-727: fifteen Latin percussion voices, then a variant. */
+      P(T27_HB,0,10,0,105), P(T27_LB,0,10,0,105), P(T27_MHC,0,10,0,105), P(T27_OHC,0,10,0,105),
+      P(T27_LC,0,10,0,105), P(T27_HTI,0,10,0,100), P(T27_LTI,0,10,0,100), P(T27_HAG,0,10,0,95),
+      P(T27_LAG,0,10,0,95), P(T27_CAB,0,10,0,95), P(T27_MAR,0,10,0,95), P(T27_SWH,0,10,0,90),
+      P(T27_LWH,0,10,0,90), P(T27_QUI,0,10,0,95), P(T27_CHM,0,10,0,90), GEN },
 };
+#undef GEN
 #undef P
 #define KIT_KITS KIT_BUILTIN
 
@@ -141,6 +177,8 @@ typedef struct {
     u32 source_frame;                  /* shared-source time, independent of hit age */
     u8 source_bank; signed char source_tune; u8 source_pad_[2];
     float ctrl_sweep, ctrl_noise, ctrl_attack, ctrl_lp, noise_lp, ctrl_tone, sweep_env;
+    float tone_pole;                     /* per-hit TONE low-pass coefficient */
+    u8 sweep_on, noise_on, post_on;      /* SWEEP/NOISE/output controls away from the authentic 50 */
     float sweep_a1[2],sweep_radius[2];
     u32 clap_period; u8 role;
     float cy_smooth, cy_hold, cy_slow;   /* CY trigger, C41, loaded C45 voltages */
@@ -227,9 +265,6 @@ static float kit_noise(kit_voice *v) {
     v->seed = x;
     return kit_parameter_noise(v,(float)(int)x * 4.65661287e-10f);
 }
-static float kit_square(float p) { return (p - (float)(int)p) < 0.5f ? 1.0f : -1.0f; }
-/* Chamberlin SVF coefficient; the cutoff is capped at 0.15 fs, where it stays stable. */
-static float kit_svf(float hz) { return 2*kit_sin2pi(kit_clampf(hz / KIT_FS, 0, 0.15f) * 0.5f); }
 
 static int kit_slot_of(u32 a) {
     if (a == KIT_SINGLETON) return 0;
@@ -250,14 +285,14 @@ static __attribute__((noinline, minsize)) void kit_init_pads(void) {
                          (signed char)(50+5*f->tone),f->level,50,50,50};
             if (p.tune < -12) p.tune=-12;
             if (p.tune > 12) p.tune=12;
-            if (p.sound == T8_BD) { p.decay=82; p.tone=65; }
-            /* Sources without a native pitch envelope begin with no added sweep. */
-            if(p.sound==T8_SD||p.sound==T6_SD||p.sound==C8K_SD||p.sound==C78_SD||p.sound==DR_SD||p.sound==KP_SD||p.sound==DG_SD||p.sound==T6_CH||p.sound==T6_OH||p.sound==T8_CH||p.sound==T8_OH||p.sound==T8_CY||p.sound==T6_CY||p.sound==C78_HH||p.sound==C78_CY||p.sound==C8K_CH||p.sound==C8K_OH||p.sound==C8K_CY||p.sound==DR_CH||p.sound==DR_OH||p.sound==DR_CY||p.sound==KP_CH||p.sound==KP_OH||p.sound==KP_CY||p.sound>=M9_CH||p.sound==DG_CH||p.sound==DG_OH||p.sound==DG_CY||p.sound==DG_RD)p.sweep=0;
-            if(p.sound==T8_CH||p.sound==T8_OH||p.sound==T6_CH||p.sound==T6_OH||p.sound==T8_CY||p.sound==T6_CY||p.sound==C8K_CH||p.sound==C8K_OH||p.sound==C8K_CY)p.noise=0;
+            /* 808 BD: decay and tone pots at their centre, as a stock 808 and
+             * the ACB plug-in default (t40 about 420 ms). Sweep/noise/attack 50
+             * are the authentic voice for every sound (kit_parameters.inc). */
+            if (p.sound == T8_BD) { p.decay=50; p.tone=50; }
             kit_pads[k][j]=p;
         }
     }
-    static const u16 active[KIT_KITS] = {0xffff,0x028f,0x02bf,0xffff,0xffff,0x07ff,0x007f,0x0077,0x000f,0x3fff,0x3fff};
+    static const u16 active[KIT_KITS] = {0xffff,0x028f,0x02bf,0x00ff,0xffff,0x07ff,0x007f,0x0077,0x7fff,0x3fff,0x3fff,0x7fff,0x7fff};
     for(int k=0;k<KIT_KITS;++k){
         u8 source[16];int n=0,variant=0;
         for(int j=0;j<16;++j)if(active[k]&(1u<<j))source[n++]=(u8)j;
@@ -294,8 +329,8 @@ static int kit_pad_of(const u8 *s) {
  * cowbell use the six Schmitt-trigger squares (band-limited here) through
  * the 808's band-pass/high-pass filters and VCA envelopes.
  * Controls: TUNE moves every frequency; DECAY scales the decay time; TONE is
- * the voice's own knob where it has one (BD tone, SD snappy, CY tone) and
- * otherwise the strike strength (pitch drop / brightness of the attack). */
+ * the 808's own knob for BD (tone), SD (snappy) and CY (tone); on every other
+ * voice it is the broadband tilt in kit_parameters_output. */
 #define KIT_TAU(s) kit_exp2(-1.44269504f / ((s) * KIT_FS))          /* per-sample, 1/e in s seconds */
 
 /* CY slow envelope: Werner/Abel/Smith ICMC 2014, Fig.1 and sections 6-7.
@@ -317,7 +352,7 @@ static void kit_cy_envelope_start(kit_voice *v, float k) {
     v->ed[0] = kit_cy_rc_alpha((470000.0f + 2000000.0f * pot) * 1e-6f);
     /* All three CY ed[] entries store a release fraction, not a pole near 1.
      * Subtracting alpha*state avoids quantizing long decay times to that pole. */
-    v->ed[1] = kit_cy_rc_alpha(0.27f * kit_clampf(k, 0.1f, 4));
+    v->ed[1] = kit_cy_rc_alpha(0.19f * (0.65f + 0.35f * kit_clampf(k, 0.1f, 4)));
     v->ed[2] = kit_cy_rc_alpha(0.035f);
 }
 static void kit_cy_envelope_tick(kit_voice *v, float trigger_volts) {
@@ -357,11 +392,39 @@ static __attribute__((noinline)) void bq_hp(kit_bq *q, float f, float Q) { /* RB
     float a = s / (2*Q), n = 1 / (1 + a);
     q->b0 = (1 + c)*0.5f*n; q->b1 = -(1 + c)*n; q->b2 = q->b0; q->a1 = -2*c*n; q->a2 = (1 - a)*n;
 }
+static __attribute__((noinline)) void bq_lp(kit_bq *q, float f, float Q) { /* RBJ low-pass */
+    float s, c; kit_sincos(f, &s, &c);
+    float a = s / (2*Q), n = 1 / (1 + a);
+    q->b0 = (1 - c)*0.5f*n; q->b1 = (1 - c)*n; q->b2 = q->b0; q->a1 = -2*c*n; q->a2 = (1 - a)*n;
+}
 static float bq_run(kit_bq *q, float x) {                    /* transposed direct form II */
     float y = q->b0*x + q->z1;
     q->z1 = q->b1*x - q->a1*y + q->z2;
     q->z2 = q->b2*x - q->a2*y;
     return y;
+}
+/* A free-ringing mode A e^(-t/tau) sin(2 pi hz t + phi), started from its
+ * state instead of a pulse, so a least-squares fit to recordings sets A, phi
+ * and tau directly. as = A sin(phi), ac = A cos(phi); run with bq_run(q, 0). */
+static __attribute__((noinline)) void kit_free_ring(kit_bq *q, float hz, float tau, float as, float ac) {
+    float s, c, r = KIT_TAU(tau);
+    kit_sincos(hz, &s, &c);
+    q->b0 = q->b1 = q->b2 = 0;
+    q->a1 = -2*r*c; q->a2 = r*r;
+    q->z1 = as; q->z2 = r*(s*ac + c*as) + q->a1*as;
+}
+/* Hold-then-release VCA (CR-78/CR-8000 trigger envelopes): the level e[2]
+ * falls with time constant tau_hold for `hold` seconds, then tau_release.
+ * A voice that sets mi > 0 also gets a linear rise over 1/mi samples. */
+static __attribute__((noinline)) void kit_hold(kit_voice *v, float tau_hold, float hold, float tau_release) {
+    v->e[2] = 1.0f; v->ed[2] = KIT_TAU(tau_hold);
+    v->qv = hold * KIT_FS; v->mdec = KIT_TAU(tau_release);
+}
+static float kit_vca(kit_voice *v) {
+    float a = v->e[2];
+    v->e[2] *= (float)v->n < v->qv ? v->ed[2] : v->mdec;
+    if (v->mi > 0.0f && (float)v->n * v->mi < 1.0f) a *= (float)v->n * v->mi;
+    return a;
 }
 /* Band-limited square (PolyBLEP), duty d; phase p in [0,1), increment dt. */
 static float kit_blep(float t, float dt) {
@@ -393,7 +456,7 @@ static float kit_squares_at(float ratio, u32 frame, int first, int count, float 
     return x;
 }
 static float kit_squares(kit_voice *v, int first, int count) {
-    if(v->ctrl_sweep>0 && (v->role==1||v->role==4||v->role==5)) {
+    if(v->sweep_on && (v->role==1||v->role==4||v->role==5)) {
         static const float hz[6]={205.3f,304.4f,369.6f,522.7f,540.0f,800.0f};float x=0;
         for(int j=first;j<first+count;++j){float f=hz[j]*v->ratio;x+=kit_pulse(kit_parameter_phase(v,j,f),f/KIT_FS,.4798f);}
         return kit_parameter_metal(v,x);
@@ -467,7 +530,7 @@ static void kit_cy_reconstruct(kit_cy_state *s, float ratio, u32 origin) {
 }
 
 static void kit808_cymbal_source(kit_voice *v, float *lo, float *hi) {
-    if(v->ctrl_sweep>0 || v->ctrl_noise>0){
+    if(v->sweep_on || v->noise_on){
         float x=kit_parameter_metal(v,kit_squares(v,0,6)*(1.0f/6));
         *lo=bq_run(&v->q[0],x);*hi=bq_run(&v->q[1],x);return;
     }
@@ -549,7 +612,7 @@ static void kit808_start(kit_voice *v, float r, float k, float t) {
         v->e[0] = 1; v->ed[0] = KIT_TAU(0.024f*kk); v->nmix = 0.65f*s;
         break;
     case T8_LT: case T8_MT: case T8_HT: case T8_LC: case T8_MC: case T8_HC: {
-        static const float hz[6] = {90, 135, 185, 185, 280, 400}, qs[6] = {25, 25, 25, 55, 38, 56};
+        static const float hz[6] = {90, 135, 185, 199, 280, 412}, qs[6] = {25, 25, 25, 43, 33, 42};   /* Fischer knob-centre pitches */
         static const float drop[6] = {0.015f, 0.013f, 0.011f, 0.009f, 0.008f, 0.007f};
         j = v->drum - T8_LT;
         v->fend = hz[j]*r; v->qv = qs[j]*kk;                     /* Q scales the ring time */
@@ -558,22 +621,24 @@ static void kit808_start(kit_voice *v, float r, float k, float t) {
          * scaling, retaining the original gain at 100% and longer decay.
          * This affects the resonant body only, not the tom noise path. */
         v->amp = kk < 1.0f ? kk : 1.0f;
-        v->pe = 0.14f*s; v->pdec = KIT_TAU(drop[j]);               /* diode pitch drop: x1.14 at onset */
-        if (j < 3) { v->e[0] = 1; v->ed[0] = KIT_TAU(0.085f*kk); v->hp1 = 0; }   /* tom noise */
+        /* Fischer's 808 grid shows no audible onset glide: keep only a trace. */
+        v->pe = (j < 3 ? 0.025f : 0.012f)*s; v->pdec = KIT_TAU(drop[j]);
+        if (j < 3) { v->e[0] = 1; v->ed[0] = KIT_TAU(0.085f*kk); v->hp1 = 0; v->lp = 0; }   /* tom noise */
         break;
     }
     case T8_RS:                       /* 455 Hz + 1667 Hz, through the swing VCA */
         bq_bp(&v->q[0], 455*r, 6.7f); bq_bp(&v->q[1], 1667*r, 13.5f);
+        v->hp1 = v->xprev = 0;
         v->e[0] = 0.022f*kk*KIT_FS; break;
     case T8_CL:                       /* 2.5 kHz, high Q, gated ~22 ms */
-        bq_bp(&v->q[0], 2526*r, 60); v->e[0] = 0.022f*kk*KIT_FS; break;
+        bq_bp(&v->q[0], 2440*r, 60); v->e[0] = 0.022f*kk*KIT_FS; break;   /* recordings: 2420-2450 Hz */
     case T8_CP:                       /* noise, BP 1.07 kHz Q 1.6: three 10 ms bursts, then a 47 ms tail */
-        bq_bp(&v->q[0], 1070*r, 1.6f); v->e[1] = 1; v->ed[1] = KIT_TAU(0.047f*kk); break;
+        bq_bp(&v->q[0], 1250*r, 0.9f); v->e[1] = 1; v->ed[1] = KIT_TAU(0.060f*kk); break;
     case T8_MA:                       /* noise, HP 10.6 kHz Q 2.3, ~15 ms */
-        bq_hp(&v->q[0], kit_clampf(10600*r, 2000, 20000), 2.3f); v->ed[0] = KIT_TAU(0.015f*kk); break;
+        bq_hp(&v->q[0], kit_clampf(7600*r, 2000, 20000), 1.0f); bq_lp(&v->q[1], 12500, 0.7f); v->ed[0] = KIT_TAU(0.0025f*kk); break;
     case T8_CB:                       /* 540 + 800 Hz squares, BP 1.1 kHz Q 2.8, two-slope decay */
-        v->ratio = r; bq_bp(&v->q[0], 1100*r, 2.8f);
-        v->e[0] = 0.7f; v->ed[0] = KIT_TAU(0.008f*kk); v->e[1] = 0.3f; v->ed[1] = KIT_TAU(0.07f*kk); break;
+        v->ratio = r; bq_bp(&v->q[0], 1400*r, 2.0f);
+        v->e[0] = 0.88f; v->ed[0] = KIT_TAU(0.006f*kk); v->e[1] = 0.12f; v->ed[1] = KIT_TAU(0.123f*kk); break;
     case T8_CY:                       /* BP 3.45k / 7.1k, three high-passed bands, own envelopes */
         v->ratio = r;
         /* The two pre-envelope BPFs live in kit_cy_states, across hits. */
@@ -582,9 +647,17 @@ static void kit808_start(kit_voice *v, float r, float k, float t) {
         v->nmix = s; break;                                         /* TONE: low vs high bands */
     case T8_OH: case T8_CH:           /* 7.1 kHz band; HP 7.8k (open) / 11.7k (closed) */
         v->ratio = r; v->group = 1;
-        bq_bp(&v->q[1], 7100, 6);
-        bq_hp(&v->q[2], v->drum == T8_OH ? 7800 : 11700, 2.5f);
-        v->e[0] = 1; v->ed[0] = KIT_TAU((v->drum == T8_OH ? 0.15f : 0.017f)*kk);
+        bq_bp(&v->q[1], v->drum == T8_OH ? 8500.0f : 11000.0f, v->drum == T8_OH ? 1.0f : 0.8f);
+        bq_hp(&v->q[2], v->drum == T8_OH ? 6200 : 7000, 0.8f);
+        if (v->drum == T8_OH) {
+            /* Fischer OH grid: -20 dB at 72/188/326/436/466 ms for DECAY 0..10, the
+             * level holding and then cutting off (t40 only 5-30% later). Model it
+             * as an exponential over a 30% floor that the VCA ignores. */
+            static const float kn[5] = {0.354f, 0.595f, 1.0f, 1.682f, 2.828f}, tau[5] = {0.072f, 0.189f, 0.328f, 0.439f, 0.469f};
+            float kq = kit_clampf(k, kn[0], kn[4]), tt = tau[4];
+            for (j = 0; j < 4; ++j) if (kq <= kn[j + 1]) { tt = tau[j] + (tau[j + 1] - tau[j]) * (kq - kn[j]) / (kn[j + 1] - kn[j]); break; }
+            v->e[0] = 1; v->ed[0] = KIT_TAU(tt);
+        } else { v->e[0] = 1; v->ed[0] = KIT_TAU(0.019f*kk); }
         v->nmix = s; break;
     }
 }
@@ -614,15 +687,21 @@ static float kit808_render(kit_voice *v) {
         }
         { static const float g[6] = {24.5f, 21.0f, 13.9f, 40.5f, 20.7f, 25.2f};
           y = bq_run(&v->q[0], pulse) * g[v->drum - T8_LT] * v->amp; }
-        if (v->drum <= T8_HT) {                                     /* pink-ish noise, LP ~400 Hz */
+        if (v->drum <= T8_HT) {                                     /* faint noise, two-pole LP ~400 Hz */
             v->hp1 += 0.051f * (kit_noise(v) - v->hp1);
-            y += v->hp1 * v->e[0] * 1.0f; v->e[0] *= v->ed[0];
+            v->lp += 0.051f * (v->hp1 - v->lp);
+            y += v->lp * v->e[0] * 0.30f; v->e[0] *= v->ed[0];
         }
         if (n > 4800 && kit_absf(v->q[0].z1) + kit_absf(v->q[0].z2) < 1e-6f) v->live = 0;
         break;
     case T8_RS:
-        y = 5.0f*bq_run(&v->q[0], pulse) + 5.0f*bq_run(&v->q[1], pulse);
+        /* The trigger reaches the bridged-T pair through a coupling capacitor:
+         * its two edges, not the 1 ms plateau, excite them. That is what lets the
+         * 1.67 kHz mode ring as loudly as the recordings show. */
+        x = n == 0 ? 1.0f : n == 48 ? -1.0f : 0.0f;
+        y = 2.6f*bq_run(&v->q[0], x) + 7.5f*bq_run(&v->q[1], x);
         y = y > 0 ? y : 0.25f*y;                                    /* swing VCA: mostly one polarity */
+        v->hp1 = 0.975f*(v->hp1 + y - v->xprev); v->xprev = y; y = v->hp1 + 0.25f*x;   /* coupling: no DC thump; edge click */
         if (n > (u32)v->e[0]) { v->e[1] = v->e[1] == 0 ? 1 : v->e[1] * 0.96f; y *= v->e[1]; if (v->e[1] < 1e-4f) v->live = 0; }
         else v->e[1] = 0;
         y *= 0.55f; break;
@@ -633,20 +712,24 @@ static float kit808_render(kit_voice *v) {
         break;
     case T8_CP: {
         u32 m = n % v->clap_period;                                            /* 10 ms sawtooth bursts */
-        float burst = n < 3*v->clap_period ? 1 - (float)m / (float)v->clap_period : 0;
+        /* Recordings: bursts at 0, 12 and 24 ms, each down ~20 dB within 9 ms;
+         * the reverb tail enters at full level near 36 ms. */
+        float burst = n < 3*v->clap_period ? kit_exp2(-(float)m * (3.32f / 432.0f)) : 0;
+        float tail = n >= 3*v->clap_period ? v->e[1] : 0;
         x = bq_run(&v->q[0], kit_noise(v));
-        y = x * (burst + 0.45f * v->e[1]) * 1.75f; v->e[1] *= v->ed[1];
+        y = x * (burst + tail) * 1.75f; if (n >= 3*v->clap_period) v->e[1] *= v->ed[1];
         if (n > 1440 && v->e[1] < KIT_SILENT) v->live = 0;
         break;
     }
     case T8_MA:
-        if (n < 96) v->e[0] = (float)(n + 1) / 96; else v->e[0] *= v->ed[0];   /* 2 ms swell */
-        y = bq_run(&v->q[0], kit_noise(v)) * v->e[0] * 0.6f;
-        if (n > 96 && v->e[0] < KIT_SILENT) v->live = 0;
+        /* Recordings swell for ~16 ms, then fall 40 dB within ~9 ms. */
+        if (n < 768) { float a = (float)(n + 1) / 768; v->e[0] = a*a*(3 - 2*a); } else v->e[0] *= v->ed[0];
+        y = bq_run(&v->q[1], bq_run(&v->q[0], kit_noise(v))) * v->e[0] * 0.6f;
+        if (n > 768 && v->e[0] < KIT_SILENT) v->live = 0;
         break;
     case T8_CB:
-        x = kit_squares(v, 4, 2);
-        y = bq_run(&v->q[0], x) * (v->e[0] + v->e[1]) * 1.15f;
+        x = 0.45f*kit_squares(v, 4, 1) + kit_squares(v, 5, 1);    /* 540 Hz ~7 dB under 800 Hz */
+        y = bq_run(&v->q[0], x) * (v->e[0] + v->e[1]) * 1.25f;
         v->e[0] *= v->ed[0]; v->e[1] *= v->ed[1];
         if (n > 480 && v->e[1] < KIT_SILENT) v->live = 0;
         break;
@@ -655,15 +738,20 @@ static float kit808_render(kit_voice *v) {
         kit_cy_envelope_tick(v, n < 48 ? 7.0f : 0.0f); /* normal-strength 1 ms trigger */
         /* Documented order: source BPF -> envelope/VCA -> HPF -> tone/level.
          * Multiplication still approximates the nonlinear swing VCA. */
-        y = bq_run(&v->q[2], lo * v->e[0]) * 1.4f * (2 - v->nmix * 0.5f)
-          + (bq_run(&v->q[3], hi * v->e[1]) * 2.0f + bq_run(&v->q[4], hi * v->e[2]) * 2.8f) * v->nmix;
+        /* Recordings and ACB: the 6-12 kHz bands lead (-20 dB within ~300 ms
+         * at centre DECAY) over a quieter, long 3 kHz tail. TONE is the 808's
+         * own low/high balance (Fischer grid: 7.1 kHz centroid at TONE 0, 8.9 kHz
+         * at 10). */
+        y = bq_run(&v->q[2], lo * v->e[0]) * 0.95f * (1.6f - 0.6f * v->nmix)
+          + (bq_run(&v->q[3], hi * v->e[1]) * 2.0f + bq_run(&v->q[4], hi * v->e[2]) * 1.6f) * 4.0f * v->nmix;
         y *= 1.4f;
         if (n > 480 && v->e[0] < KIT_SILENT && v->e[1] < KIT_SILENT && v->e[2] < KIT_SILENT) v->live = 0;
         break;
     }
     case T8_OH: case T8_CH:
         x = kit_squares(v, 0, 6) * (1.0f / 6);
-        y = bq_run(&v->q[2], bq_run(&v->q[1], x)) * v->e[0] * (v->drum == T8_OH ? 4.6f : 11.0f) * kit_clampf(v->nmix, 0.5f, 1.6f);
+        f = v->drum == T8_OH ? (v->e[0] > 0.3f ? (v->e[0] - 0.3f) * (1.0f / 0.7f) : 0.0f) : v->e[0];
+        y = bq_run(&v->q[2], bq_run(&v->q[1], x)) * f * (v->drum == T8_OH ? 4.6f : 6.0f) * kit_clampf(v->nmix, 0.5f, 1.6f);
         v->e[0] *= v->ed[0];
         if (n > 480 && v->e[0] < KIT_SILENT) v->live = 0;
         break;
@@ -681,10 +769,11 @@ static float kit808_render(kit_voice *v) {
 #include "kit909.inc"
 #include "kit606.inc"
 #include "kitsds.inc"
-#include "kitpearl.inc"
 #include "kitcr78.inc"
 #include "kitcr8000.inc"
 #include "kitprocedural.inc"
+#include "kitfm.inc"
+#include "kitdata.inc"
 #include "tr808/lifecycle_v930/kit_bd_lifecycle.inc"
 #include "kit_level_trims.inc"
 
@@ -697,7 +786,9 @@ static void kit_start(kit_voice *v, int i, int pad) {
     if(P->sound==KIT_OFF_SOUND){v->live=0;v->n=0;v->drum=KIT_OFF_SOUND;return;}
     float k = kit_exp2((kit_clampf((float)P->decay, 0, 100)-50) * 0.03f);         /* decay scale */
     float r = kit_exp2((float)P->tune / 12);                     /* pitch ratio */
-    float t = 0;        /* internal color -1..1 */
+    /* Internal colour -1..1: the 808 cymbal's TONE and snare's SNAPPY knobs;
+     * other voices use TONE as the generic tilt in kit_parameters_output. */
+    float t = (P->sound == T8_CY || P->sound == T8_SD) ? (kit_clampf((float)P->tone, 0, 100) - 50) * 0.02f : 0;
     float c = kit_exp2(1.2f * t);                                /* brightness */
     int j, first = i < 4 ? 0 : 4;
     kit_parameters_init(v,P);
@@ -705,7 +796,8 @@ static void kit_start(kit_voice *v, int i, int pad) {
     v->source_frame = i < 4 ? kit_live_cursor[i] : kit_export_active?kit_export_origin:0;
     v->source_bank = i < 4 ? 0 : 1;
     v->source_tune = P->tune < -24 ? -24 : P->tune > 24 ? 24 : P->tune;
-    v->seed = 0x9E3779B9u ^ ((u32)i * 0x85EBCA6Bu) ^ ((u32)pad * 0xC2B2AE35u);
+    /* The hit clock makes every hit's noise differ, as analog noise does. */
+    v->seed = 0x9E3779B9u ^ ((u32)i * 0x85EBCA6Bu) ^ ((u32)pad * 0xC2B2AE35u) ^ (v->source_frame * 0x27D4EB2Du);
     if(i<4){kit_hit_origin[pad&15]=v->source_frame;kit_hit_seed[pad&15]=v->seed;kit_hit_mode[pad&15]=(u8)kit;kit_hit_recipe[pad&15]=*P;}
     else if(kit_export_active)v->seed=kit_export_seed;
     for (j = 0; j < 6; ++j) v->ph[j] = 0;
@@ -715,64 +807,16 @@ static void kit_start(kit_voice *v, int i, int pad) {
     v->mi = 0; v->mdec = 0; v->mr = 1;
     v->ratio = r; v->nmix = c;
     v->gain = (float)P->level * (1.0f / 110) * ((float)kit_level_trims[v->drum] * (1.0f/4096));
-    if (v->drum == SUB_BD) {
-        /* Original bass drum: low sine body, fast pitch drop, controllable
-         * second harmonic for small speakers. Not a Roland circuit claim. */
-        v->fend=42*r; v->f=(78+18*(t+1))*r;
-        v->pe=1; v->pdec=kit_decay60(0.07f);
-        v->adec=kit_decay60(1.1f*k); v->mi=0.08f+0.16f*(t+1);
-        v->namp=0.025f*(t+1); v->ndec=kit_decay60(0.006f);
-    } else if (v->drum >= KIT_PROCEDURAL_FIRST) kitprocedural_start(v,r,k,t);
+    if (v->drum >= KIT_DATA_FIRST) kitdata_start(v, r, k);
+    else if (v->drum >= KIT_PROCEDURAL_FIRST) kitprocedural_start(v,r,k,t);
     else if (v->drum >= C8K_BD) kitcr8000_start(v, r, k, t);
     else if (v->drum >= C78_BD) kitcr78_start(v, r, k, t);
-    else if (v->drum >= SY_TONE) kitpearl_start(v, r, k, t);
     else if (v->drum >= SDS_BD) kitsds_start(v, r, k, t);
     else if (v->drum >= T6_BD) kit606_start(v, r, k, t);
     else if (v->drum >= T9_BD) kit909_start(v, r, k, t);
     else if (v->drum == T8_BD) kit_bd_start(v, i, P);
     else if (v->drum > T8_BD) kit808_start(v, r, k, t);
-    else switch (v->drum) {
-    case KICK:   v->f = 160*r*(1 + 0.4f*t); v->fend = 48*r; v->pe = 1; v->pdec = kit_decay60(0.18f);
-                 v->adec = kit_decay60(0.55f*k); v->namp = 0.35f*c; v->ndec = kit_decay60(0.006f); break;
-    case KICK2:  v->f = 240*r*(1 + 0.4f*t); v->fend = 55*r; v->pe = 1; v->pdec = kit_decay60(0.09f);
-                 v->adec = kit_decay60(0.35f*k); v->namp = 0.6f*c; v->ndec = kit_decay60(0.012f); break;
-    case SNARE:  v->f = 185*r; v->adec = kit_decay60(0.18f*k); v->namp = 1; v->ndec = kit_decay60(0.28f*k);
-                 v->hp_a = 0.83f; break;
-    case SNARE2: v->f = 225*r; v->adec = kit_decay60(0.12f*k); v->namp = 1; v->ndec = kit_decay60(0.34f*k);
-                 v->hp_a = 0.9f; break;
-    case CLAP:   v->svf_f = kit_svf(1150*r*c); v->svf_q = 0.55f; v->namp = 1;
-                 v->ndec = kit_decay60(0.01f); v->adec = kit_decay60(0.3f*k); break;
-    case RIM:    v->f = 1700*r; v->adec = kit_decay60(0.045f*k); v->namp = 0.5f*c; v->ndec = kit_decay60(0.004f); break;
-    case CHH:    v->group = 1; v->svf_f = kit_svf(7600*c); v->svf_q = 0.9f; v->adec = kit_decay60(0.09f*k); break;
-    case OHH:    v->group = 1; v->svf_f = kit_svf(7600*c); v->svf_q = 0.9f; v->adec = kit_decay60(0.75f*k); break;
-    case CYM:    v->svf_f = kit_svf(5200*c); v->svf_q = 1.1f; v->adec = kit_decay60(1.9f*k);
-                 v->namp = 0.25f; v->ndec = kit_decay60(1.2f*k); break;
-    case BELL:   v->svf_f = kit_svf(1500*r*c); v->svf_q = 0.5f; v->adec = kit_decay60(0.42f*k); break;
-    case TOM_L:  v->f = 140*r; v->fend = 82*r; v->pe = 1; v->pdec = kit_decay60(0.3f); v->adec = kit_decay60(0.65f*k);
-                 v->namp = 0.08f*c; v->ndec = kit_decay60(0.02f); break;
-    case TOM_M:  v->f = 200*r; v->fend = 118*r; v->pe = 1; v->pdec = kit_decay60(0.26f); v->adec = kit_decay60(0.55f*k);
-                 v->namp = 0.08f*c; v->ndec = kit_decay60(0.02f); break;
-    case TOM_H:  v->f = 280*r; v->fend = 165*r; v->pe = 1; v->pdec = kit_decay60(0.22f); v->adec = kit_decay60(0.45f*k);
-                 v->namp = 0.08f*c; v->ndec = kit_decay60(0.02f); break;
-    case CONGA:  v->f = 360*r; v->fend = 315*r; v->pe = 1; v->pdec = kit_decay60(0.05f); v->adec = kit_decay60(0.3f*k); break;
-    case SHAKER: v->svf_f = kit_svf(6500*r*c); v->svf_q = 0.8f; v->adec = kit_decay60(0.12f*k); v->amp = 0; break;
-    /* FM: carrier f (falling to fend), modulator at mr x carrier, index mi (cycles) fading by mdec */
-    case FM_KICK:  v->f = 170*r; v->fend = 46*r; v->pe = 1; v->pdec = kit_decay60(0.16f); v->mr = 1;
-                   v->mi = 0.55f*c; v->mdec = kit_decay60(0.05f); v->adec = kit_decay60(0.5f*k); break;
-    case FM_SNARE: v->f = 210*r; v->fend = 180*r; v->pe = 1; v->pdec = kit_decay60(0.04f); v->mr = 1.47f;
-                   v->mi = 0.9f*c; v->mdec = kit_decay60(0.1f); v->adec = kit_decay60(0.16f*k);
-                   v->namp = 1; v->ndec = kit_decay60(0.22f*k); v->hp_a = 0.85f; break;
-    case FM_TOM:   v->f = 230*r; v->fend = 140*r; v->pe = 1; v->pdec = kit_decay60(0.25f); v->mr = 1;
-                   v->mi = 0.35f*c; v->mdec = kit_decay60(0.08f); v->adec = kit_decay60(0.5f*k); break;
-    case FM_HAT:   v->group = 1; v->f = v->fend = 2950*r; v->mr = 1.4142f; v->mi = 1.6f*c;
-                   v->mdec = kit_decay60(0.6f*k); v->adec = kit_decay60(0.1f*k);
-                   v->namp = 0.25f; v->ndec = kit_decay60(0.05f*k); v->hp_a = 0.6f; break;
-    case FM_BELL:  v->f = v->fend = 520*r; v->mr = 3.5f; v->mi = 0.5f*c; v->mdec = kit_decay60(0.7f*k);
-                   v->adec = kit_decay60(1.2f*k); break;
-    case FM_PERC:  v->f = 820*r; v->fend = 700*r; v->pe = 1; v->pdec = kit_decay60(0.03f); v->mr = 2.76f;
-                   v->mi = 0.8f*c; v->mdec = kit_decay60(0.035f); v->adec = kit_decay60(0.13f*k); break;
-    default:     v->f = 1900*r; v->fend = 55*r; v->pe = 1; v->pdec = kit_decay60(0.07f); v->adec = kit_decay60(0.28f*k); break;
-    }
+    else kitfm_start(v, r, k);
     kit_parameters_start(v);
     if (v->group)                                    /* hats choke each other */
         for (j = first; j < first + 4; ++j)
@@ -788,115 +832,41 @@ static void kit_start(kit_voice *v, int i, int pad) {
                  * Shorten the current tail; never restart its amplitude. */
                 kit_slot[j].ed[0] = kit_slot[j].adec;
                 /* CR8K hats retire only after both envelopes finish. */
-                if (kit_slot[j].drum >= C8K_BD && kit_slot[j].drum < KIT_PROCEDURAL_FIRST)
+                if (kit_slot[j].drum >= C8K_BD && kit_slot[j].drum < KIT_PROCEDURAL_FIRST) {
                     kit_slot[j].ed[1] = kit_slot[j].adec;
+                    kit_slot[j].ed[2] = kit_slot[j].mdec = kit_slot[j].adec;   /* hold-release VCA */
+                }
+                /* Table voices: release the gate now. */
+                if (kit_slot[j].drum >= KIT_DATA_FIRST) kit_slot[j].qv = 1;
 
             }
 }
 
-static const float kit_metal_hz[6] = {205.3f, 304.4f, 369.6f, 522.7f, 540.0f, 800.0f};
-
 static float kit_render_source(kit_voice *v, int slot) {
-    float y = 0, f, x;
-    int j;
-    if (v->drum == SUB_BD) {
-        f=v->fend+(v->f-v->fend)*v->pe; v->pe*=v->pdec;
-        v->ph[0]+=f/KIT_FS; v->ph[0]-=(float)(int)v->ph[0];
-        y=(kit_sin2pi(v->ph[0])+v->mi*kit_sin2pi(2*v->ph[0]))*v->amp;
-        y+=kit_noise(v)*v->namp; v->namp*=v->ndec; v->amp*=v->adec;
-        if (v->n++ > 2400 && v->amp < KIT_SILENT) v->live=0;
-        return y*v->gain;
-    }
+    if (v->drum >= KIT_DATA_FIRST) return kitdata_render(v);
     if (v->drum >= KIT_PROCEDURAL_FIRST) return kitprocedural_render(v);
     if (v->drum >= C8K_BD) return kitcr8000_render(v);
     if (v->drum >= C78_BD) return kitcr78_render(v);
-    if (v->drum >= SY_TONE) return kitpearl_render(v);
     if (v->drum >= SDS_BD) return kitsds_render(v);
     if (v->drum >= T6_BD) return kit606_render(v);
     if (v->drum >= T9_BD) return kit909_render(v);
     if (v->drum == T8_BD) return kit_bd_render(v, slot);
     if (v->drum > T8_BD) return kit808_render(v);
-    switch (v->drum) {
-    case KICK: case KICK2: case TOM_L: case TOM_M: case TOM_H: case CONGA: case ZAP:
-        f = v->fend + (v->f - v->fend) * v->pe; v->pe *= v->pdec;
-        v->ph[0] += f / KIT_FS; v->ph[0] -= (float)(int)v->ph[0];
-        y = kit_sin2pi(v->ph[0]) * v->amp;
-        if (v->drum == KICK2) { y *= 1.6f; y = y / (1 + kit_absf(y)) * 1.15f; }
-        y += kit_noise(v) * v->namp; v->namp *= v->ndec;
-        y *= v->drum == ZAP ? 0.7f : 0.9f;
-        break;
-    case SNARE: case SNARE2:
-        v->ph[0] += v->f / KIT_FS; v->ph[1] += v->f * 1.78f / KIT_FS;
-        y = (0.6f*kit_sin2pi(v->ph[0]) + 0.4f*kit_sin2pi(v->ph[1])) * v->amp * 0.45f;
-        x = kit_noise(v);
-        v->hp1 = v->hp_a * (v->hp1 + x - v->xprev); v->xprev = x;
-        y += v->hp1 * v->namp * (v->drum == SNARE2 ? 0.5f : 0.6f) * kit_clampf(v->nmix, 0.4f, 1.6f); v->namp *= v->ndec;
-        break;
-    case CLAP: {
-        u32 n = v->n;
-        x = kit_noise(v);
-        v->lp += v->svf_f * v->bp; f = x - v->lp - v->svf_q * v->bp; v->bp += v->svf_f * f;
-        if (n == v->clap_period || n == 2*v->clap_period || n == 3*v->clap_period) v->namp = 1;     /* 11 ms apart */
-        float burst = n < 4*v->clap_period ? v->namp : 0; v->namp *= v->ndec;
-        float tail = n >= 3*v->clap_period ? v->amp : 0; if (n >= 3*v->clap_period) v->amp *= v->adec;
-        y = v->bp * (burst + 0.6f * tail) * 0.9f;
-        break;
-    }
-    case RIM:
-        v->ph[0] += v->f / KIT_FS; v->ph[1] += 480 * v->ratio / KIT_FS;
-        y = (0.6f*kit_sin2pi(v->ph[0]) + 0.4f*kit_sin2pi(v->ph[1])) * v->amp * 0.8f;
-        y += kit_noise(v) * v->namp; v->namp *= v->ndec;
-        break;
-    case CHH: case OHH: case CYM:
-        x = 0;
-        for (j = 0; j < 6; ++j) { v->ph[j] += kit_metal_hz[j] * v->ratio * (v->drum == CYM ? 1.0f : 1.42f) / KIT_FS; x += kit_square(v->ph[j]); }
-        x = kit_parameter_metal(v,x*(1.0f / 6));
-        v->lp += v->svf_f * v->bp; f = x - v->lp - v->svf_q * v->bp; v->bp += v->svf_f * f;
-        y = (v->drum == CYM ? 0.7f * v->bp + 0.3f * f : f) * v->amp * 0.9f;
-        if (v->drum == CYM) { y += kit_noise(v) * v->namp * 0.3f; v->namp *= v->ndec; }
-        break;
-    case BELL:
-        v->ph[0] += 540 * v->ratio / KIT_FS; v->ph[1] += 800 * v->ratio / KIT_FS;
-        x = 0.5f * (kit_square(v->ph[0]) + kit_square(v->ph[1]));
-        v->lp += v->svf_f * v->bp; f = x - v->lp - v->svf_q * v->bp; v->bp += v->svf_f * f;
-        y = v->bp * v->amp * 0.45f;
-        break;
-    case SHAKER:
-        x = kit_noise(v);
-        v->lp += v->svf_f * v->bp; f = x - v->lp - v->svf_q * v->bp; v->bp += v->svf_f * f;
-        y = f * v->amp * 0.35f;
-        break;
-    case FM_KICK: case FM_SNARE: case FM_TOM: case FM_HAT: case FM_BELL: case FM_PERC:
-        f = v->fend + (v->f - v->fend) * v->pe; v->pe *= v->pdec;
-        v->ph[0] += f / KIT_FS; v->ph[0] -= (float)(int)v->ph[0];
-        v->ph[1] += f * v->mr / KIT_FS; v->ph[1] -= (float)(int)v->ph[1];
-        y = kit_sin2pi(v->ph[0] + v->mi * kit_sin2pi(v->ph[1])) * v->amp;
-        v->mi *= v->mdec;
-        if (v->drum == FM_SNARE || v->drum == FM_HAT) {             /* high-passed noise */
-            x = kit_noise(v);
-            v->hp1 = v->hp_a * (v->hp1 + x - v->xprev); v->xprev = x;
-            y += v->hp1 * v->namp * (v->drum == FM_HAT ? 1.0f : 0.55f); v->namp *= v->ndec;
-        }
-        if (v->drum == FM_HAT) { v->lp += 0.35f * (y - v->lp); y = (y - v->lp) * 0.9f; }  /* one-pole high-pass */
-        y *= v->drum == FM_SNARE ? 0.6f : 0.85f;
-        break;
-    }
-    if (v->drum == SHAKER && v->n < 384) v->amp = (float)(v->n + 1) / 384;   /* 8 ms rise */
-    else if (v->drum != CLAP) v->amp *= v->adec;
-    v->n += 1;
-    if (v->n > 2400 && v->amp < KIT_SILENT && v->namp < KIT_SILENT) v->live = 0;
-    return y * v->gain;
+    return kitfm_render(v);
 }
 
 static float kit_render_slot(kit_voice *v,int slot) {
     if(!v->live || v->drum==KIT_OFF_SOUND)return 0;
+    /* SWEEP 50 is the authentic voice: no added movement at all. */
+    if(!v->sweep_on)return kit_parameters_output(v,kit_render_source(v,slot));
     kit_parameters_tick(v);
     float f=v->f,fe=v->fend,r=v->ratio,svf=v->svf_f;
-    float movement=1+v->ctrl_sweep*.22f*v->sweep_env;
+    /* Bipolar around 50: above it the pitch starts up to 44% high and falls,
+     * below it the pitch starts up to 30% low and rises. */
+    float movement=1+(v->ctrl_sweep-1)*(v->ctrl_sweep>1?.44f:.3f)*v->sweep_env;
     if(v->role==1||v->role==4||v->role==5||v->drum==C78_MB)v->ratio*=movement;
-    if(v->drum==SHAKER||v->drum==SY_NOISE)v->svf_f=kit_clampf(svf*movement,0,v->drum==SHAKER?.9f:.65f);
     if((v->role==1||v->role==2||v->drum==FM_HAT||v->drum==C78_MB) && v->pe==0){v->f*=movement;v->fend*=movement;}
-    if(v->role==6 || v->drum==C78_HH || v->drum==C78_CY || (v->role==1 && (v->drum==C8K_BD||v->drum==C78_BD||v->drum==T8_RS||v->drum==T8_CL||v->drum==C8K_CL||v->drum==C78_CL||v->drum==T9_RS||v->drum==C78_RS||v->drum==C8K_LC||v->drum==C8K_MC||v->drum==C8K_HC)) || (v->role==2 && (v->drum==T8_SD||v->drum==T6_SD||v->drum==C8K_SD||v->drum==C78_SD)))
+    if(v->role==6 || v->drum==C78_HH || v->drum==C78_CY || v->drum>=KIT_DATA_FIRST || (v->role==1 && (v->drum==C8K_BD||v->drum==C78_BD||v->drum==T6_BD||v->drum==T8_RS||v->drum==T8_CL||v->drum==C8K_CL||v->drum==C78_CL||v->drum==T9_RS||v->drum==C78_RS||v->drum==C8K_LC||v->drum==C8K_MC||v->drum==C8K_HC)) || (v->role==2 && (v->drum==T8_SD||v->drum==T6_SD||v->drum==C8K_SD||v->drum==C78_SD)))
         for(int j=0;j<2;++j){float a=v->sweep_a1[j],r0=v->sweep_radius[j];v->q[j].a1=kit_clampf(a+(movement*movement-1)*(2*r0+a),-1.999999f*r0,1.999999f*r0);}
     float y=kit_render_source(v,slot);
     v->f=f;v->fend=fe;v->ratio=r;v->svf_f=svf;
@@ -959,18 +929,22 @@ static float kit_render(kit_voice *v) {
 
 /* ---- VALUE menu items 11..17 ---- */
 static const char kit_item_names[10][6] = {"KIT", "PAD", "SOUND", "TUNE", "DECAY", "TONE", "LEVEL", "SWEEP", "NOISE", "ATTCK"};
-static const char kit_kit_names[KIT_KITS + 1][6] = {"OFF", "TR808", "DR110", "KPR77", "Digi", "FM", "TR909", "TR606", "SDS-V", "SY-1", "CR78", "CR8K"};
+static const char kit_kit_names[KIT_KITS + 1][6] = {"OFF", "TR808", "DR110", "KPR77", "UDS", "FM", "TR909", "TR606", "SDS-V", "MP-7", "CR78", "CR8K", "TR707", "TR727"};
 static const char kit_sound_names[KIT_SOUNDS][6] = {
-    "Kick", "Snare", "Clap", "Rim", "CHat", "OHat", "Cymbl", "Bell",
-    "LTom", "MTom", "HTom", "Conga", "Kick2", "Snr2", "Shakr", "Zap",
-    "FMKik", "FMSnr", "FMTom", "FMHat", "FMBel", "FMPrc",
+    "FMKik", "FMSnr", "FMTom", "FMHat", "FMBel", "FMPrc", "FMLog", "FMCow",
     "8BD", "8SD", "8LT", "8MT", "8HT", "8LC", "8MC", "8HC",
     "8RS", "8CL", "8CP", "8MA", "8CB", "8CY", "8OH", "8CH",
     "9BD", "9SD", "9LT", "9MT", "9HT", "9RS", "9CP",
     "6BD", "6SD", "6LT", "6HT", "6CY", "6OH", "6CH",
-    "S-BD", "S-SD", "S-LT", "S-MT", "S-HT", "S-Zap", "SY-A", "SY-C", "SY-B", "SY-F",
+    "S-BD", "S-SD", "S-LT", "S-MT", "S-HT", "S-Zap",
     "CBD", "CSD", "CRS", "CHH", "CCY", "CMA", "CCL", "CHB", "CLB", "CLC", "CCB", "CTB", "CGU", "CMB",
-    "C8BD", "C8SD", "C8LT", "C8HT", "C8LC", "C8MC", "C8HC", "C8CY", "C8OH", "C8CH", "C8RS", "C8CB", "C8CL", "C8CP", "SubBD", "d-BD", "d-SD", "d-CH", "d-OH", "d-CP", "d-CY", "k-BD", "k-SD", "k-CH", "k-OH", "k-LT", "k-HT", "k-CP", "k-CY", "D-BD", "D-Sub", "D-SD", "D-CP", "D-CH", "D-OH", "D-CY", "D-Rid", "D-Rim", "D-Cow", "D-LT", "D-MT", "D-HT", "D-Zap", "D-Shk", "D-Clk", "s9CH", "s9OH", "s9CY", "s9RD"};
+    "C8BD", "C8SD", "C8LT", "C8HT", "C8LC", "C8MC", "C8HC", "C8CY", "C8OH", "C8CH", "C8RS", "C8CB", "C8CL", "C8CP",
+    "d-BD", "d-SD", "d-CH", "d-OH", "d-CP", "d-CY", "k-BD", "k-SD", "k-CH", "k-OH", "k-LT", "k-HT", "k-CP", "k-CY",
+    "s9CH", "s9OH", "s9CY", "s9RD",
+    "U-BD", "U-BD2", "U-SD", "U-SD2", "U-Tom", "U-CP", "U-CH", "U-OH",
+    "M-BD", "M-SD1", "M-SD2", "M-RS", "M-CY1", "M-CY2", "M-CL", "M-CB", "M-BgH", "M-BgM", "M-BgL", "M-MA", "M-GU", "M-QJ", "M-TB",
+    "7BD1", "7BD2", "7SD1", "7SD2", "7LT", "7MT", "7HT", "7RS", "7CP", "7CB", "7TB", "7CH", "7OH", "7CR", "7RD",
+    "27HB", "27LB", "27MHC", "27OHC", "27LC", "27HTi", "27LTi", "27HAg", "27LAg", "27Cab", "27Mar", "27SWh", "27LWh", "27Qui", "27Chm"};
 
 static __attribute__((noinline, minsize)) void kit_copy(char *out, const char *s) { do { *out++ = *s; } while (*s++); }
 static __attribute__((noinline, minsize)) char *kit_num(char *out, int v, int sign) {
@@ -1015,10 +989,11 @@ EXPORT __attribute__((noinline, minsize)) void kit_item_step(int item, int dir) 
         if(P->sound==KIT_OFF_SOUND) break;
         int k=kit_mode?kit_mode:1,lo=0,hi=KIT_SOUNDS-1;
         if(k==1){lo=T8_BD;hi=T8_CH;} else if(k==2){lo=DR_BD;hi=DR_CY;}
-        else if(k==3){lo=KP_BD;hi=KP_CY;} else if(k==4){lo=DG_BD;hi=DG_CLICK;}
-        else if(k==5){lo=FM_KICK;hi=FM_PERC;} else if(k==7){lo=T6_BD;hi=T6_CH;}
-        else if(k==8){lo=SDS_BD;hi=SDS_ZAP;} else if(k==9){lo=SY_TONE;hi=SY_NOISE;}
+        else if(k==3){lo=KP_BD;hi=KP_CY;} else if(k==4){lo=U_BD;hi=U_OH;}
+        else if(k==5){lo=FM_KICK;hi=FM_COW;} else if(k==7){lo=T6_BD;hi=T6_CH;}
+        else if(k==8){lo=SDS_BD;hi=SDS_ZAP;} else if(k==9){lo=MP_BD;hi=MP_TB;}
         else if(k==10){lo=C78_BD;hi=C78_MB;} else if(k==11){lo=C8K_BD;hi=C8K_CP;}
+        else if(k==12){lo=T7_BD1;hi=T7_RD;} else if(k==13){lo=T27_HB;hi=T27_CHM;}
         if(k==6){static const u8 ids[11]={T9_BD,T9_SD,M9_CH,M9_OH,T9_LT,T9_MT,T9_HT,M9_CY,T9_RS,T9_CP,M9_RD};int q=0;for(int n=0;n<11;++n)if(ids[n]==P->sound)q=n;P->sound=ids[(q+11+(dir<0?-1:1))%11];}
         else {int n=P->sound+dir;P->sound=(u8)(n<lo?hi:n>hi?lo:n);} break;
     }

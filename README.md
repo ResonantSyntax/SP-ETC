@@ -17,6 +17,11 @@ synthesized, with sixteen assignments per kit and same-machine variants marked
 `+`. These are independent models, not recovered Roland ACB. Exact v9.42 hardware
 confirmation and CPU headroom remain pending. APP0 is unchanged.
 
+The source tree now holds the v9.43 test candidate: thirteen kits (TR808, DR110,
+KPR77, Lel' UDS, FM, TR909, TR606, SDS-V, Mini Pops 7, CR78, CR8K, TR707 and
+TR727) with every voice re-fitted to recordings or captures. The patcher keeps
+offering v9.42 until v9.43 passes a hardware test; see [KITS.md](synth/KITS.md).
+
 ## What this mod adds
 
 - Four live Sound Generator voices with shared controls and held-pad LEDs.

@@ -19,7 +19,7 @@ def call(name,*args):
  assert u.reg_read(ar.UC_ARM_REG_PC)==0x1000
  return u.reg_read(ar.UC_ARM_REG_R0)
 cases=0
-for kit in range(1,12):
+for kit in range(1,14):
  u.mem_write(S['kit_mode'],bytes([kit]))
  for pad in range(16):
   # Selection persists after release even if the UI selects a different pad.
