@@ -1,11 +1,16 @@
-# Synthesized machine kits v9.43
+# Synthesized machine kits v9.43 (+ test4 candidate: hot resample)
 
-The patcher's Sound Generator + Kits option produces v9.43 (build
-v9.43-test3, APP1 SHA-256 `f6b83372…a515`): thirteen kits, every voice
-re-measured against references. test1 and test2 were played on hardware. test2
-answered the first report (kick level, FM kick and bells, recording struck drums
-together, the REC destination pad blink); test3 trims the drum VALUE menu after
-the second and has emulator verification only.
+This branch carries the v9.43-test4 kit candidate: v9.43 plus hot resample with
+the kits ([Hot resample](#hot-resample)). test4 has emulator verification only.
+The published patcher option is still v9.43 (build v9.43-test3, APP1 SHA-256
+`f6b83372…a515`) until this candidate passes a hardware test and
+`publish_kits.py` is run.
+
+v9.43 has thirteen kits, every voice re-measured against references. test1 and
+test2 were played on hardware. test2 answered the first report (kick level, FM
+kick and bells, recording struck drums together, the REC destination pad blink);
+test3 trims the drum VALUE menu after the second and has emulator verification
+only.
 
 Select **Sound Generator + Kits** in the patcher. This separate option
 includes the melodic generator and shared arpeggiator. Both browser choices
@@ -39,6 +44,29 @@ local in your browser. The patcher produces APP1 only; APP0 remains stock.
   to choose a sound from that machine's inventory.
 - KIT stays between TR808 and TR727. Turning beyond either end keeps that kit.
   OFF is an internal melodic state, not a selectable drum-menu choice.
+
+### Hot resample
+
+Stock 5.52 lets the Sound Generator play into a resample: press RESAMPLE, pick
+an empty pad ("press pad to start"), then SHIFT + RECORD SETTING opens the Sound
+Generator. The first note you play starts the take. test4 adds the kits:
+
+- With the take armed or running, SHIFT + PATTERN EDIT on the RESAMPLE screen
+  opens the Sound Generator in drum mode with the last kit, the kit twin of
+  SHIFT + RECORD SETTING. The take stays armed; the first kit hit starts it.
+- SHIFT + RECORD SETTING from the RESAMPLE screen opens the Sound Generator as
+  you left it, kits or melodic. On the Sound Generator page the two shortcuts
+  switch between kits and melodic as usual.
+- During a hot resample the two shortcuts never start or stop the take.
+  (Before test4 their press started an armed take or stopped a running one: the
+  stock page starts and stops a resample on PATTERN EDIT and RECORD SETTING
+  without looking at SHIFT.) Switching stops the voices that are sounding, as it
+  always has.
+- Stock behaviour stays: without SHIFT, PATTERN SELECT, PATTERN EDIT, RECORD
+  SETTING, PITCH/SPEED and RESAMPLE start an armed take or stop a running one.
+  A take with a length in bars ends that many bars after it starts. REC does
+  nothing on the Sound Generator page during a resample; EXIT goes back to the
+  RESAMPLE screen with the take still armed or running.
 
 | Main display page | CTRL1 | CTRL2 | CTRL3 |
 | --- | --- | --- | --- |
@@ -139,12 +167,19 @@ python synth/build_scales.py out/v9.5-parent/SP404MKII_APP1.bin --zig /path/to/z
 python synth/build_kits.py out/v9.6/SP404MKII_APP1.bin --zig /path/to/zig --out out/kits-v943
 ```
 
-A clean rebuild from stock 5.52 with these commands reproduces the published
-APP1 (`f6b83372…a515`, 3,085,968 bytes). The kit builder requires only the
-files in this repository. Patch sites retain exact-byte guards. Zero-filled
-module sections are packed into guarded scatter rows and reconstructed to verify
-the complete runtime image before writing APP1.
-Module: 148,360 bytes at run time (limit 319,488), 114,016 stored.
+On this branch a clean rebuild from stock 5.52 with these commands reproduces
+the v9.43-test4 candidate APP1 (`488d4ba2…008d`, 3,086,208 bytes); the published
+v9.43 APP1 (`f6b83372…a515`, 3,085,968 bytes) is built from main. The kit
+builder requires only the files in this repository. Patch sites retain
+exact-byte guards. Zero-filled module sections are packed into guarded scatter
+rows and reconstructed to verify the complete runtime image before writing APP1.
+Module: 148,600 bytes at run time (limit 319,488), 114,256 stored.
+
+The hot-resample rules add no patch site: they run in the existing shortcut gate
+at 0x800a80a8. The builder checks the stock code they mirror or call against
+exact instructions: the RESAMPLE key handler's SHIFT + RECORD SETTING jump, the
+Sound Generator key handler's resample start/stop, the Sound Generator pad's
+start of the take, and the page request.
 
 The kit builder also restores one stock instruction block outside the module.
 Every Sound Generator pad event ends in a shared UI redraw request at
@@ -153,7 +188,7 @@ all-notes-off wrapper and left NOPs in its place, so choosing an imprint
 destination stopped redrawing the pads. The 14 stock bytes are written back
 behind an exact-byte guard.
 
-## Checks (v9.43-test3, emulator)
+## Checks (v9.43-test3 and test4, emulator)
 
 - 208 factory pad renders (13 kits × 16) match host/ARM sample for sample for
   3000 samples each, plus 108 control endpoint cases (TUNE, DECAY, TONE, SWEEP,
@@ -171,6 +206,17 @@ behind an exact-byte guard.
 - Kit shortcuts switch machines with the keyboard flag on. With an imprint
   armed they change nothing: no machine switch, all-stop or cursor step.
 - Every sound renders finite, without DC offset or audible cut-off clicks.
+- Hot resample (test4, `test_kit_hot_resample.py`, 138 cases): key events go
+  through the stock dispatcher into the real RESAMPLE and Sound Generator key
+  handlers on the booted image. SHIFT + PATTERN EDIT on RESAMPLE opens the Sound
+  Generator in drum mode exactly when stock SHIFT + RECORD SETTING opens it
+  (recorder states 0–3, with and without a pad chosen), in every release order,
+  posting no recorder command. With settings 0x36 = 1 and the recorder armed or
+  recording, both shortcuts switch machines without a start or stop; unshifted
+  keys keep the stock start/stop. The stock chord from RESAMPLE keeps the
+  machine. A whole session (enter kits, switch, first kit hit posts the start,
+  switch while recording, RESAMPLE stops) passes. With `--baseline` the same
+  harness reproduces the three v9.43 faults on the v9.43 build.
 
 Hardware timing, output and CPU headroom are not yet verified on a device.
 
@@ -182,6 +228,7 @@ python synth/test_kits.py out/kits-v943 out/kit_engine_host.dll
 python synth/test_kit_capture.py out/kits-v943
 python synth/test_kit_chord.py out/kits-v943
 python synth/test_kit_shortcut.py out/kits-v943
+python synth/test_kit_hot_resample.py out/kits-v943
 ```
 
 Use `.so` for a supported Linux host toolchain; the build was verified on Windows.

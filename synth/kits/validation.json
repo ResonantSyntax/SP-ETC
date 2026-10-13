@@ -1,12 +1,12 @@
 {
-  "candidate": "v9.43-test3",
-  "app1_sha256": "f6b83372d10d96b8fb070df6790f6e5ed375a457391cab43eae2e9233848a515",
-  "app1_bytes": 3085968,
+  "candidate": "v9.43-test4",
+  "app1_sha256": "488d4ba2c30d773cba390ba5d31cfe85e51075e52fd10448c2422e1db439008d",
+  "app1_bytes": 3086208,
   "source_files": 22,
   "hardware_verified": false,
   "public_source_rebuild_matches": true,
-  "browser_checks_passed": true,
-  "notes": "Emulator checks (synth/test_kits.py, test_kit_capture.py, test_kit_chord.py, test_kit_shortcut.py), the shipped patcher (synth/test_browser.cjs: exact v9.43 output from stock 5.52, other options unchanged) and a clean rebuild from stock with the documented build_v9 -> build_scales --fixes -> build_kits commands all match this APP1. test1 and test2 were played on hardware; test3 adds two VALUE-menu changes.",
+  "browser_checks_passed": null,
+  "notes": "v9.43 plus hot resample with the kits. Emulator checks (synth/test_kits.py, test_kit_capture.py, test_kit_chord.py, test_kit_shortcut.py and the new test_kit_hot_resample.py, which sends key events through the stock page-event dispatcher into the real RESAMPLE and Sound Generator key handlers on the booted image) and a clean rebuild from stock with the documented build_v9 -> build_scales --fixes -> build_kits commands all match this APP1. synth/test_browser.cjs was not run for this candidate (no Node.js on the build machine); the patcher files are unchanged from origin/main a430ee7 and still publish v9.43.",
   "host_arm": {
     "schema": "kit-unicorn-check-v2",
     "passed": true,
@@ -77,9 +77,9 @@
     ],
     "pcm_bank_sha256": null,
     "pcm_flash_readonly": false,
-    "module_runtime_bytes": 148360,
-    "module_stored_bytes": 114016,
-    "module_reconstructed_sha256": "b043edfc8e55faef70052ce9b2a68b5a387e636377c57864de5f7a8a138da8bc"
+    "module_runtime_bytes": 148600,
+    "module_stored_bytes": 114256,
+    "module_reconstructed_sha256": "1dd3e151ae143dca93ed81c77d6a2ff9fb096df6c78ad0a13159d8422fdc9e95"
   },
   "capture": {
     "passed": true,
@@ -87,7 +87,7 @@
     "velocity_snapshot": true,
     "ui_selection_does_not_replace_last_strike": true,
     "melodic_capture_delegated": true,
-    "app1_sha256": "f6b83372d10d96b8fb070df6790f6e5ed375a457391cab43eae2e9233848a515"
+    "app1_sha256": "488d4ba2c30d773cba390ba5d31cfe85e51075e52fd10448c2422e1db439008d"
   },
   "chord_capture": {
     "passed": true,
@@ -121,7 +121,7 @@
       }
     },
     "outside_window_single": true,
-    "app1_sha256": "f6b83372d10d96b8fb070df6790f6e5ed375a457391cab43eae2e9233848a515"
+    "app1_sha256": "488d4ba2c30d773cba390ba5d31cfe85e51075e52fd10448c2422e1db439008d"
   },
   "shortcut_guard": {
     "keyboard_on": {
@@ -137,7 +137,7 @@
       "pattern_edit_to": 5
     },
     "passed": true,
-    "app1_sha256": "f6b83372d10d96b8fb070df6790f6e5ed375a457391cab43eae2e9233848a515"
+    "app1_sha256": "488d4ba2c30d773cba390ba5d31cfe85e51075e52fd10448c2422e1db439008d"
   },
   "sg_redraw_restore": {
     "address": "0x8015c01c",
@@ -157,6 +157,173 @@
     "bpm_item": 10,
     "effect": "BPM is a readout: pressing VALUE on it does not enter edit mode",
     "original_hex": "01214161012005b0f0bd",
-    "replacement_hex": "46f6890cc8f2fa3c6047"
+    "replacement_hex": "46f6791cc8f2fa3c6047"
+  },
+  "hot_resample": {
+    "passed": true,
+    "cases": 138,
+    "app1_sha256": "488d4ba2c30d773cba390ba5d31cfe85e51075e52fd10448c2422e1db439008d",
+    "revision": "v9.43-test4",
+    "harness": "stock dispatcher 0x800a80a8 -> kit shortcut gate -> real RESAMPLE (0x8012d5f0) / SG (0x8015c550) key and release handlers; SG pad 0x8015bf90; recorder post, page requests, settings and stop-path calls stubbed",
+    "resample_page_twin": [
+      {
+        "state": 0,
+        "dest": -1,
+        "opens_sg_in_kits": false,
+        "stock_record_setting_opens_sg": false
+      },
+      {
+        "state": 0,
+        "dest": 5,
+        "opens_sg_in_kits": true,
+        "stock_record_setting_opens_sg": true
+      },
+      {
+        "state": 1,
+        "dest": 5,
+        "opens_sg_in_kits": true,
+        "stock_record_setting_opens_sg": true
+      },
+      {
+        "state": 2,
+        "dest": 5,
+        "opens_sg_in_kits": true,
+        "stock_record_setting_opens_sg": true
+      },
+      {
+        "state": 3,
+        "dest": 5,
+        "opens_sg_in_kits": true,
+        "stock_record_setting_opens_sg": true
+      }
+    ],
+    "resample_twin_matches_stock_jump": true,
+    "sg_page_live_chords_post_nothing": true,
+    "stock_entry_keeps_machine": true,
+    "unshifted_start_stop": {
+      "keys": [
+        "PATTERN EDIT",
+        "PATTERN SELECT",
+        "PITCH/SPEED",
+        "RECORD SETTING",
+        "RESAMPLE"
+      ],
+      "state1_posts": "0x17",
+      "state2_posts": "0x18 then TOP",
+      "shift_held_unchanged": [
+        "PATTERN SELECT",
+        "PITCH/SPEED",
+        "RESAMPLE"
+      ]
+    },
+    "session": [
+      "RESAMPLE armed; SHIFT+PATTERN EDIT: SG page, kit 6, take armed",
+      "SHIFT+RECORD SETTING / SHIFT+PATTERN EDIT while armed: melodic, kits, nothing posted",
+      "first kit hit: stock pad handler posts 0x17 (start) and plays the note",
+      "while recording: melodic and back to kits, nothing posted, still recording",
+      "RESAMPLE: stock stop (0x18), TOP page"
+    ],
+    "guards": [
+      {
+        "address": "0x8012d5f0",
+        "bytes": 44
+      },
+      {
+        "address": "0x8012d6cc",
+        "bytes": 16
+      },
+      {
+        "address": "0x8012d6e0",
+        "bytes": 22
+      },
+      {
+        "address": "0x8012d7fc",
+        "bytes": 44
+      },
+      {
+        "address": "0x8015c550",
+        "bytes": 24
+      },
+      {
+        "address": "0x8015c738",
+        "bytes": 62
+      },
+      {
+        "address": "0x8015c0f2",
+        "bytes": 46
+      },
+      {
+        "address": "0x800da598",
+        "bytes": 24
+      },
+      {
+        "address": "0x8012d624",
+        "bytes": 2
+      },
+      {
+        "address": "0x8012d626",
+        "bytes": 2
+      },
+      {
+        "address": "0x8015c570",
+        "bytes": 2
+      },
+      {
+        "address": "0x8015c572",
+        "bytes": 2
+      },
+      {
+        "address": "0x8015c574",
+        "bytes": 2
+      },
+      {
+        "address": "0x8015c578",
+        "bytes": 2
+      }
+    ],
+    "baseline_v943": {
+      "passed": true,
+      "cases": 121,
+      "app1_sha256": "f6b83372d10d96b8fb070df6790f6e5ed375a457391cab43eae2e9233848a515",
+      "reproduced": [
+        "RESAMPLE page: SHIFT + PATTERN EDIT does nothing, also where stock SHIFT + RECORD SETTING opens the SG page",
+        "SG page, settings 0x36 = 1: the SHIFT chord press posts 0x17 (start) in state 1 and 0x18 (stop, then TOP) in state 2",
+        "stock chord from RESAMPLE: the kit observer selects melodic when the chord is still held on arrival"
+      ],
+      "sg_page_live": [
+        {
+          "state": 1,
+          "key": 21,
+          "posts_at_press": [
+            "0x17"
+          ]
+        },
+        {
+          "state": 1,
+          "key": 22,
+          "posts_at_press": [
+            "0x17"
+          ]
+        },
+        {
+          "state": 2,
+          "key": 21,
+          "posts_at_press": [
+            "0x18"
+          ]
+        },
+        {
+          "state": 2,
+          "key": 22,
+          "posts_at_press": [
+            "0x18"
+          ]
+        }
+      ],
+      "stock_entry": {
+        "chord_held_on_arrival": "melodic for every start mode (0, 3, 6)",
+        "released_before_arrival": "machine kept"
+      }
+    }
   }
 }

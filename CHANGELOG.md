@@ -1,5 +1,24 @@
 # Changelog
 
+## Synthesized kits v9.43-test4 (test candidate, not yet in the patcher)
+
+Hot resample with the kits (stock: RESAMPLE, pick a pad, SHIFT + RECORD SETTING
+opens the Sound Generator, and the first note starts the take):
+
+- On the RESAMPLE screen with the take armed or running, SHIFT + PATTERN EDIT
+  opens the Sound Generator in drum mode with the last kit. Before, it did
+  nothing there.
+- During a hot resample, SHIFT + PATTERN EDIT and SHIFT + RECORD SETTING on the
+  Sound Generator page switch machines without starting or stopping the take.
+  Before, their press started an armed take before any hit, or stopped a running
+  one: the stock page starts and stops a resample on those keys without checking
+  SHIFT. Unshifted presses still start and stop it.
+- SHIFT + RECORD SETTING from the RESAMPLE screen opens the Sound Generator as
+  you left it (kits or melodic) instead of always switching to melodic.
+- New synth/test_kit_hot_resample.py drives the real stock key handlers on the
+  booted image; with `--baseline` it reproduces the three faults on v9.43.
+  Emulator-checked only.
+
 ## Synthesized kits v9.43 (2026-10-12)
 
 test3, after the second hardware test:

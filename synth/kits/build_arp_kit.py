@@ -10,7 +10,7 @@ import hashlib, importlib, json, os, re, shutil, struct, sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REVISION = "v9.43-test3"
+REVISION = "v9.43-test4"
 PCM_BANK_ADDRESS = 0x60376000
 PCM_FLASH_PLANNING_LIMIT = 0x60400000
 FLASH_BASE = 0x60080000
@@ -24,6 +24,46 @@ TURN_SITES = [
      "mov.w r2, #-1\n", "nop\n"),
     (0x8015CB18, 12, ["movw r0, #0x1144", "movs r1, #0x83", "movt r0, #0x82e0", "movs r2, #1"], "movs r2, #1\n", ""),
 ]
+# Hot resample (kit_shortcut.inc) mirrors or calls this stock code; nothing here
+# is patched. Exact v9.6 instructions (= stock 5.52): (address, size, listing).
+HOT_RESAMPLE_GUARDS = [
+    # RESAMPLE key handler: recorder state in r7, table on key - 0x11.
+    (0x8012D5F0, 44, ["push.w {r4, r5, r6, r7, r8, sb, lr}", "sub sp, #4", "mov r6, r1", "subs r1, #0x11",
+                      "cmp r1, #0x20", "mov r4, r0", "bhi.w #0x8012d6cc", "movw r8, #0xe71c", "movw r2, #0x1a6c",
+                      "movt r8, #0x82e0", "add.w sb, r4, r2", "movs r5, #1", "ldrb.w r7, [r8, #0x39]",
+                      "tbh [pc, r1, lsl #1]"]),
+    # Its default (PATTERN EDIT): the generic key handler, which does nothing there.
+    (0x8012D6CC, 16, ["movs r1, #1", "mov r0, r4", "mov r2, r6", "movs r5, #1", "bl #0x800c9788", "mov r0, r5",
+                      "add sp, #4"]),
+    # RECORD SETTING: with SHIFT and the recorder not idle, the SG page.
+    (0x8012D6E0, 22, ["movs r0, #0x2a", "bl #0x800d9f20", "cmp r7, #0", "beq.w #0x8012d7fc", "cmp r0, #0",
+                      "bne.w #0x8012d818", "movs r5, #0", "b #0x8012d8b6"]),
+    # Idle: with SHIFT and a destination chosen (settings 0x1a), the SG page.
+    (0x8012D7FC, 44, ["cmp r0, #0", "beq.w #0x8012d92c", "movw r0, #0x1144", "movs r1, #0x1a", "movt r0, #0x82e0",
+                      "movs r2, #0", "bl #0x800d94d8", "adds r0, #1", "beq.w #0x8012d9f4", "movs r0, #0x1e",
+                      "bl #0x800da598", "movs r5, #1", "mov r0, r5", "add sp, #4", "pop.w {r4, r5, r6, r7, r8, sb, pc}"]),
+    # SG key handler: table on key - 0x10.
+    (0x8015C550, 24, ["push {r4, r5, r6, r7, lr}", "sub sp, #0x14", "mov r2, r1", "subs r1, #0x10", "cmp r1, #0x30",
+                      "mov r4, r0", "bhi #0x8015c5cc", "movw r3, #0x1a6c", "adds r6, r4, r3", "tbh [pc, r1, lsl #1]"]),
+    # Settings 0x36 = 1: start the take in state 1, stop it in state 2 (no SHIFT test).
+    (0x8015C738, 62, ["movw r0, #0x1144", "movs r1, #0x36", "movt r0, #0x82e0", "movs r2, #0", "bl #0x800d94d8",
+                      "cmp r0, #1", "bne.w #0x8015c5d8", "movw r0, #0xe71c", "movt r0, #0x82e0",
+                      "ldrb.w r0, [r0, #0x39]", "cmp r0, #2", "beq.w #0x8015c89c", "cmp r0, #1", "bne.w #0x8015c5d8",
+                      "movs r0, #0x17", "movs r1, #0", "movs r2, #0", "bl #0x800e25c0", "movs r0, #1", "add sp, #0x14",
+                      "pop {r4, r5, r6, r7, pc}"]),
+    # SG pad: the first note of a hot resample starts the take (kit hits too).
+    (0x8015C0F2, 46, ["movw r0, #0x1144", "movs r1, #0x36", "movt r0, #0x82e0", "movs r2, #0", "bl #0x800d94d8",
+                      "cmp r0, #1", "bne #0x8015c120", "movw r0, #0xe71c", "movt r0, #0x82e0", "ldrb.w r0, [r0, #0x39]",
+                      "cmp r0, #1", "bne #0x8015c120", "movs r0, #0x17", "movs r1, #0", "movs r2, #0",
+                      "bl #0x800e25c0"]),
+    # Page request (called by the RESAMPLE twin, as the stock jump does).
+    (0x800DA598, 24, ["push {r4, lr}", "mov r4, r0", "cmp r0, #1", "bne #0x800da5b0", "bl #0x800d4a60", "cmp r0, #0",
+                      "it ne", "popne {r4, pc}", "adr r0, #0x6c", "bl #0x800d31c6"]),
+]
+# Jump-table halfwords: RESAMPLE PATTERN EDIT -> default, RECORD SETTING -> 0x8012d6e0;
+# SG PATTERN SELECT, PATTERN EDIT, RECORD SETTING, PITCH/SPEED -> 0x8015c738.
+HOT_RESAMPLE_TABLE_GUARDS = [(0x8012D624, 0x58), (0x8012D626, 0x62), (0x8015C570, 0xE8), (0x8015C572, 0xE8),
+                             (0x8015C574, 0xE8), (0x8015C578, 0xE8)]
 
 def sha(b): return hashlib.sha256(b).hexdigest()
 
@@ -378,6 +418,22 @@ def main():
     image[off:off+12]=replacement
     info['kit_shortcut_patch']={'address':shortcut_site,'original_hex':expected.hex(),'replacement_hex':replacement.hex()}
     info['kit_shortcut']='SHIFT + PATTERN EDIT: last kit; SHIFT + RECORD SETTING: melodic SG. Chord captured on press; either release order.'
+    # The hot-resample rules run in the same gate; check the stock code they rely on.
+    hot_guards=[]
+    for site,size,expected_listing in HOT_RESAMPLE_GUARDS:
+        off=builder.file_offset(bytes(image),site,size)
+        found=builder.listing(bytes(image[off:off+size]),site)
+        if found!=expected_listing:raise ValueError(f'hot resample guard {site:#x}: expected {expected_listing}, found {found}')
+        hot_guards.append({'address':site,'bytes':size,'sha256':sha(bytes(image[off:off+size]))})
+    for site,half in HOT_RESAMPLE_TABLE_GUARDS:
+        off=builder.file_offset(bytes(image),site,2)
+        if struct.unpack_from('<H',image,off)[0]!=half:raise ValueError(f'hot resample table guard {site:#x}')
+        hot_guards.append({'address':site,'bytes':2,'halfword':half})
+    info['kit_hot_resample']={'guards':hot_guards,'patches':'none beyond kit_shortcut_patch',
+        'resample_page':'Take armed or recording (the stock SHIFT + RECORD SETTING condition): SHIFT + PATTERN EDIT selects the last kit and requests the SG page (0x800da598), handled on press; its release is swallowed.',
+        'stock_entry':'SHIFT + RECORD SETTING from the RESAMPLE page keeps the current machine (kit or melodic); its release is swallowed.',
+        'sg_page':'Settings 0x36 = 1 and recorder state 1 or 2: the native press of SHIFT + PATTERN EDIT or SHIFT + RECORD SETTING is swallowed (no start or stop); the release switches machines. Unshifted presses keep the stock start/stop.',
+        'first_hit':'Unchanged stock: the first SG pad note in state 1 posts the start (0x8015c11c), in drum or melodic mode.'}
     # Override SHIFT only for the three stock SG knob-query callers.
     site=0x800d9f20;off=builder.file_offset(bytes(image),site,12)
     expected=bytes.fromhex('81b2542902d90020704700bf')
