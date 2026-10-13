@@ -29,6 +29,12 @@ local in your browser. The patcher produces APP1 only; APP0 remains stock.
 - After the first REC press, the destination pad you choose blinks until the
   second REC press imprints it, as in the stock firmware (melodic and drum mode).
   The two kit shortcuts do nothing between those presses.
+- Known issue: drum REC takes its length from the melodic Pad Length, which
+  drum mode doesn't show. If Pad Length is set to a waveform-cycle value instead
+  of a time, drum REC saves only a tiny blip. Workaround: in melodic mode
+  (SHIFT + RECORD SETTING), tap SHIFT for the Pad Length / Balance page and set
+  Pad Length to a time such as 2 seconds, then return to drums
+  (SHIFT + PATTERN EDIT). The next kit build records each drum at its own length.
 - Strike a pad to select it. Hold a pad and turn VALUE outside menu edit mode
   to choose a sound from that machine's inventory.
 - KIT stays between TR808 and TR727. Turning beyond either end keeps that kit.

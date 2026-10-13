@@ -244,6 +244,7 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
             <li><strong>Change a pad's sound:</strong> hold the pad and turn VALUE to step through that machine's sounds.</li>
             <li><strong>VALUE menu:</strong> ARP, RATE, HOLD and BPM (a readout), then KIT, PAD, SOUND and LEVEL (0&ndash;127). KIT steps through the 13 machines.</li>
             <li><strong>REC:</strong> play, press REC, choose a pad (it blinks), then press REC again. It records the last pad you hit plus up to three others hit within 100 ms before it, each with its own timing and velocity. You don't need to hold the pads.</li>
+            <li><strong>Known issue:</strong> REC takes its length from the melodic Pad Length, which drum mode doesn't show. If Pad Length is set to a waveform-cycle value instead of a time, only a tiny blip is saved. Workaround: in melodic mode (SHIFT + RECORD SETTING), tap SHIFT for the Pad Length / Balance page and set Pad Length to a time such as 2 seconds, then return to drums. A fix is coming with the next kit build.</li>
           </ul>
           <p class="t">The arpeggiator also runs in drum mode and steps through the held pads; A.OCT applies only to melodic mode. Kit edits are not saved and reset at power-on.</p>
         </details>
