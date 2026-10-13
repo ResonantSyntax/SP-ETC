@@ -119,7 +119,7 @@ async function choose(page, bytes, name = 'SP404MKII_APP1.bin') {
   const html = fs.readFileSync(path.join(root,'index.html'),'utf8');
   const readme = fs.readFileSync(path.join(root,'README.md'),'utf8');
   assert.match(html,/Envelope preset guide \(ENV\)/);
-  assert.match(html,/doomos-patcher\.js\?v=kits-v9-42-11e8faa1/);
+  assert.match(html,/doomos-patcher\.js\?v=kits-v9-43-f6b83372/);
   assert.match(readme,/Sound Generator envelopes \(v9\.9\.3\)/);
   assert.match(readme,/## Scale pads \(v9\.9\.3\)/);
   assert.match(readme,/## Arpeggiator \(v9\.9\.3\)/);
@@ -187,16 +187,16 @@ async function choose(page, bytes, name = 'SP404MKII_APP1.bin') {
   assert.equal(kitPage.get('synthPoly').checked,false);
   const kitOverlay=api.fromBase64(kitPage.context.window.DOOMOS_KITS_PATCH);
   const kitResult=api.applyPatch(kitOverlay,doom.bytes);
-  assert.equal(kitResult.digest,'11e8faa1dc0ef378fbb63af842a8d6991f28608803f120bd3affa98e5f574fa5');
-  assert.equal(kitResult.bytes.length,3073792);
-  assert.equal(JSON.stringify(kitPage.context.window.DOOMOS_KITS.kit_selector_range),'[1,11]');
+  assert.equal(kitResult.digest,'f6b83372d10d96b8fb070df6790f6e5ed375a457391cab43eae2e9233848a515');
+  assert.equal(kitResult.bytes.length,3085968);
+  assert.equal(JSON.stringify(kitPage.context.window.DOOMOS_KITS.kit_selector_range),'[1,13]');
   assert.throws(()=>api.applyPatch(kitOverlay,stock),/unsupported firmware/);
   kitPage.get('synthPoly').checked=true;
   kitPage.get('synthKits').checked=true;kitPage.get('synthKits').listeners.change();
   assert.equal(kitPage.get('synthPoly').checked,false,'selection excludes legacy generator');
   await choose(kitPage,stock);await kitPage.get('patch').listeners.click();
   assert.equal(digest(new Uint8Array(await kitPage.blob().arrayBuffer())),kitResult.digest);
-  assert.match(kitPage.get('status').textContent,/Sound Generator \+ Kits v9\.42/);
+  assert.match(kitPage.get('status').textContent,/Sound Generator \+ Kits v9\.43/);
   assert.equal(kitPage.get('synthKits').disabled,true);
   kitPage.get('reset').listeners.click();assert.equal(kitPage.get('synthKits').disabled,false);
   assert.equal(kitPage.get('synthKits').checked,true,'reset preserves chosen kit option');
@@ -214,5 +214,5 @@ async function choose(page, bytes, name = 'SP404MKII_APP1.bin') {
   assert.equal(kitPage.blob(),null);assert.equal(kitPage.get('download').hidden,true);
   assert.equal(kitPage.get('synthKits').disabled,false);
   assert.match(kitPage.get('status').textContent,/came out wrong/);
-  console.log('PASS: optional kits, exact v9.42 output, legacy selections, reset, corruption rejection; exact stock DOOM/poly-v4/v9.9.3 downloads, reset, header-image removal, hash gates and corrupt-overlay rejection.');
+  console.log('PASS: optional kits, exact v9.43 output, legacy selections, reset, corruption rejection; exact stock DOOM/poly-v4/v9.9.3 downloads, reset, header-image removal, hash gates and corrupt-overlay rejection.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -27,3 +27,6 @@ DOOM-poly-v4-SoundGenerator-v9.9.3-arp  e111c584655c4bc994de75bb05554dfbcc0cabf6
 
 # v9.42: synthesized kits, distinct shortcuts/menus, tap SHIFT, kit selector excludes OFF; exact candidate hardware-unverified.
 DOOM-SoundGenerator-Kits-v9.42  11e8faa1dc0ef378fbb63af842a8d6991f28608803f120bd3affa98e5f574fa5  3073792
+# v9.43 (build v9.43-test3): thirteen re-fitted kits (adds Lel' UDS, Mini Pops 7, TR-707, TR-727), chord REC,
+# REC pad blink restored, drum menu without A.OCT, BPM readout. test2 played on hardware; test3 emulator-checked.
+DOOM-SoundGenerator-Kits-v9.43  f6b83372d10d96b8fb070df6790f6e5ed375a457391cab43eae2e9233848a515  3085968

@@ -1,6 +1,6 @@
 # Changelog
 
-## Synthesized kits v9.43 (test candidate, not yet published)
+## Synthesized kits v9.43 (2026-10-12)
 
 test3, after the second hardware test:
 

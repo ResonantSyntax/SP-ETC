@@ -4,9 +4,9 @@
   "app1_bytes": 3085968,
   "source_files": 22,
   "hardware_verified": false,
-  "public_source_rebuild_matches": null,
-  "browser_checks_passed": null,
-  "notes": "Emulator checks only (synth/test_kits.py, test_kit_capture.py, test_kit_chord.py, test_kit_shortcut.py). test1 and test2 were played on hardware; test3 trims the drum VALUE menu. Browser overlay tests apply to the published patcher option, which still carries v9.42.",
+  "public_source_rebuild_matches": true,
+  "browser_checks_passed": true,
+  "notes": "Emulator checks (synth/test_kits.py, test_kit_capture.py, test_kit_chord.py, test_kit_shortcut.py), the shipped patcher (synth/test_browser.cjs: exact v9.43 output from stock 5.52, other options unchanged) and a clean rebuild from stock with the documented build_v9 -> build_scales --fixes -> build_kits commands all match this APP1. test1 and test2 were played on hardware; test3 adds two VALUE-menu changes.",
   "host_arm": {
     "schema": "kit-unicorn-check-v2",
     "passed": true,

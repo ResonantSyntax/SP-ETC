@@ -1,12 +1,11 @@
-# Synthesized machine kits v9.43 (test candidate)
+# Synthesized machine kits v9.43
 
-This branch carries the v9.43-test3 kit candidate: thirteen kits, every voice
+The patcher's Sound Generator + Kits option produces v9.43 (build
+v9.43-test3, APP1 SHA-256 `f6b83372…a515`): thirteen kits, every voice
 re-measured against references. test1 and test2 were played on hardware. test2
 answered the first report (kick level, FM kick and bells, recording struck drums
 together, the REC destination pad blink); test3 trims the drum VALUE menu after
-the second. test3 itself has emulator verification only. The published patcher
-option is still the v9.42 kits until this candidate passes a hardware test and
-`publish_kits.py` is run.
+the second and has emulator verification only.
 
 Select **Sound Generator + Kits** in the patcher. This separate option
 includes the melodic generator and shared arpeggiator. Both browser choices
@@ -134,9 +133,11 @@ python synth/build_scales.py out/v9.5-parent/SP404MKII_APP1.bin --zig /path/to/z
 python synth/build_kits.py out/v9.6/SP404MKII_APP1.bin --zig /path/to/zig --out out/kits-v943
 ```
 
-The kit builder requires only the files in this repository. Patch sites retain
-exact-byte guards. Zero-filled module sections are packed into guarded scatter
-rows and reconstructed to verify the complete runtime image before writing APP1.
+A clean rebuild from stock 5.52 with these commands reproduces the published
+APP1 (`f6b83372…a515`, 3,085,968 bytes). The kit builder requires only the
+files in this repository. Patch sites retain exact-byte guards. Zero-filled
+module sections are packed into guarded scatter rows and reconstructed to verify
+the complete runtime image before writing APP1.
 Module: 148,360 bytes at run time (limit 319,488), 114,016 stored.
 
 The kit builder also restores one stock instruction block outside the module.

@@ -205,7 +205,7 @@ if (typeof module === 'object' && module.exports) {
           ' checked> Sound Generator (4 voices)') +
         '</label></div>' : '') +
       (window.DOOMOS_KITS ?
-        '<div class="synth-choice"><label><input type="checkbox" id="synthKits"> Sound Generator + Kits v9.42 (11 synthesized kits)</label></div>' : '') +
+        '<div class="synth-choice"><label><input type="checkbox" id="synthKits"> Sound Generator + Kits v9.43 (13 synthesized kits)</label></div>' : '') +
       '<div class="actions">' +
       '<button type="button" class="btn" id="patch" disabled>Patch firmware</button>' +
       '<a class="btn" id="download" download="SP404MKII_APP1.bin" hidden>Download patched firmware ↓</a>' +
@@ -319,7 +319,7 @@ if (typeof module === 'object' && module.exports) {
         download.hidden = false;
         reset.hidden = false;
         patchBtn.hidden = true;
-        say('Done. ' + (addKits ? 'Sound Generator + Kits v9.42' : addPoly ? 'Sound Generator (4 voices' +
+        say('Done. ' + (addKits ? 'Sound Generator + Kits v9.43' : addPoly ? 'Sound Generator (4 voices' +
             (addWaves ? ', 17 new waves, envelopes, 34 scales, arpeggiator, v9.9.3)' : ')') : 'Base build without synth additions') +
             ' has been patched into firmware ' + result.label + '. '
             + 'Download it and keep the name SP404MKII_APP1.bin.', 'ok');
