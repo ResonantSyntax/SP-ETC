@@ -193,14 +193,14 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
           <p>The same Sound Generator plus 13 synthesized drum kits: <span class="nw">TR-808</span>, <span class="nw">DR-110</span>, <span class="nw">KPR-77</span>, <span class="nw">Lel' UDS</span>, <span class="nw">TR-909</span>, <span class="nw">TR-606</span>, <span class="nw">SDS-V</span>, <span class="nw">Mini Pops 7</span>, <span class="nw">CR-78</span>, <span class="nw">CR-8000</span>, <span class="nw">TR-707</span>, <span class="nw">TR-727</span> and a <span class="nw">DX-style</span> FM kit.</p>
         </section>
       </div>
-      <p class="versions-note">Sound Generator + Kits has its own version number: v9.43 is built on Sound Generator v9.9.3, not an older release of it. With neither build ticked, the patcher makes the base build without synth additions.</p>
+      <p class="versions-note">Sound Generator + Kits has its own version number: v9.43 is built on Sound Generator v9.9.3, not an older release of it. With neither build ticked, the patcher makes the base build without synth additions. An experimental MIDI test build (v9.44-test1) is also offered below; it has not been played on hardware yet.</p>
     </div>
   </section>
   <main>
     <article class="row">
       <span class="n">1</span>
       <div class="body">
-        <p class="t">Works with stock firmware <strong data-doomos="firmware-list"></strong>. Tick one build: Sound Generator (v9.9.3) or Sound Generator + Kits (v9.43). Both start unticked.</p>
+        <p class="t">Works with stock firmware <strong data-doomos="firmware-list"></strong>. Tick one build: Sound Generator (v9.9.3), Sound Generator + Kits (v9.43), or the experimental MIDI test build (v9.44-test1). All start unticked.</p>
         <div id="doomos-patcher"></div>
         <p class="t">Our <a class="inline" href="https://github.com/tracelistener/doom-os-etc./blob/main/synth/ARP.md">arpeggiator notes and test instructions</a> · <a class="inline" href="https://github.com/tracelistener/doom-os-etc./blob/main/synth/KITS.md">kit controls and test status</a> · <a class="inline" href="https://github.com/tracelistener/doom-os-etc./blob/main/synth/SCALES.md">v9.6 scales and fixes</a> · <a class="inline" href="https://github.com/tracelistener/doom-os-etc./blob/main/synth/WAVES.md">wave list</a> · <a class="inline" href="https://github.com/tracelistener/doom-os-etc.">source code</a> · <a class="inline" href="https://tracelistener.github.io/sp404mk2-sound-generator/">Wave Lab preview</a></p>
         <details class="env-guide">
@@ -247,6 +247,19 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
           </ul>
           <p class="t">The arpeggiator also runs in drum mode and steps through the held pads; A.OCT applies only to melodic mode. Kit edits are not saved and reset at power-on.</p>
         </details>
+        <details class="env-guide">
+          <summary>MIDI test guide (v9.44-test1, experimental)</summary>
+          <p class="t">Only in the test build, and only while the Sound Generator page is open. It has passed the emulator checks but has not been played on hardware yet, so keep your known-good update at hand.</p>
+          <ul>
+            <li><strong>Channel:</strong> M.CH, the last VALUE item in both modes (1&ndash;16, default 16), is the channel the Sound Generator plays. Channel 16 is also the SP's control channel, so for sequencing a free channel such as 11&ndash;15 avoids triggering SP functions when you leave the page. M.CH returns to 16 at power-on.</li>
+            <li><strong>Drum notes:</strong> 36&ndash;51 play pads 1&ndash;16 (36 = pad 1, the kick in most kits); other notes are ignored. A MIDI hit acts like a pad strike, so PAD, REC and the arp treat it as one.</li>
+            <li><strong>Drum CCs:</strong> three per pad, in the order Tune, Decay, Level. Pads 1&ndash;4 use CC 20&ndash;31, pads 5&ndash;12 use 40&ndash;63 and pads 13&ndash;16 use 102&ndash;113 (pad 1 = 20, 21, 22; pad 2 = 23, 24, 25, and so on). The last pad heard takes Tone 114, Sweep 115, Noise 116 and Attack 117. CC 64 is the knob centre: Tune 0, the others 50%.</li>
+            <li><strong>Synth CCs:</strong> TYPE 70, FREQ 71, LEVEL 72, DUTY 73, BALANCE 74, ENV 75, TUNE 76. Keyboards whose knobs send CC 71&ndash;74 will move these; put such a keyboard on another channel.</li>
+            <li><strong>Arpeggiator CCs:</strong> ARP 33, RATE 34, A.OCT 35 (melodic only), HOLD 36.</li>
+            <li><strong>Panic:</strong> CC 123 releases notes held by MIDI and stops the arp. CC 120 also fades out every Sound Generator voice, including notes you hold on the pads.</li>
+          </ul>
+          <p class="t">CC changes are not saved, like knob edits. Full chart and test status: <a class="inline" href="https://github.com/tracelistener/doom-os-etc./blob/main/synth/KITS_MIDI.md">KITS_MIDI.md</a>.</p>
+        </details>
       </div>
     </article>
     <article class="row">
@@ -270,6 +283,7 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
 <script src="synth-data.js?v=waves-v9-9-3-e111c584"></script>
 <script src="waves-data.js?v=waves-v9-9-3-e111c584"></script>
 <script src="kits-data.js?v=kits-v9-43-f6b83372"></script>
-<script src="doomos-patcher.js?v=kits-v9-43-f6b83372"></script>
+<script src="kits-midi-data.js?v=kits-midi-v9-44-test1-d47f46d4"></script>
+<script src="doomos-patcher.js?v=kits-v9-43-midi-v9-44-test1"></script>
 </body>
 </html>

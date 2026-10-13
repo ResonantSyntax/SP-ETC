@@ -30,3 +30,6 @@ DOOM-SoundGenerator-Kits-v9.42  11e8faa1dc0ef378fbb63af842a8d6991f28608803f120bd
 # v9.43 (build v9.43-test3): thirteen re-fitted kits (adds Lel' UDS, Mini Pops 7, TR-707, TR-727), chord REC,
 # REC pad blink restored, drum menu without A.OCT, BPM readout. test2 played on hardware; test3 emulator-checked.
 DOOM-SoundGenerator-Kits-v9.43  f6b83372d10d96b8fb070df6790f6e5ed375a457391cab43eae2e9233848a515  3085968
+# v9.44-test1 (experimental patcher test option): v9.43 + external MIDI (M.CH, drum notes 36-51, CC chart,
+# CC 120/123). Emulator-checked only. Source and overlay script: branch claude/kits-midi.
+DOOM-SoundGenerator-Kits-MIDI-v9.44-test1  d47f46d4204a90366ac06774050b9ee4c7b9cdfb6470ca65be9f10c24ad1a51d  3088608
