@@ -132,6 +132,7 @@ EXPORT void kit_finish_begin_block(int frames) {
     m->owner = newest; m->owner_epoch = m->event_epoch[newest];
     m->owner_parent_age = KIT_PARENT_AGE[newest];
     m->remaining = (u32)frames; ++m->triggers;
+    kit_last_hit = (u8)(pad & 15);
     if (kit_edit_pad != (u8)pad) { kit_edit_pad = (u8)pad; kit_edit_changed = 1; }
 }
 

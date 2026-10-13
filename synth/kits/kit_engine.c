@@ -7,7 +7,8 @@
  * KIT (VALUE item 11) OFF leaves every voice to v9. Any other KIT plays the
  * kit on every TYPE: the drum is the pad that started the voice
  * (state+0x1AC); an arp step uses the pad its note came from (the arp's held
- * list, octaves allowed); MIDI uses note % 16. ENV is bypassed for kit voices
+ * list, octaves allowed); MIDI notes 36..51 arrive as strikes of pads 1..16
+ * (kit_midi.inc). ENV is bypassed for kit voices
  * (their v9 envelope slot is set to OFF from the second sample) and a
  * released kit voice holds the stock fade counter (+0x4C) at its start while
  * its drum rings, except during stealing or all-stop. The stock LEVEL and
@@ -162,6 +163,8 @@ static u8 kit_export_active,kit_export_mode,kit_export_count,kit_export_bd_slot;
 static u32 kit_export_origin[4],kit_export_seed[4],kit_export_delay[4],kit_export_frame[4];
 static kit_pad kit_export_recipe[4],kit_hit_recipe[16];
 EXPORT volatile u8 kit_edit_changed;         /* the edit pad followed a hit: redraw */
+EXPORT volatile u8 kit_last_hit;             /* 0..15: the pad heard last (pad, MIDI or arp) */
+EXPORT volatile u8 kit_midi_channel = 15;    /* M.CH (item 21): 0..15 = MIDI channel 1..16 */
 EXPORT kit_pad kit_pads[KIT_KITS][KIT_PADS] __attribute__((section(".data"))) = {{{0}}};
 EXPORT const u32 kit_pad_count = KIT_PADS;
 EXPORT volatile u8 kit_pads_ready __attribute__((section(".data"))) = 0;
@@ -913,6 +916,7 @@ static float kit_output_slot(const u8 *s, int i) {
             /* Both selected and suppressed BD slots were prepared before any
              * voice rendered. Never trigger or transfer ownership here. */
         } else kit_start(v, i, pad);
+        if (i < 4) kit_last_hit = (u8)(pad & 15);
         if (i < 4 && kit_edit_pad != (u8)pad) { kit_edit_pad = (u8)pad; kit_edit_changed = 1; }
     }
     v->source_frame = i < 4 ? kit_live_cursor[i]++ : v->n+(kit_export_active?kit_export_origin[(i-4)&3]:0);
@@ -938,8 +942,14 @@ static float kit_render(kit_voice *v) {
     return kit_render_slot(v,0);
 }
 
-/* ---- VALUE menu items 11..17 ---- */
-static const char kit_item_names[10][6] = {"KIT", "PAD", "SOUND", "TUNE", "DECAY", "TONE", "LEVEL", "SWEEP", "NOISE", "ATTCK"};
+#ifdef KIT_IN_ARP
+static void kit_midi_channel_changed(void);  /* kit_midi.inc: all-stop, forget the arp's held notes */
+#else
+static void kit_midi_channel_changed(void) {}
+#endif
+
+/* ---- VALUE menu items 11..21 (21 = M.CH, the MIDI channel, in both modes) ---- */
+static const char kit_item_names[11][6] = {"KIT", "PAD", "SOUND", "TUNE", "DECAY", "TONE", "LEVEL", "SWEEP", "NOISE", "ATTCK", "M.CH"};
 static const char kit_kit_names[KIT_KITS + 1][6] = {"OFF", "TR808", "DR110", "KPR77", "UDS", "FM", "TR909", "TR606", "SDS-V", "MP-7", "CR78", "CR8K", "TR707", "TR727"};
 static const char kit_sound_names[KIT_SOUNDS][6] = {
     "FMKik", "FMSnr", "FMTom", "FMHat", "FMBel", "FMPrc", "FMLog", "FMCow",
@@ -973,11 +983,12 @@ static __attribute__((noinline, minsize)) kit_pad *kit_edit(void) {
 }
 EXPORT __attribute__((noinline, minsize)) void kit_item_name(int item, char *out) {
     int k = item - 11;
-    kit_copy(out, kit_item_names[k < 0 ? 0 : k > 9 ? 9 : k]);
+    kit_copy(out, kit_item_names[k < 0 ? 0 : k > 10 ? 10 : k]);
 }
 EXPORT __attribute__((noinline, minsize)) void kit_item_text(int item, char *out) {
     kit_pad *P = kit_edit();
     switch (item) {
+    case 21: kit_num(out, (kit_midi_channel & 15) + 1, 0); break;
     case 11: kit_copy(out, kit_kit_names[kit_mode <= KIT_KITS ? kit_mode : 0]); break;
     case 12: kit_num(out, (kit_edit_pad & 15) + 1, 0); break;
     case 13: kit_copy(out, P->sound==KIT_OFF_SOUND ? "--" : kit_sound_names[P->sound % KIT_SOUNDS]); break;
@@ -992,6 +1003,10 @@ EXPORT __attribute__((noinline, minsize)) void kit_item_step(int item, int dir) 
     kit_pad *P = kit_edit();
     kit_edit_changed = 1;
     switch (item) {
+    case 21: { /* Notes held on the old channel would never get their note-offs. */
+        int c = (int)(kit_midi_channel & 15) + dir; c = c < 0 ? 0 : c > 15 ? 15 : c;
+        if (c != (kit_midi_channel & 15)) { kit_midi_channel = (u8)c; kit_midi_channel_changed(); }
+        break; }
     case 11: { /* Only entry shortcuts change between melodic and drum modes. */
         if(!kit_mode)break;
         int m = (int)kit_mode + dir; kit_mode = (u8)(m < 1 ? 1 : m > KIT_KITS ? KIT_KITS : m); break; }
@@ -1019,14 +1034,21 @@ EXPORT __attribute__((noinline, minsize)) void kit_item_step(int item, int dir) 
 /* ---- hold a pad and turn VALUE: that pad's SOUND ---- */
 EXPORT volatile u16 kit_pads_down;           /* pads physically held (bit = pad) */
 
+/* A pad struck in drum mode, by hand or by MIDI: REC takes it (with its
+ * velocity), it is the last pad heard, and PAD follows it. */
+static void kit_strike(int pad, int vel) {
+    if (!kit_mode || (u32)pad >= 16) return;
+    kit_record_bd_valid=0;kit_record_pad=(u8)pad;kit_record_velocity=(u8)(vel>127?127:vel);kit_hit_velocity[pad]=kit_record_velocity;
+    kit_last_hit = (u8)pad;
+    if (kit_edit_pad != (u8)pad) { kit_edit_pad = (u8)pad; kit_edit_changed = 1; }
+}
+
 /* Every pad note event (ARP on or off): which pads are down, and PAD follows a press. */
 EXPORT void kit_note_seen(int src, int vel) {
     if ((u32)src >= 16) return;
     if (vel) {
-        if(kit_mode){kit_record_bd_valid=0;kit_record_pad=(u8)src;kit_record_velocity=(u8)(vel>127?127:vel);kit_hit_velocity[src]=kit_record_velocity;}
+        kit_strike(src, vel);
         kit_pads_down = (u16)(kit_pads_down | (1u << src));
-        int logical = src;
-        if (kit_mode && kit_edit_pad != (u8)logical) { kit_edit_pad = (u8)logical; kit_edit_changed = 1; }
     } else kit_pads_down = (u16)(kit_pads_down & ~(1u << src));
 }
 
@@ -1036,20 +1058,27 @@ EXPORT void kit_note_seen(int src, int vel) {
 #define KIT_SETTING_STEP ((void (*)(u32, int, int, int, int))0x800BF8C9u)
 #endif
 
+#ifndef KIT_HOST
+/* The VALUE menu of each mode. Melodic: SCALE..TUNE (0..5), ARP..BPM (6..10)
+ * and M.CH (21). Drum: ARP RATE HOLD BPM KIT PAD SOUND LEVEL M.CH; A.OCT (8)
+ * is melodic only and TUNE..TONE, SWEEP..ATTACK are on the knobs. */
+static int kit_menu_has(int item) {
+    if (item == 21) return 1;
+    if (kit_mode) return (item >= 6 && item <= 13 && item != 8) || item == 17;
+    return item >= 0 && item <= 10;
+}
+#endif
+
 /* VALUE turned outside edit mode (0x8015cb08 / 0x8015cb18): with KIT on and a
  * pad held, step that pad's SOUND and put the cursor on SOUND. 0 = not ours. */
 EXPORT int kit_turn(int dir) {
     if(!kit_mode || !kit_pads_down || !(kit_pads_down & (1u<<(kit_edit_pad&15)))){
 #ifndef KIT_HOST
-        int cur=KIT_SETTING_GET(KIT_SETTINGS,0x83,0);
-        int next=cur+(dir<0?-1:1);
-        if(kit_mode){
-            if(dir<0 && next>13)next=13;
-            if(dir>=0 && next>13)next=17;
-            if(next==8)next=dir<0?7:9;              /* A.OCT is melodic only */
-            if(next<6)next=6;if(next>17)next=17;
-        }else{if(next<0)next=0;if(next>10)next=10;}
-        if(next!=cur)KIT_SETTING_STEP(KIT_SETTINGS,0x83,next-cur,0,0);
+        int cur=KIT_SETTING_GET(KIT_SETTINGS,0x83,0),d=dir<0?-1:1,next=-1;
+        /* The next item of this mode's menu; at either end stay (or come back in). */
+        for(int n=cur+d;n>=0&&n<=21;n+=d)if(kit_menu_has(n)){next=n;break;}
+        if(next<0)for(int n=cur;n>=0&&n<=21;n-=d)if(kit_menu_has(n)){next=n;break;}
+        if(next>=0&&next!=cur)KIT_SETTING_STEP(KIT_SETTINGS,0x83,next-cur,0,0);
 #endif
         return 1;
     }
@@ -1067,6 +1096,7 @@ EXPORT int kit_turn(int dir) {
 #include "kit_shortcut.inc"
 #include "kit_output.inc"
 #include "kit_record.inc"
+#include "kit_midi.inc"
 #endif
 
 #ifdef KIT_HOST

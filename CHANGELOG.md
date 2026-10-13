@@ -1,5 +1,25 @@
 # Changelog
 
+## Synthesized kits v9.44 (test candidate, not yet in the patcher)
+
+test1, for sequencing the Sound Generator from outside instead of resampling:
+
+- M.CH, the last VALUE item in both modes (1–16, default 16), chooses the MIDI
+  channel the Sound Generator plays while its page is open. 16 keeps the stock
+  routing. With another channel, channel 16 stays the SP's control channel on
+  every page. Changing M.CH stops held notes so none can hang.
+- Drum mode: MIDI notes 36–51 play pads 1–16 as pad strikes (same sound, pad
+  light, PAD, REC and arp behaviour). Other notes are ignored. They used to
+  land on pads by note mod 16, from note 48.
+- CCs on M.CH set every parameter, avoiding all CCs the SP already uses.
+  Drums: Tune, Decay and Level for each pad (pads 1–4 CC 20–31, 5–12 CC 40–63,
+  13–16 CC 102–113), plus Tone, Sweep, Noise and Attack (114–117) for the last
+  pad heard; a drum CC selects its pad on screen. Melodic: TYPE 70, FREQ 71,
+  LEVEL 72, DUTY 73, BALANCE 74, ENV 75, TUNE 76. Arp: 33–36. CC 123 and 120
+  release MIDI notes and stop the arp; 120 also fades out every voice. RAM only.
+- New emulator test `synth/test_kit_midi.py` drives the stock MIDI dispatcher on
+  the built image. Hardware test pending.
+
 ## Synthesized kits v9.43 (2026-10-12)
 
 test3, after the second hardware test:

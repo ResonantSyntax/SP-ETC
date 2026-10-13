@@ -10,7 +10,7 @@ import hashlib, importlib, json, os, re, shutil, struct, sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REVISION = "v9.43-test3"
+REVISION = "v9.44-test1"
 PCM_BANK_ADDRESS = 0x60376000
 PCM_FLASH_PLANNING_LIMIT = 0x60400000
 FLASH_BASE = 0x60080000
@@ -201,7 +201,8 @@ def generate(arp_source: str, engine: str, symbols: dict) -> str:
     defs = "".join(f"#define {k} {symbols[v] & ~1:#x}u\n" for k, v in
                    (("KIT_ENV_RESTART_ADDR", "env_restart"), ("KIT_ENV_QUICK_ADDR", "env_quick"),
                     ("KIT_ENV_FAST_ADDR", "env_fast"), ("KIT_ENV_SLOT_ADDR", "env_slot"),
-                    ("KIT_ORIGINAL_EXPORT_MIX", "export_mix"), ("KIT_ENV_AGE_ADDR", "env_age")))
+                    ("KIT_ORIGINAL_EXPORT_MIX", "export_mix"), ("KIT_ENV_AGE_ADDR", "env_age"),
+                    ("KIT_PAD_NOTE_ADDR", "kb_pad_note")))
     # The kit engine is compiled without multiply-add contraction (as its host
     # reference is); the arp code after it returns to clang's default (on).
     block = ("/* ==== Kit mode (kit_engine.c), inserted by build_arp_kit.py ==== */\n#define KIT_IN_ARP\n"
@@ -224,7 +225,8 @@ def generate(arp_source: str, engine: str, symbols: dict) -> str:
         ("EXPORT void arp_item_step(int item, int dir) {\n",
          "EXPORT void arp_item_step(int item, int dir) {\n    if (item >= 11) { kit_item_step(item, dir); arp_dirty = 1; return; }\n"),
         ("    refresh_tempo();\n    if (!arp_dirty) return 0;",
-         "    refresh_tempo();\n    if (kit_edit_changed) { kit_ui_invalidate(); kit_edit_changed = 0; arp_dirty = 1; }\n    if (!arp_dirty) return 0;"),
+         "    refresh_tempo();\n    kit_cc_apply(); /* melodic and arp CCs, in the UI task */\n"
+         "    if (kit_edit_changed) { kit_ui_invalidate(); kit_edit_changed = 0; arp_dirty = 1; }\n    if (!arp_dirty) return 0;"),
         # A.OCT is a melodic control: hidden from the drum menu, and ignored
         # there so an octave set in melodic mode cannot double drum hits.
         ("    int lo = arp_oct < 0 ? arp_oct : 0, hi = arp_oct > 0 ? arp_oct : 0, count = 0;\n",
@@ -250,6 +252,7 @@ EXPORT void arp_note_event(u32 self, int note, int vel, int r3, int source) {
     arp_note_event_body(self, note, vel, r3, source);
 }
 EXPORT void arp_midi_event(u32 self, int note, int vel, int r3) {
+    if (kit_mode) { kit_midi_drum(self, note, vel, r3); return; }   /* notes 36..51 = pads 1..16 */
     arp_midi_event_body(self, note, vel, r3);
 }
 /* Only the two exact parent note-on call sites target these ABI-compatible
@@ -286,28 +289,32 @@ def main():
     if builder.sha(app0) != builder.APP0_SHA: raise ValueError("expected stock APP0 beside the input")
     arp_source = (fork / "arp_v9_9_3.c").read_text(encoding="utf-8")
     engine, source_hashes = expand_kit_sources(HERE / "kit_engine.c")
-    required = {"kit_output.inc", "kit_parameters.inc", "kit_shortcut.inc", "kit_level_trims.inc", "kit_ui.inc", "kit909.inc", "kit606.inc", "kitprocedural.inc", "kitfm.inc", "kitdata.inc", "tr808/lifecycle_v930/kit_bd_lifecycle.inc"}
+    required = {"kit_output.inc", "kit_parameters.inc", "kit_shortcut.inc", "kit_level_trims.inc", "kit_ui.inc", "kit909.inc", "kit606.inc", "kitprocedural.inc", "kitfm.inc", "kitdata.inc", "tr808/lifecycle_v930/kit_bd_lifecycle.inc", "kit_midi.inc"}
     if not required <= source_hashes.keys():
         raise ValueError("missing kit source includes: " + str(required-source_hashes.keys()))
     out.mkdir(parents=True, exist_ok=True)
     gen = out / "arp_kit.c"
     gen.write_text(generate(arp_source, engine, parent["symbols"]), encoding="utf-8", newline="\n")
     # The fork's builder, unchanged apart from its menu constants.
-    builder.LAST_ITEM = 20
+    builder.LAST_ITEM = 21                          # 21 = M.CH, the MIDI channel
     builder.EXPORTS = builder.EXPORTS + ("kit_capture_gate", "kit_capture_selected", "kit_mix_capture", "kit_mix_gate", "kit_mix_finish", "kit_export_mix", "kit_ui_key_gate", "kit_ui_key_query", "kit_shortcut_gate", "kit_shortcut_event","kit_output", "kit_gate", "kit_begin_block", "kit_finish_begin_block", "kit_voice_started",
                                          "kit_stock_note_started", "kit_stock_midi_started", "kit_item_name", "kit_item_text", "kit_item_step",
                                          "kit_turn_gate", "kit_turn", "kit_note_seen", "kit_value_push_gate", "kit_value_edit_allowed")
     from apply_kit_ui import apply_kit_ui, EXPORTS as UI_EXPORTS
     builder.EXPORTS += UI_EXPORTS
+    from apply_kit_midi import apply_kit_midi, EXPORTS as MIDI_EXPORTS
+    builder.EXPORTS += MIDI_EXPORTS
     builder.STATE = builder.STATE + ("kit_capture_count", "kit_record_pad", "kit_record_velocity", "kit_menu_cursor", "kit_variants", "kit_master_limited", "kit_shortcut_trace", "kit_ui_shift", "kit_mode", "kit_edit_pad", "kit_pads", "kit_pads_ready", "kit_slot", "kit_pads_down",
                                      "kit_clock_next", "kit_live_cursor", "kit_voice_stride", "kit_cy_envelope_version",
                                      "kit_cy_states", "kit_cy_caches", "kit_cy_cache_next",
                                      "kit_606_states", "kit_606_caches", "kit_606_cache_next")
     builder.STATE = builder.STATE + ("kit_bd_circuit", "kit_bd_manager", "kit_bd_state_stride")
+    builder.STATE = builder.STATE + ("kit_midi_channel", "kit_last_hit", "kit_edit_changed", "kit_midi_down")
     sound_names = re.findall(r'"([^"]+)"', engine[engine.index("kit_sound_names[KIT_SOUNDS][6] = {"):].split("};")[0])
     kit_names = re.findall(r'"([^"]+)"', engine[engine.index("kit_kit_names[KIT_KITS + 1][6] = {"):].split("};")[0])
-    builder.MENU = dict(builder.MENU, items=builder.MENU["items"] + ["KIT", "PAD", "SOUND", "TUNE", "DECAY", "TONE", "LEVEL", "SWEEP", "NOISE", "ATTACK"],
+    builder.MENU = dict(builder.MENU, items=builder.MENU["items"] + ["KIT", "PAD", "SOUND", "TUNE", "DECAY", "TONE", "LEVEL", "SWEEP", "NOISE", "ATTACK", "M.CH"],
                         KIT=kit_names, SOUND=sound_names, PAD=[1, 16], LIVE_VOICES=4,
+                        **{"M.CH": "MIDI channel 1..16 (default 16, stock) the SG plays while its page is open; both modes; RAM only"},
                         TUNE=[-12, 12], DECAY="0%..100% knob position in 1% steps; non-808 engines map to 0.354..2.828 baseline decay",
                         TR808_BD_DECAY="Physical decay pot position 0..100%; factory 50% (stock 808 and ACB default).",
                         TR808_BD_LIFECYCLE="One persistent live circuit, newest completed event per block owns output; four independent export circuits; selected-hit capacitor snapshot when controls match, otherwise cold; SG suspension pauses circuit time.",
@@ -427,8 +434,26 @@ def main():
     info['kit_parameter_page']='Tap and release SHIFT toggles page, also in melodic SG; opening chords do not toggle.'
     image, ui_patches = apply_kit_ui(image, info['arp_symbols'], builder)
     info['kit_ui_patches'] = ui_patches
+    image, midi_patches, midi_guards = apply_kit_midi(image, info['arp_symbols'], builder)
+    info['kit_midi_patches'] = midi_patches
+    info['kit_midi_guards'] = midi_guards
+    info['kit_midi'] = ('M.CH (VALUE item 21, both modes, default 16 = stock): the SG plays that MIDI channel while its page is open. '
+                        'Channel 16 is otherwise the control channel on every page and never plays the SG. '
+                        'Drum mode: notes 36..51 strike pads 1..16 through the pad path (source = pad); other notes are ignored. '
+                        'CCs on M.CH with the SG page open, then on to the stock CC queue unchanged; RAM only.')
+    info['kit_midi_cc'] = {
+        'drum_pad_tune_decay_level': {str(p + 1): [c, c + 1, c + 2] for p, c in enumerate(
+            [20 + 3 * k for k in range(4)] + [40 + 3 * k for k in range(8)] + [102 + 3 * k for k in range(4)])},
+        'drum_last_pad': {'TONE': 114, 'SWEEP': 115, 'NOISE': 116, 'ATTACK': 117},
+        'drum_scaling': 'Tune -12 + CC*25/128; Decay/Tone/Sweep/Noise/Attack CC*101/128 %; Level = CC; applied at once, pad selected on screen',
+        'melodic': {'TYPE': 70, 'FREQ': 71, 'LEVEL': 72, 'DUTY': 73, 'BALANCE': 74, 'ENV': 75, 'TUNE': 76},
+        'melodic_scaling': 'min + (max - min + 1) * CC / 128 through the knob setter, on the next SG screen update',
+        'arp': {'ARP': 33, 'RATE': 34, 'A.OCT': 35, 'HOLD': 36},
+        'arp_scaling': 'ARP/RATE 7 zones, A.OCT -3..+3 (melodic only), HOLD >= 64 ON; VALUE-menu steps on the next screen update',
+        'all_notes_off': {'123': 'release every note MIDI holds; the arp stops', '120': 'the same, then the SG all-stop'},
+        'stock_ccs_avoided': 'ch1 7, 8, 16-19, 80-83, 85-91; ch2-3 7, 16-19, 80-83; ch4-5 16-19, 80-83; none on 6-16'}
     info['kit_selector_range'] = [1,13]
-    info['kit_ui'] = 'CTRL1 Tune, CTRL2 Decay, CTRL3 Tone; tap SHIFT: Sweep/Noise/Attack; LEVEL readout; drum VALUE menu ARP/RATE/HOLD/BPM/KIT/PAD/SOUND/LEVEL (A.OCT melodic only, BPM a readout); one 16-pad page per kit; kit selector stays within machines 1-13; melodic entry uses SHIFT+RECORD SETTING.'
+    info['kit_ui'] = 'CTRL1 Tune, CTRL2 Decay, CTRL3 Tone; tap SHIFT: Sweep/Noise/Attack; LEVEL readout; drum VALUE menu ARP/RATE/HOLD/BPM/KIT/PAD/SOUND/LEVEL/M.CH (A.OCT melodic only, BPM a readout); melodic VALUE menu ends with M.CH; one 16-pad page per kit; kit selector stays within machines 1-13; melodic entry uses SHIFT+RECORD SETTING.'
     info['kit_pad_assignments'] = 16
     image, info = sparsify_module(bytes(image), info, builder)
     pcm_info = None # Synthesis-only: no external audio bank is appended.
@@ -436,8 +461,8 @@ def main():
                 kit_turn_sites=[[s, n] for s, n, *_ in TURN_SITES], kit_turn_gate=turn_gate,
                 kit_engine_sha256=sha(engine.encode()), kit_source_sha256=source_hashes, generated_source_sha256=sha(gen.read_bytes()),
                 kit_completed_note_hooks=completed_note_hooks, synthesis_only=True,
-                kit=f"Synthesis-only kit mode: {len(kit_names)-1} kits, {len(sound_names)} synthesized drums; no PCM playback or external audio bank; 808/909/606/SDS/CR78/CR8K/DR110/KPR77 models calibrated to recordings and ACB captures, Lel' UDS and Mini Pops 7 fitted to recordings, TR-707/727 synthesized from plug-in captures, DX-style FM; four voices, main-display Tune/Decay/Tone; edits RAM-only; no ACB-equivalence claim",
-                tests="Reproduce using synth/test_kits.py. Archived v9.41 emulator checks are summarized in synth/KITS.md; hardware confirmation remains outstanding.")
+                kit=f"Synthesis-only kit mode: {len(kit_names)-1} kits, {len(sound_names)} synthesized drums; no PCM playback or external audio bank; 808/909/606/SDS/CR78/CR8K/DR110/KPR77 models calibrated to recordings and ACB captures, Lel' UDS and Mini Pops 7 fitted to recordings, TR-707/727 synthesized from plug-in captures, DX-style FM; four voices, main-display Tune/Decay/Tone; MIDI channel M.CH, notes 36-51 on pads 1-16 and CC control; edits RAM-only; no ACB-equivalence claim",
+                tests="Reproduce using synth/test_kits.py, test_kit_capture.py, test_kit_chord.py, test_kit_shortcut.py and test_kit_midi.py (MIDI through the real stock dispatcher); see synth/KITS.md. Hardware confirmation remains outstanding.")
     (out / "SP404MKII_APP1.bin").write_bytes(image); (out / "SP404MKII_APP0.bin").write_bytes(app0)
     (out / "manifest.json").write_text(json.dumps(info, indent=2, sort_keys=True) + "\n", encoding="ascii", newline="\n")
     print(f"{REVISION} APP1: {len(image)} bytes; SHA-256 {info['sha256']}; kit_gate {kit_gate:#x}")
