@@ -29,6 +29,18 @@ EXPORT int kit_ui_key_query(int key,u32 caller){
 __attribute__((naked,used)) EXPORT void kit_ui_key_gate(void){
     __asm__ volatile("mov r1,lr\nb kit_ui_key_query\n");
 }
+/* VALUE pressed outside edit mode (stock 0x8015cb34, r0 = keyboard state):
+ * BPM (item 10) is a readout, so pressing on it never enters edit mode. Every
+ * other item sets the stock edit flag (+0x14) as before. */
+EXPORT int kit_value_edit_allowed(void){
+    return KIT_SETTING_GET(KIT_SETTINGS,0x83,0)!=10;
+}
+__attribute__((naked,used)) EXPORT void kit_value_push_gate(void){
+    __asm__ volatile(
+        "push {r0,lr}\nbl kit_value_edit_allowed\npop {r1,lr}\n"
+        "cbz r0,1f\nmovs r0,#1\nstr r0,[r1,#0x14]\n"
+        "1: movs r0,#1\nadd sp,#0x14\npop {r4,r5,r6,r7,pc}\n");
+}
 static u32 kit_ui_revision, kit_ui_drawn_revision;
 static void kit_ui_invalidate(void) { ++kit_ui_revision; }
 

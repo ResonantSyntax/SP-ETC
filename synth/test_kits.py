@@ -134,8 +134,9 @@ def main():
         names[n] = t
     if list(names) != ["KIT", "PAD", "SOUND", "TUNE", "DECAY", "TONE", "LEVEL", "SWEEP", "NOISE", "ATTCK"]: raise AssertionError(names)
     turn = check_turn(uc, call, S, len(man["arp_menu"]["SOUND"]))
+    value_push = check_value_push(uc, S, man, img)
     hats = check_hat_audio(uc, call, S, base, module)
-    res = dict(control_endpoint_arm_matches=control_checks, machine_inventory_restrictions=True,selector_boundary_cases=9,kits=kits, pads_sample_exact=checked, samples_per_pad=N, menu=names, hold_pad_turn=turn, hat_audio=hats, build_sha256=man["sha256"],
+    res = dict(control_endpoint_arm_matches=control_checks, machine_inventory_restrictions=True,selector_boundary_cases=9,kits=kits, pads_sample_exact=checked, samples_per_pad=N, menu=names, hold_pad_turn=turn, value_push=value_push, hat_audio=hats, build_sha256=man["sha256"],
                pcm_bank_sha256=man.get("kit_pcm", {}).get("sha256"), pcm_flash_readonly=pcm_data is not None,
                module_runtime_bytes=len(module), module_stored_bytes=man.get("arp_code_stored_bytes", len(module)),
                module_reconstructed_sha256=hashlib.sha256(module).hexdigest())
@@ -171,7 +172,8 @@ def check_turn(uc, call, S, sounds):
     r, _ = call("kit_turn", 1)
     if r != 1 or rd(CURSOR,4)>10: raise AssertionError("melodic menu turn")
     call("kit_note_seen",7,0)
-    for mode,expected in [(0,list(range(11))), (5,[6,7,8,9,10,11,12,13,17])]:
+    # Drum mode skips A.OCT (8): it is a melodic control.
+    for mode,expected in [(0,list(range(11))), (5,[6,7,9,10,11,12,13,17])]:
         uc.mem_write(S["kit_mode"],bytes([mode]));uc.mem_write(CURSOR,struct.pack("<i",expected[0]))
         for value in expected[1:]:
             call("kit_turn",1)
@@ -205,6 +207,37 @@ def check_turn(uc, call, S, sounds):
     call("kit_note_seen", 7, 0); uc.mem_write(S["kit_mode"], bytes([0]))
     return dict(press_selects_pad=True, turn_steps_sound=True, cursor_to_sound=True, kit_menu_without_pad=True, melodic_menu_bounded=True,
                 gate_exits=["0x8015cb24 stock cursor step", "0x8015cb2e handled"])
+
+def check_value_push(uc, S, man, img):
+    """VALUE pressed outside edit mode (0x8015cb34): the gate sets the stock
+    edit flag unless the cursor is on BPM (item 10), then runs the stock
+    handler's own epilogue. Uses check_turn's setting stubs and cursor."""
+    a, b = struct.unpack_from("<2I", img, 0x80)
+    rows = [struct.unpack_from("<4I", img, i) for i in range(a + 0x80, b + 0x80, 16)]
+    site = 0x8015CB34
+    src = [s - 0x60080000 + site - d for s, d, n, h in rows if h == 0x600800E4 and d <= site < d + n]
+    patch = man["kit_value_push_patch"]
+    if len(src) != 1 or img[src[0]:src[0] + 10].hex() != patch["replacement_hex"]:
+        raise AssertionError("VALUE push site not patched as the manifest says")
+    w = struct.unpack("<5H", img[src[0]:src[0] + 10])
+    lo = (w[0] & 0xF) << 12 | (w[0] & 0x400) << 1 | (w[1] & 0x7000) >> 4 | (w[1] & 0xFF)
+    hi = (w[2] & 0xF) << 12 | (w[2] & 0x400) << 1 | (w[3] & 0x7000) >> 4 | (w[3] & 0xFF)
+    if (hi << 16 | lo) != S["kit_value_push_gate"] | 1 or w[4] != 0x4760:
+        raise AssertionError(("VALUE push jump target", hex(hi << 16 | lo)))
+    kb = BUF + 0x200                     # stand-in keyboard state; +0x14 is the edit flag
+    regs = [0x44444444, 0x55555555, 0x66666666, 0x77777777]
+    for cursor, want in ((10, 0), (9, 1), (11, 1), (13, 1), (17, 1), (0, 1)):
+        uc.mem_write(CURSOR, struct.pack("<i", cursor)); uc.mem_write(kb, bytes(0x20))
+        frame = STACK - 0x200            # stock frame: 0x14 of locals, then r4-r7 and the return address
+        uc.mem_write(frame + 0x14, struct.pack("<5I", *regs, RET | 1))
+        uc.reg_write(ar.UC_ARM_REG_SP, frame); uc.reg_write(ar.UC_ARM_REG_R0, kb); uc.reg_write(ar.UC_ARM_REG_LR, 0x0BADBEEF)
+        uc.emu_start(S["kit_value_push_gate"] | 1, RET, count=100000)
+        got = struct.unpack("<I", uc.mem_read(kb + 0x14, 4))[0]
+        restored = [uc.reg_read(getattr(ar, f"UC_ARM_REG_R{k}")) for k in range(4, 8)]
+        if (uc.reg_read(ar.UC_ARM_REG_PC) != RET or uc.reg_read(ar.UC_ARM_REG_R0) != 1 or got != want
+                or uc.reg_read(ar.UC_ARM_REG_SP) != frame + 0x28 or restored != regs):
+            raise AssertionError(("VALUE push gate", cursor, got, want))
+    return dict(site_patched=True, bpm_readout_only=True, other_items_enter_edit=True, stock_epilogue=True)
 
 def check_hat_audio(uc, call, S, base, module):
     """Exercise simultaneous stock voice states through the built ARM hook."""

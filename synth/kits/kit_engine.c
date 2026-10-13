@@ -1046,6 +1046,7 @@ EXPORT int kit_turn(int dir) {
         if(kit_mode){
             if(dir<0 && next>13)next=13;
             if(dir>=0 && next>13)next=17;
+            if(next==8)next=dir<0?7:9;              /* A.OCT is melodic only */
             if(next<6)next=6;if(next>17)next=17;
         }else{if(next<0)next=0;if(next>10)next=10;}
         if(next!=cur)KIT_SETTING_STEP(KIT_SETTINGS,0x83,next-cur,0,0);

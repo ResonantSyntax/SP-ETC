@@ -3,8 +3,8 @@ import argparse,base64,json
 from pathlib import Path
 import build
 from kits.build_arp_kit import expand_kit_sources
-EXPECTED_SHA='5509827ca47d27a74464251218fa7110dc731e2eb421e0180e73e16e7b61d19e'
-EXPECTED_SIZE=3085824
+EXPECTED_SHA='f6b83372d10d96b8fb070df6790f6e5ed375a457391cab43eae2e9233848a515'
+EXPECTED_SIZE=3085968
 HERE=Path(__file__).resolve().parent
 
 def main():
@@ -13,7 +13,7 @@ def main():
     build.require_hash(a.stock.with_name('SP404MKII_APP0.bin').read_bytes(),build.APP0_SHA,'stock APP0')
     image=a.candidate.read_bytes();m=json.loads(a.candidate.with_name('manifest.json').read_text())
     build.require_hash(image,EXPECTED_SHA,'tested kits APP1')
-    if len(image)!=EXPECTED_SIZE or m['sha256']!=EXPECTED_SHA or m['revision']!='v9.43-test2' or not m['synthesis_only'] or m['kit_selector_range']!=[1,13]:raise ValueError('unexpected kit candidate metadata')
+    if len(image)!=EXPECTED_SIZE or m['sha256']!=EXPECTED_SHA or m['revision']!='v9.43-test3' or not m['synthesis_only'] or m['kit_selector_range']!=[1,13]:raise ValueError('unexpected kit candidate metadata')
     _,current=expand_kit_sources(HERE/'kits/kit_engine.c')
     if current!=m['kit_source_sha256']:raise ValueError('runtime source inventory differs')
     for name,h in m['kit_source_sha256'].items():

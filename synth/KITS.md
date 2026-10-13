@@ -1,11 +1,12 @@
 # Synthesized machine kits v9.43 (test candidate)
 
-This branch carries the v9.43-test2 kit candidate: thirteen kits, every voice
-re-measured against references. test1 was played on hardware; test2 answers that
-report (kick level, FM kick and bells, recording struck drums together, the REC
-destination pad blink). test2 itself has emulator verification only. The
-published patcher option is still the v9.42 kits until this candidate passes a
-hardware test and `publish_kits.py` is run.
+This branch carries the v9.43-test3 kit candidate: thirteen kits, every voice
+re-measured against references. test1 and test2 were played on hardware. test2
+answered the first report (kick level, FM kick and bells, recording struck drums
+together, the REC destination pad blink); test3 trims the drum VALUE menu after
+the second. test3 itself has emulator verification only. The published patcher
+option is still the v9.42 kits until this candidate passes a hardware test and
+`publish_kits.py` is run.
 
 Select **Sound Generator + Kits** in the patcher. This separate option
 includes the melodic generator and shared arpeggiator. Both browser choices
@@ -18,7 +19,9 @@ local in your browser. The patcher produces APP1 only; APP0 remains stock.
 - SHIFT + RECORD SETTING opens the melodic Sound Generator.
 - Both shortcut release orders work. Tap/release SHIFT to switch parameter
   pages; you can audition pads after releasing it.
-- REC uses the last struck pad after release; you do not need to hold it.
+- In drum mode, REC uses the last struck pad after release; you do not need to
+  hold it. (The melodic Sound Generator still records the notes held while REC
+  is pressed.)
   Drums struck together record together: REC also takes up to three other pads
   struck within 100 ms before the last one, each at its own offset and velocity.
   Capture freezes each pad's controls, velocity, onset phase and noise seed.
@@ -37,10 +40,12 @@ local in your browser. The patcher produces APP1 only; APP0 remains stock.
 | First | Tune ±12 semitones | Decay 0–100% | Tone 0–100% |
 | After tapping SHIFT | Sweep 0–100% | Noise 0–100% | Attack 0–100% |
 
-Kit VALUE has ARP, RATE, A.OCT, HOLD, BPM, KIT, PAD, SOUND and LEVEL (0–127).
-The six main-display parameters do not repeat there. Melodic VALUE keeps its
-original items and arpeggiator controls, with no drum items. Melodic SHIFT
-keeps the existing Pad Length/Balance page. Edits are RAM-only.
+Kit VALUE has ARP, RATE, HOLD, BPM, KIT, PAD, SOUND and LEVEL (0–127). The six
+main-display parameters do not repeat there. A.OCT is a melodic control: it is
+not in the drum menu, and drum arps ignore it. BPM is a readout in both modes;
+pressing VALUE on it does nothing. Melodic VALUE keeps its original items and
+arpeggiator controls, with no drum items. Melodic SHIFT keeps the existing Pad
+Length/Balance page. Edits are RAM-only.
 
 **50 is the authentic setting** for Decay, Tone, Sweep, Noise and Attack on
 every pad: a pad at 50 plays the modelled machine voice unchanged. TONE is the
@@ -132,7 +137,7 @@ python synth/build_kits.py out/v9.6/SP404MKII_APP1.bin --zig /path/to/zig --out 
 The kit builder requires only the files in this repository. Patch sites retain
 exact-byte guards. Zero-filled module sections are packed into guarded scatter
 rows and reconstructed to verify the complete runtime image before writing APP1.
-Module: 148,216 bytes at run time (limit 319,488), 113,872 stored.
+Module: 148,360 bytes at run time (limit 319,488), 114,016 stored.
 
 The kit builder also restores one stock instruction block outside the module.
 Every Sound Generator pad event ends in a shared UI redraw request at
@@ -141,13 +146,15 @@ all-notes-off wrapper and left NOPs in its place, so choosing an imprint
 destination stopped redrawing the pads. The 14 stock bytes are written back
 behind an exact-byte guard.
 
-## Checks (v9.43-test2, emulator)
+## Checks (v9.43-test3, emulator)
 
 - 208 factory pad renders (13 kits × 16) match host/ARM sample for sample for
   3000 samples each, plus 108 control endpoint cases (TUNE, DECAY, TONE, SWEEP,
   NOISE, ATTACK at both ends on nine voices from five engines).
-- Machine inventories, held-pad editing, menu ranges, the KIT selector ends and
-  seven hat-choke cases pass.
+- Machine inventories, held-pad editing, menu ranges (drum mode skips A.OCT),
+  the KIT selector ends and seven hat-choke cases pass.
+- VALUE pressed on BPM leaves the stock edit flag off; on every other item it
+  sets it. The gate returns through the stock handler's own epilogue.
 - 208 compiled capture cases check released-pad selection and velocity, with
   melodic capture delegated to the original path.
 - Chord capture (TR707, TR808, CR78): two pads struck 64 frames apart export

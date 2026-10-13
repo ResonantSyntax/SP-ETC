@@ -10,7 +10,7 @@ import hashlib, importlib, json, os, re, shutil, struct, sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REVISION = "v9.43-test2"
+REVISION = "v9.43-test3"
 PCM_BANK_ADDRESS = 0x60376000
 PCM_FLASH_PLANNING_LIMIT = 0x60400000
 FLASH_BASE = 0x60080000
@@ -225,6 +225,12 @@ def generate(arp_source: str, engine: str, symbols: dict) -> str:
          "EXPORT void arp_item_step(int item, int dir) {\n    if (item >= 11) { kit_item_step(item, dir); arp_dirty = 1; return; }\n"),
         ("    refresh_tempo();\n    if (!arp_dirty) return 0;",
          "    refresh_tempo();\n    if (kit_edit_changed) { kit_ui_invalidate(); kit_edit_changed = 0; arp_dirty = 1; }\n    if (!arp_dirty) return 0;"),
+        # A.OCT is a melodic control: hidden from the drum menu, and ignored
+        # there so an octave set in melodic mode cannot double drum hits.
+        ("    int lo = arp_oct < 0 ? arp_oct : 0, hi = arp_oct > 0 ? arp_oct : 0, count = 0;\n",
+         "    int oct = kit_mode ? 0 : arp_oct;\n    int lo = oct < 0 ? oct : 0, hi = oct > 0 ? oct : 0, count = 0;\n"),
+        ("        int lo = arp_oct < 0 ? arp_oct : 0, hi = arp_oct > 0 ? arp_oct : 0;\n",
+         "        int oct = kit_mode ? 0 : arp_oct;\n        int lo = oct < 0 ? oct : 0, hi = oct > 0 ? oct : 0;\n"),
     ]
     for old, new in edits:
         if src.count(old) != 1: raise ValueError("generator anchor not found once: " + old.strip())
@@ -290,7 +296,7 @@ def main():
     builder.LAST_ITEM = 20
     builder.EXPORTS = builder.EXPORTS + ("kit_capture_gate", "kit_capture_selected", "kit_mix_capture", "kit_mix_gate", "kit_mix_finish", "kit_export_mix", "kit_ui_key_gate", "kit_ui_key_query", "kit_shortcut_gate", "kit_shortcut_event","kit_output", "kit_gate", "kit_begin_block", "kit_finish_begin_block", "kit_voice_started",
                                          "kit_stock_note_started", "kit_stock_midi_started", "kit_item_name", "kit_item_text", "kit_item_step",
-                                         "kit_turn_gate", "kit_turn", "kit_note_seen")
+                                         "kit_turn_gate", "kit_turn", "kit_note_seen", "kit_value_push_gate", "kit_value_edit_allowed")
     from apply_kit_ui import apply_kit_ui, EXPORTS as UI_EXPORTS
     builder.EXPORTS += UI_EXPORTS
     builder.STATE = builder.STATE + ("kit_capture_count", "kit_record_pad", "kit_record_velocity", "kit_menu_cursor", "kit_variants", "kit_master_limited", "kit_shortcut_trace", "kit_ui_shift", "kit_mode", "kit_edit_pad", "kit_pads", "kit_pads_ready", "kit_slot", "kit_pads_down",
@@ -404,13 +410,25 @@ def main():
     info['sg_redraw_restore']={'address':site,'bytes':14,'replacement_hex':restored.hex(),
         'branches_in':['0x8015c13c','0x8015c192','0x8015c1a2','0x8015c1b6','0x8015c222'],
         'effect':'REC destination pad blinks again; identical to stock 5.52 bytes'}
+    # VALUE pressed outside edit mode sets the stock edit flag here. Only the
+    # push handler (0x8015ca28) branches in; route it through the BPM gate.
+    site=0x8015cb34;off=builder.file_offset(bytes(image),site,10)
+    found=builder.listing(bytes(image[off:off+10]),site)
+    if found!=['movs r1, #1','str r1, [r0, #0x14]','movs r0, #1','add sp, #0x14','pop {r4, r5, r6, r7, pc}']:
+        raise ValueError(f'VALUE push site changed: {found}')
+    original=bytes(image[off:off+10])
+    new=builder.checked_asm(builder.jump(info['arp_symbols']['kit_value_push_gate']),site)
+    if len(new)!=10:raise ValueError('VALUE push jump width')
+    image[off:off+10]=new
+    info['kit_value_push_patch']={'address':site,'original_hex':original.hex(),'replacement_hex':new.hex(),
+        'bpm_item':10,'effect':'BPM is a readout: pressing VALUE on it does not enter edit mode'}
     info['kit_master_gain_db']=6.0206
     info['kit_master_soft_knee']={'start_s16':24576,'ceiling_s16':32000,'live_and_export':True}
     info['kit_parameter_page']='Tap and release SHIFT toggles page, also in melodic SG; opening chords do not toggle.'
     image, ui_patches = apply_kit_ui(image, info['arp_symbols'], builder)
     info['kit_ui_patches'] = ui_patches
     info['kit_selector_range'] = [1,13]
-    info['kit_ui'] = 'CTRL1 Tune, CTRL2 Decay, CTRL3 Tone; tap SHIFT: Sweep/Noise/Attack; LEVEL readout; VALUE menu with LEVEL; one 16-pad page per kit; kit selector stays within machines 1-13; melodic entry uses SHIFT+RECORD SETTING.'
+    info['kit_ui'] = 'CTRL1 Tune, CTRL2 Decay, CTRL3 Tone; tap SHIFT: Sweep/Noise/Attack; LEVEL readout; drum VALUE menu ARP/RATE/HOLD/BPM/KIT/PAD/SOUND/LEVEL (A.OCT melodic only, BPM a readout); one 16-pad page per kit; kit selector stays within machines 1-13; melodic entry uses SHIFT+RECORD SETTING.'
     info['kit_pad_assignments'] = 16
     image, info = sparsify_module(bytes(image), info, builder)
     pcm_info = None # Synthesis-only: no external audio bank is appended.

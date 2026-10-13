@@ -2,6 +2,13 @@
 
 ## Synthesized kits v9.43 (test candidate, not yet published)
 
+test3, after the second hardware test:
+
+- The drum VALUE menu no longer shows A.OCT, and drum arps ignore it, so an
+  octave set in melodic mode cannot double drum hits.
+- BPM is a readout: pressing VALUE on it no longer highlights it as if it could
+  be edited (both modes).
+
 test2, after the first hardware test:
 
 - REC records drums struck together: the last struck pad plus up to three

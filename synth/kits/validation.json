@@ -1,12 +1,12 @@
 {
-  "candidate": "v9.43-test2",
-  "app1_sha256": "5509827ca47d27a74464251218fa7110dc731e2eb421e0180e73e16e7b61d19e",
-  "app1_bytes": 3085824,
+  "candidate": "v9.43-test3",
+  "app1_sha256": "f6b83372d10d96b8fb070df6790f6e5ed375a457391cab43eae2e9233848a515",
+  "app1_bytes": 3085968,
   "source_files": 22,
   "hardware_verified": false,
   "public_source_rebuild_matches": null,
   "browser_checks_passed": null,
-  "notes": "Emulator checks only (synth/test_kits.py, test_kit_capture.py, test_kit_chord.py, test_kit_shortcut.py). v9.43-test1 was played on hardware; test2 answers that report. Browser overlay tests apply to the published patcher option, which still carries v9.42.",
+  "notes": "Emulator checks only (synth/test_kits.py, test_kit_capture.py, test_kit_chord.py, test_kit_shortcut.py). test1 and test2 were played on hardware; test3 trims the drum VALUE menu. Browser overlay tests apply to the published patcher option, which still carries v9.42.",
   "host_arm": {
     "schema": "kit-unicorn-check-v2",
     "passed": true,
@@ -38,6 +38,12 @@
         "0x8015cb24 stock cursor step",
         "0x8015cb2e handled"
       ]
+    },
+    "value_push": {
+      "site_patched": true,
+      "bpm_readout_only": true,
+      "other_items_enter_edit": true,
+      "stock_epilogue": true
     },
     "hat_audio": [
       {
@@ -71,9 +77,9 @@
     ],
     "pcm_bank_sha256": null,
     "pcm_flash_readonly": false,
-    "module_runtime_bytes": 148216,
-    "module_stored_bytes": 113872,
-    "module_reconstructed_sha256": "44c87f0e94ddb3a50e50211d2774a64471b0b8c291d7a2c695a9d4cd7a1f833d"
+    "module_runtime_bytes": 148360,
+    "module_stored_bytes": 114016,
+    "module_reconstructed_sha256": "b043edfc8e55faef70052ce9b2a68b5a387e636377c57864de5f7a8a138da8bc"
   },
   "capture": {
     "passed": true,
@@ -81,7 +87,7 @@
     "velocity_snapshot": true,
     "ui_selection_does_not_replace_last_strike": true,
     "melodic_capture_delegated": true,
-    "app1_sha256": "5509827ca47d27a74464251218fa7110dc731e2eb421e0180e73e16e7b61d19e"
+    "app1_sha256": "f6b83372d10d96b8fb070df6790f6e5ed375a457391cab43eae2e9233848a515"
   },
   "chord_capture": {
     "passed": true,
@@ -115,7 +121,7 @@
       }
     },
     "outside_window_single": true,
-    "app1_sha256": "5509827ca47d27a74464251218fa7110dc731e2eb421e0180e73e16e7b61d19e"
+    "app1_sha256": "f6b83372d10d96b8fb070df6790f6e5ed375a457391cab43eae2e9233848a515"
   },
   "shortcut_guard": {
     "keyboard_on": {
@@ -131,7 +137,7 @@
       "pattern_edit_to": 5
     },
     "passed": true,
-    "app1_sha256": "5509827ca47d27a74464251218fa7110dc731e2eb421e0180e73e16e7b61d19e"
+    "app1_sha256": "f6b83372d10d96b8fb070df6790f6e5ed375a457391cab43eae2e9233848a515"
   },
   "sg_redraw_restore": {
     "address": "0x8015c01c",
@@ -145,5 +151,12 @@
     "bytes": 14,
     "effect": "REC destination pad blinks again; identical to stock 5.52 bytes",
     "replacement_hex": "49f2f0604ff0ff31c8f224000180"
+  },
+  "value_push_patch": {
+    "address": "0x8015cb34",
+    "bpm_item": 10,
+    "effect": "BPM is a readout: pressing VALUE on it does not enter edit mode",
+    "original_hex": "01214161012005b0f0bd",
+    "replacement_hex": "46f6890cc8f2fa3c6047"
   }
 }
