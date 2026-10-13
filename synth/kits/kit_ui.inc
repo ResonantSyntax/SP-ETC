@@ -72,7 +72,7 @@ EXPORT KIT_UI_SMALL void kit_ui_poll(void *page) {
     }
     KIT_UI_FN(kit_ui_one_fn, 0x8015BF19u)(page);
     int cur=KIT_SETTING_GET(KIT_SETTINGS,0x83,0);
-    int valid=cur==21||(kit_mode?((cur>=6&&cur<=13)||cur==17):(cur>=0&&cur<=10));
+    int valid=cur==21||(kit_mode?((cur>=6&&cur<=13)||cur==17||cur==22):(cur>=0&&cur<=10));
     if(!valid){int next=kit_mode?11:0;KIT_SETTING_STEP(KIT_SETTINGS,0x83,next-cur,0,0);cur=next;}
     kit_menu_cursor=(u32)cur;
     if (kit_ui_drawn_revision != kit_ui_revision) {

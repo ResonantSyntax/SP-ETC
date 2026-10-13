@@ -1,5 +1,25 @@
 # Changelog
 
+## Synthesized kits v9.45 (test candidate, not yet in the patcher)
+
+test1, built on v9.44-test1, so a kit dialled in on the synth can become a
+normal sample kit:
+
+- BOUNC, the last item of the drum VALUE menu: press VALUE, turn to a bank A–J,
+  press VALUE. The kit's sixteen pads, each with its own Tune, Decay, Tone,
+  Sweep, Noise, Attack and Level, are written into that bank's sixteen pads by
+  the same code as a REC imprint. Empty pads are filled; for each pad that
+  already holds a sample the item asks KEEP or OVER first (KEEP by default).
+  The value counts the pads written. EXIT cancels; pads already written stay.
+- Each sample is a first hit at velocity 127. It ends where the drum has fallen
+  60 dB below its own peak (at most 10 s), with v9's 10 ms end fade. Pads with
+  LEVEL 0 are left out. Files keep the stock imprint name SG.
+- One new guarded jump in the stock exporter's length code (0x80132ac8). REC
+  writes the same files as in v9.44.
+- New emulator test `synth/test_kit_bounce.py` runs every bounce through the
+  real stock exporter with modelled storage. Hardware test pending: try it in a
+  scratch project first.
+
 ## Synthesized kits v9.44 (test candidate, not yet in the patcher)
 
 test1, for sequencing the Sound Generator from outside instead of resampling:

@@ -944,12 +944,20 @@ static float kit_render(kit_voice *v) {
 
 #ifdef KIT_IN_ARP
 static void kit_midi_channel_changed(void);  /* kit_midi.inc: all-stop, forget the arp's held notes */
+static void kit_bounce_name(char *out);      /* kit_bounce.inc: item 22, BOUNC */
+static void kit_bounce_text(char *out);
+static void kit_bounce_turn(int dir);
 #else
 static void kit_midi_channel_changed(void) {}
+static __attribute__((noinline, minsize)) void kit_copy(char *out, const char *s);
+static void kit_bounce_name(char *out) { kit_copy(out, "BOUNC"); }
+static void kit_bounce_text(char *out) { kit_copy(out, "--"); }
+static void kit_bounce_turn(int dir) { (void)dir; }
 #endif
 
-/* ---- VALUE menu items 11..21 (21 = M.CH, the MIDI channel, in both modes) ---- */
-static const char kit_item_names[11][6] = {"KIT", "PAD", "SOUND", "TUNE", "DECAY", "TONE", "LEVEL", "SWEEP", "NOISE", "ATTCK", "M.CH"};
+/* ---- VALUE menu items 11..22 (21 = M.CH, the MIDI channel, in both modes;
+ * 22 = BOUNC, the kit into a sample bank, drum mode only) ---- */
+static const char kit_item_names[12][6] = {"KIT", "PAD", "SOUND", "TUNE", "DECAY", "TONE", "LEVEL", "SWEEP", "NOISE", "ATTCK", "M.CH", "BOUNC"};
 static const char kit_kit_names[KIT_KITS + 1][6] = {"OFF", "TR808", "DR110", "KPR77", "UDS", "FM", "TR909", "TR606", "SDS-V", "MP-7", "CR78", "CR8K", "TR707", "TR727"};
 static const char kit_sound_names[KIT_SOUNDS][6] = {
     "FMKik", "FMSnr", "FMTom", "FMHat", "FMBel", "FMPrc", "FMLog", "FMCow",
@@ -983,11 +991,13 @@ static __attribute__((noinline, minsize)) kit_pad *kit_edit(void) {
 }
 EXPORT __attribute__((noinline, minsize)) void kit_item_name(int item, char *out) {
     int k = item - 11;
+    if (item == 22) { kit_bounce_name(out); return; }
     kit_copy(out, kit_item_names[k < 0 ? 0 : k > 10 ? 10 : k]);
 }
 EXPORT __attribute__((noinline, minsize)) void kit_item_text(int item, char *out) {
     kit_pad *P = kit_edit();
     switch (item) {
+    case 22: kit_bounce_text(out); break;
     case 21: kit_num(out, (kit_midi_channel & 15) + 1, 0); break;
     case 11: kit_copy(out, kit_kit_names[kit_mode <= KIT_KITS ? kit_mode : 0]); break;
     case 12: kit_num(out, (kit_edit_pad & 15) + 1, 0); break;
@@ -1003,6 +1013,7 @@ EXPORT __attribute__((noinline, minsize)) void kit_item_step(int item, int dir) 
     kit_pad *P = kit_edit();
     kit_edit_changed = 1;
     switch (item) {
+    case 22: kit_bounce_turn(dir); break;
     case 21: { /* Notes held on the old channel would never get their note-offs. */
         int c = (int)(kit_midi_channel & 15) + dir; c = c < 0 ? 0 : c > 15 ? 15 : c;
         if (c != (kit_midi_channel & 15)) { kit_midi_channel = (u8)c; kit_midi_channel_changed(); }
@@ -1060,10 +1071,11 @@ EXPORT void kit_note_seen(int src, int vel) {
 
 #ifndef KIT_HOST
 /* The VALUE menu of each mode. Melodic: SCALE..TUNE (0..5), ARP..BPM (6..10)
- * and M.CH (21). Drum: ARP RATE HOLD BPM KIT PAD SOUND LEVEL M.CH; A.OCT (8)
- * is melodic only and TUNE..TONE, SWEEP..ATTACK are on the knobs. */
+ * and M.CH (21). Drum: ARP RATE HOLD BPM KIT PAD SOUND LEVEL M.CH BOUNC; A.OCT
+ * (8) is melodic only and TUNE..TONE, SWEEP..ATTACK are on the knobs. */
 static int kit_menu_has(int item) {
     if (item == 21) return 1;
+    if (item == 22) return kit_mode != 0;
     if (kit_mode) return (item >= 6 && item <= 13 && item != 8) || item == 17;
     return item >= 0 && item <= 10;
 }
@@ -1076,8 +1088,8 @@ EXPORT int kit_turn(int dir) {
 #ifndef KIT_HOST
         int cur=KIT_SETTING_GET(KIT_SETTINGS,0x83,0),d=dir<0?-1:1,next=-1;
         /* The next item of this mode's menu; at either end stay (or come back in). */
-        for(int n=cur+d;n>=0&&n<=21;n+=d)if(kit_menu_has(n)){next=n;break;}
-        if(next<0)for(int n=cur;n>=0&&n<=21;n-=d)if(kit_menu_has(n)){next=n;break;}
+        for(int n=cur+d;n>=0&&n<=22;n+=d)if(kit_menu_has(n)){next=n;break;}
+        if(next<0)for(int n=cur;n>=0&&n<=22;n-=d)if(kit_menu_has(n)){next=n;break;}
         if(next>=0&&next!=cur)KIT_SETTING_STEP(KIT_SETTINGS,0x83,next-cur,0,0);
 #endif
         return 1;
@@ -1097,6 +1109,7 @@ EXPORT int kit_turn(int dir) {
 #include "kit_output.inc"
 #include "kit_record.inc"
 #include "kit_midi.inc"
+#include "kit_bounce.inc"
 #endif
 
 #ifdef KIT_HOST

@@ -3,7 +3,7 @@
 The module (boot-copied at 0x83FA2000) is loaded from the built APP1 at its
 SP address. For every kit and pad, kit_output on a fake voice
 state must equal the host build of kit_engine.c sample-for-sample (3,000
-samples). Also checks that the generated menu answers items 11..21, and the
+samples). Also checks that the generated menu answers items 11..22, and the
 hold-pad VALUE turn: the pad note hook, kit_turn (stock setting get/step
 replaced by stubs) and kit_turn_gate's handled exit back into 0x8015cb2e.
 """
@@ -128,11 +128,11 @@ def main():
         assert uc.mem_read(S['kit_mode'],1)[0]==want,('selector',mode,step,want)
     uc.mem_write(S['kit_mode'],bytes([kits]))
     names = {}
-    for item in range(11, 22):
+    for item in range(11, 23):
         uc.mem_write(BUF, bytes(16)); call("arp_item_name", item, BUF); n = bytes(uc.mem_read(BUF, 8)).split(b"\0")[0].decode()
         uc.mem_write(BUF, bytes(16)); call("arp_item_text", item, BUF); t = bytes(uc.mem_read(BUF, 8)).split(b"\0")[0].decode()
         names[n] = t
-    if list(names) != ["KIT", "PAD", "SOUND", "TUNE", "DECAY", "TONE", "LEVEL", "SWEEP", "NOISE", "ATTCK", "M.CH"] or names["M.CH"] != "16":
+    if list(names) != ["KIT", "PAD", "SOUND", "TUNE", "DECAY", "TONE", "LEVEL", "SWEEP", "NOISE", "ATTCK", "M.CH", "BOUNC"] or names["M.CH"] != "16" or names["BOUNC"] != "--":
         raise AssertionError(names)
     turn = check_turn(uc, call, S, len(man["arp_menu"]["SOUND"]))
     value_push = check_value_push(uc, S, man, img)
@@ -173,8 +173,9 @@ def check_turn(uc, call, S, sounds):
     r, _ = call("kit_turn", 1)
     if r != 1 or rd(CURSOR,4) not in list(range(11)) + [21]: raise AssertionError("melodic menu turn")
     call("kit_note_seen",7,0)
-    # Drum mode skips A.OCT (8): it is a melodic control. Both menus end with M.CH (21).
-    for mode,expected in [(0,list(range(11))+[21]), (5,[6,7,9,10,11,12,13,17,21])]:
+    # Drum mode skips A.OCT (8): it is a melodic control. The melodic menu ends
+    # with M.CH (21), the drum menu with M.CH and BOUNC (22).
+    for mode,expected in [(0,list(range(11))+[21]), (5,[6,7,9,10,11,12,13,17,21,22])]:
         uc.mem_write(S["kit_mode"],bytes([mode]));uc.mem_write(CURSOR,struct.pack("<i",expected[0]))
         for value in expected[1:]:
             call("kit_turn",1)
@@ -227,7 +228,7 @@ def check_value_push(uc, S, man, img):
         raise AssertionError(("VALUE push jump target", hex(hi << 16 | lo)))
     kb = BUF + 0x200                     # stand-in keyboard state; +0x14 is the edit flag
     regs = [0x44444444, 0x55555555, 0x66666666, 0x77777777]
-    for cursor, want in ((10, 0), (9, 1), (11, 1), (13, 1), (17, 1), (21, 1), (0, 1)):
+    for cursor, want in ((10, 0), (9, 1), (11, 1), (13, 1), (17, 1), (21, 1), (22, 1), (0, 1)):
         uc.mem_write(CURSOR, struct.pack("<i", cursor)); uc.mem_write(kb, bytes(0x20))
         frame = STACK - 0x200            # stock frame: 0x14 of locals, then r4-r7 and the return address
         uc.mem_write(frame + 0x14, struct.pack("<5I", *regs, RET | 1))

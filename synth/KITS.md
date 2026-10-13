@@ -1,11 +1,16 @@
-# Synthesized machine kits v9.44 (test candidate)
+# Synthesized machine kits v9.45 (test candidate)
 
-This branch carries the v9.44-test1 kit candidate: v9.43 plus external MIDI
-sequencing, for the kits and the melodic Sound Generator. It adds a MIDI channel
-item (M.CH), drum notes 36–51 on pads 1–16 and CCs for every parameter
-([MIDI](#midi)). test1 has emulator verification only. The published patcher
-option is still v9.43 (build v9.43-test3, APP1 SHA-256 `f6b83372…a515`) until
-this candidate passes a hardware test and `publish_kits.py` is run.
+This branch carries the v9.45-test1 kit candidate: v9.44-test1 (external MIDI)
+plus BOUNC, which writes the current kit's sixteen pads, with their settings,
+into the sixteen pads of a sample bank ([Bounce a kit into a
+bank](#bounce-a-kit-into-a-bank)). test1 has emulator verification only and is
+not in the patcher. The patcher's published option is still v9.43 (build
+v9.43-test3, APP1 SHA-256 `f6b83372…a515`); its experimental option is the
+v9.44-test1 MIDI build.
+
+v9.44-test1 added external MIDI sequencing, for the kits and the melodic Sound
+Generator: a MIDI channel item (M.CH), drum notes 36–51 on pads 1–16 and CCs for
+every parameter ([MIDI](#midi)). It too has emulator verification only.
 
 v9.43 has thirteen kits, every voice re-measured against references. Its test1
 and test2 were played on hardware. test2 answered the first report (kick level,
@@ -45,8 +50,8 @@ local in your browser. The patcher produces APP1 only; APP0 remains stock.
 | First | Tune ±12 semitones | Decay 0–100% | Tone 0–100% |
 | After tapping SHIFT | Sweep 0–100% | Noise 0–100% | Attack 0–100% |
 
-Kit VALUE has ARP, RATE, HOLD, BPM, KIT, PAD, SOUND, LEVEL (0–127) and M.CH. The
-six main-display parameters do not repeat there. A.OCT is a melodic control: it is
+Kit VALUE has ARP, RATE, HOLD, BPM, KIT, PAD, SOUND, LEVEL (0–127), M.CH and
+BOUNC. The six main-display parameters do not repeat there. A.OCT is a melodic control: it is
 not in the drum menu, and drum arps ignore it. BPM is a readout in both modes;
 pressing VALUE on it does nothing. Melodic VALUE keeps its original items and
 arpeggiator controls, with no drum items, and ends with M.CH. Melodic SHIFT keeps
@@ -58,6 +63,84 @@ every pad: a pad at 50 plays the modelled machine voice unchanged. TONE is the
 broadband tilt everywhere else. SWEEP below 50 lowers or removes a voice's own
 pitch envelope (or makes the pitch rise into the note); above 50 deepens it.
 NOISE above 50 mixes noise into metallic sources; below 50 thins noisy voices.
+
+## Bounce a kit into a bank
+
+BOUNC, the last item of the drum VALUE menu, writes the current kit's sixteen
+pads into the sixteen pads of a sample bank. Each pad keeps its own Tune, Decay,
+Tone, Sweep, Noise, Attack and Level, so a kit dialled in on the synth becomes a
+normal sample kit. BOUNC is not in the melodic menu.
+
+1. Turn VALUE to BOUNC (it shows --) and press VALUE.
+2. Turn to a bank, A–J, and press VALUE again.
+3. Pads of that bank that are empty are filled. A pad that already holds a
+   sample is asked about first, one pad at a time. The item shows the pad (B-3
+   is bank B, pad 3) and KEEP. Turn VALUE right for OVER (replace it) or left
+   for KEEP, then press VALUE for the next pad. After the last answer the
+   bounce starts.
+4. The value counts the pads as they are written (3/16) and shows DONE at the
+   end. Each pad is written like a REC, so the screen pauses briefly for each
+   one.
+
+- EXIT cancels. During the questions nothing has been written. During the
+  bounce the pads already written stay and the rest are not written. The value
+  shows STOP.
+- Outside a bounce EXIT leaves the page as always. To back out after turning to
+  a bank, turn back to -- and press VALUE, or press EXIT.
+- Each time you press VALUE on BOUNC to edit it, it starts again from --, so a
+  bounce always takes a turn to a bank first.
+- REC does nothing while BOUNC asks or writes. A bounce does not start while a
+  REC imprint is waiting for its second press.
+- Leaving the Sound Generator page or switching machines cancels too.
+- The pads' settings are taken when you press VALUE on the bank. Changes made
+  during the questions or the bounce are not in it.
+- Pads whose LEVEL is 0 are left out and not asked about.
+- Just before each pad is written the bank is checked again. A pad that got a
+  sample in the meantime is replaced only if you chose OVER for it.
+- If a file cannot be written (for example, storage full) the value shows ERROR
+  and nothing more is written.
+
+Each file is written by the same stock code as a REC imprint, so it has the same
+format, the stock imprint name (SG), mono or stereo as BALANCE sets it, and v9's
+10 ms fade at the end. What differs from REC:
+
+- Velocity 127 with the pad's LEVEL. REC takes the velocity of the last strike.
+- Every pad renders as a first hit on a cleared voice, with the noise seed and
+  shared-source timing REC uses for a pad not struck in this kit. The same kit
+  always bounces to the same files.
+- Length: each sample ends where its drum has fallen 60 dB below its own peak,
+  at most 10 s, instead of PAD LENGTH. On the factory TR808 the rim shot comes
+  out 22 ms long, the closed hat 0.12 s, the kick 1.0 s and the cymbal 2.1 s; a
+  kick with a long decay keeps its whole tail, and reverse playback starts at
+  once. Across all factory and tested pads the lengths run from 13 ms to 8.7 s.
+
+The emulator tests model the storage calls; writing to the SP's real storage is
+verified only on hardware. Try the first bounce in a scratch project.
+
+How it works:
+
+- BOUNC is VALUE item 22. The stock cursor range becomes 0–22; drum mode shows
+  the item and melodic mode skips it.
+- The kits' existing page-event hook (0x800a80a8) sees VALUE presses, EXIT and
+  REC before the Sound Generator page does.
+- The bounce runs one pad per Sound Generator screen update (`arp_poll`, the UI
+  task), so the UI task never blocks for the whole batch. Each pad is a
+  pre-render on the export voice, which finds its length, and one call of the
+  stock exporter (0x801327b8, the v4 export engine) with the destination
+  bank × 16 + pad at +0x17c, as REC's second press calls it.
+- One new guarded jump in the stock exporter's length code sets the length:
+
+| Site | Stock code | Now |
+| --- | --- | --- |
+| 0x80132ac8 | `mov r4, r8; cmp.w fp, #1; mov.w r0, #0` after the frame count (fp) and loop limit (`[sp, #4]`) are set from PAD LENGTH | `kit_bounce_length_gate`: while a bounce writes, both become the pad's length; then the same three instructions |
+
+Nine more spans the bounce relies on are checked against their exact v9.6
+instructions without being changed: the gate's return, both limit stores, the
+loop's limit test, the oscillator call, v9's export-mix entry, the exporter's
+jump to the v4 engine, its count test and the stock body's destination test.
+They are listed in the manifest as `kit_bounce_guards`. The REC exporter is not
+otherwise changed. With no bounce running, the gate runs only the three
+displaced instructions.
 
 ## MIDI
 
@@ -237,17 +320,18 @@ Use Python 3.12, the pinned dependencies and Zig 0.13.0. Supply your own officia
 python -m pip install -r synth/requirements.txt
 python synth/build_v9.py /path/to/stock/SP404MKII_APP1.bin --zig /path/to/zig --out out/v9.5-parent
 python synth/build_scales.py out/v9.5-parent/SP404MKII_APP1.bin --zig /path/to/zig --out out/v9.6 --fixes
-python synth/build_kits.py out/v9.6/SP404MKII_APP1.bin --zig /path/to/zig --out out/kits-v944
+python synth/build_kits.py out/v9.6/SP404MKII_APP1.bin --zig /path/to/zig --out out/kits-v945
 ```
 
-A clean rebuild from stock 5.52 with these commands reproduces the v9.44-test1
-APP1 (`d47f46d4…a51d`, 3,088,608 bytes). The published v9.43 APP1
-(`f6b83372…a515`, 3,085,968 bytes) is rebuilt the same way from commit
-`b1c1b26`. The kit builder requires only the files in this repository. Patch
-sites retain exact-byte guards. Zero-filled module sections are packed into
-guarded scatter rows and reconstructed to verify the complete runtime image
-before writing APP1.
-Module: 151,108 bytes at run time (limit 319,488), 116,644 stored.
+A clean rebuild from stock 5.52 with these commands reproduces the v9.45-test1
+APP1 (`c5e99d93…fde3`, 3,093,024 bytes) and its manifest byte for byte. The
+v9.44-test1 APP1 (`d47f46d4…a51d`, 3,088,608 bytes) is rebuilt the same way from
+commit `6caf6af`, and the published v9.43 APP1 (`f6b83372…a515`, 3,085,968
+bytes) from commit `b1c1b26`. The kit builder requires only the files in this
+repository. Patch sites retain exact-byte guards. Zero-filled module sections are
+packed into guarded scatter rows and reconstructed to verify the complete runtime
+image before writing APP1.
+Module: 155,744 bytes at run time (limit 319,488), 121,060 stored.
 
 MIDI reaches the module through four guarded jumps in the stock MIDI handlers,
 which both MIDI ports share through the table at 0x802091ec:
@@ -270,9 +354,56 @@ all-notes-off wrapper and left NOPs in its place, so choosing an imprint
 destination stopped redrawing the pads. The 14 stock bytes are written back
 behind an exact-byte guard.
 
-## Checks (v9.44-test1, emulator)
+## Checks (v9.45-test1, emulator)
 
-MIDI (`test_kit_midi.py`). The built image is booted the way its scatter loader
+BOUNC (`test_kit_bounce.py`). The built image is booted as for the MIDI checks
+below. The stock exporter runs for real: the v4 export engine, Roland's renderer
+and file writer, the oscillator gate, the kit engine and v9's export mix. Only
+the storage and project calls it makes are modelled: path, open, write, close,
+delete, header, stream cache and pad registration. A pad holds a sample exactly
+when the model has its file. Keys go through the stock page dispatcher to the
+Sound Generator page's own handlers. One screen update is one `arp_poll` call.
+
+- Audio, on every factory pad of all 13 kits (208), and on all 64 pads of TR808,
+  FM, SDS-V and TR727 with all six knobs and LEVEL changed across their ranges:
+  - bouncing pad p writes one file, to bank × 16 + p. Path, open, header,
+    stream cache, size, name (SG), load and save all name that pad, and nothing
+    else is touched;
+  - the kit engine's output for the bounce is, float for float, that of a drum
+    REC of the same pad not struck in this kit at velocity 127 (on a cleared
+    export voice);
+  - the file's PCM equals that REC's sample for sample, up to v9's 10 ms end
+    fade, and the fade frames are exactly v9's fade of the REC's frames;
+  - the length is the frame after the last sample at or above −60 dB of the
+    pad's own peak (the REC beyond it never rises back above that), and the
+    header and the registered size match it.
+- The flow:
+  - the bank value runs from -- through A–J and stops at both ends; VALUE on --
+    only leaves edit mode;
+  - an empty bank fills at once;
+  - with samples on pads 4, 8 and 13 the questions come in pad order with KEEP
+    by default and edit mode kept on. Answering OVER, KEEP, KEEP writes 14
+    pads, deletes and replaces pad 4, and never opens pads 8 and 13. The value
+    counts 1/14 … 13/14, then DONE;
+  - EXIT while asking writes nothing and does not leave the page; EXIT during
+    the run keeps the three pads written and writes no more;
+  - REC is ignored while asking and while writing; with an imprint armed,
+    VALUE does not start a bounce;
+  - a pad that gets a sample during the run is left alone, and a knob edit
+    made during the run is not in the bounce;
+  - leaving the page cancels (STOP when running, -- when asking), and so does
+    switching machines;
+  - pads with LEVEL 0 or the sound off are not asked about and not written;
+  - a file that cannot be created stops the bounce with ERROR and clears REC's
+    destination;
+  - the melodic menu never reaches BOUNC.
+- REC is unchanged. Thirty RECs write byte-identical files, headers and
+  registrations on v9.45-test1 and v9.44-test1: 28 drum (factory and tweaked
+  pads, PAD LENGTH in seconds and in periods) and 2 melodic (seconds and
+  periods).
+
+MIDI (`test_kit_midi.py`, run again on v9.45-test1; the VALUE cursor range is now
+0–22). The built image is booted the way its scatter loader
 does it, and MIDI messages go through the stock dispatcher with the Sound
 Generator code running for real:
 
@@ -287,8 +418,8 @@ Generator code running for real:
   control functions' codes. With M.CH 16, all 8,192 note messages (16 channels,
   note-on and note-off, notes 0–127, the SG page and another page) take the same
   path as in v9.43-test3.
-- M.CH: name, text, 1–16 bounds, the stock VALUE-cursor range 0–21, and a change
-  stops the voices and clears the arp.
+- M.CH: name, text, 1–16 bounds, the stock VALUE-cursor range (0–22 with BOUNC),
+  and a change stops the voices and clears the arp.
 - CCs: 336 drum cases (every pad CC and the four last-pad CCs at 0, 64 and 127,
   on TR808 and TR707) set exactly the knob values at once and select the pad. A
   CC just before a note gives the same audio as the same setting made by hand.
@@ -299,13 +430,14 @@ Generator code running for real:
   byte for byte. CC 123 releases MIDI notes, keeps pad notes and stops the arp
   in both modes. CC 120 fades out every voice.
 
-The kit checks below were run again on v9.44-test1:
+The kit checks below were run again on v9.45-test1:
 
 - 208 factory pad renders (13 kits × 16) match host/ARM sample for sample for
   3000 samples each, plus 108 control endpoint cases (TUNE, DECAY, TONE, SWEEP,
   NOISE, ATTACK at both ends on nine voices from five engines).
 - Machine inventories, held-pad editing, menu ranges (drum mode skips A.OCT,
-  both menus end with M.CH), the KIT selector ends and seven hat-choke cases pass.
+  the melodic menu ends with M.CH, the drum menu with M.CH and BOUNC), the KIT
+  selector ends and seven hat-choke cases pass.
 - VALUE pressed on BPM leaves the stock edit flag off; on every other item it
   sets it. The gate returns through the stock handler's own epilogue.
 - 208 compiled capture cases check released-pad selection and velocity, with
@@ -318,20 +450,25 @@ The kit checks below were run again on v9.44-test1:
   armed they change nothing: no machine switch, all-stop or cursor step.
 - Every sound renders finite, without DC offset or audible cut-off clicks.
 
-Hardware timing, output and CPU headroom are not yet verified on a device.
+Hardware timing, output, CPU headroom and writes to the SP's storage are not yet
+verified on a device.
 
 To replay host/ARM audio checks, build the portable engine as a host library:
 
 ```sh
 zig cc -O2 -ffp-contract=off -fno-fast-math -shared -DKIT_HOST synth/kits/kit_engine.c -o out/kit_engine_host.dll
-python synth/test_kits.py out/kits-v944 out/kit_engine_host.dll
-python synth/test_kit_capture.py out/kits-v944
-python synth/test_kit_chord.py out/kits-v944
-python synth/test_kit_shortcut.py out/kits-v944
-python synth/test_kit_midi.py out/kits-v944 out/kits-v943
+python synth/test_kits.py out/kits-v945 out/kit_engine_host.dll
+python synth/test_kit_capture.py out/kits-v945
+python synth/test_kit_chord.py out/kits-v945
+python synth/test_kit_shortcut.py out/kits-v945
+python synth/test_kit_midi.py out/kits-v945 out/kits-v944
+python synth/test_kit_bounce.py out/kits-v945 out/kits-v944
 ```
 
-The second argument of `test_kit_midi.py` is optional: a v9.43 build to compare
-the M.CH 16 note paths against.
+The second argument of `test_kit_midi.py` is optional: an earlier kits build to
+compare the M.CH 16 note paths against. The second argument of
+`test_kit_bounce.py` is optional too: a v9.44 build to compare REC against.
+`test_kit_bounce.py` takes about 40 minutes; `--quick` checks three kits and
+`--flow` skips the audio part.
 
 Use `.so` for a supported Linux host toolchain; the build was verified on Windows.

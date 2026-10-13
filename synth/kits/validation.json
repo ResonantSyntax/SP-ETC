@@ -1,12 +1,12 @@
 {
-  "candidate": "v9.44-test1",
-  "app1_sha256": "d47f46d4204a90366ac06774050b9ee4c7b9cdfb6470ca65be9f10c24ad1a51d",
-  "app1_bytes": 3088608,
-  "source_files": 23,
+  "candidate": "v9.45-test1",
+  "app1_sha256": "c5e99d9325c865cc180f9408aa1dd11bce8337e25cdd32fc3bcbe98239bfcde3",
+  "app1_bytes": 3093024,
+  "source_files": 24,
   "hardware_verified": false,
   "public_source_rebuild_matches": true,
   "browser_checks_passed": true,
-  "notes": "Emulator checks (synth/test_kits.py, test_kit_capture.py, test_kit_chord.py, test_kit_shortcut.py and the new test_kit_midi.py, which feeds MIDI through the stock dispatcher on the built image) and a clean rebuild from stock with the documented build_v9 -> build_scales --fixes -> build_kits commands all match this APP1. synth/test_browser.cjs passes unchanged: the patcher still produces v9.43 (this candidate is not published). v9.44-test1 adds external MIDI (M.CH channel item, drum notes 36-51 on pads 1-16, CC control, CC 123/120) to v9.43-test3 and has emulator verification only.",
+  "notes": "Emulator checks (synth/test_kits.py, test_kit_capture.py, test_kit_chord.py, test_kit_shortcut.py, test_kit_midi.py and the new test_kit_bounce.py, which runs BOUNC through the real stock REC exporter on the built image with modelled storage) and a clean rebuild from stock with the documented build_v9 -> build_scales --fixes -> build_kits commands all match this APP1. synth/test_browser.cjs passes unchanged: the patcher still produces v9.43 (this candidate is not published). v9.45-test1 adds BOUNC (VALUE item 22, drum mode: the kit into a sample bank) to v9.44-test1 and has emulator verification only; writes to the SP's storage are verified only on hardware.",
   "host_arm": {
     "schema": "kit-unicorn-check-v2",
     "passed": true,
@@ -27,7 +27,8 @@
       "SWEEP": "50%",
       "NOISE": "50%",
       "ATTCK": "50%",
-      "M.CH": "16"
+      "M.CH": "16",
+      "BOUNC": "--"
     },
     "hold_pad_turn": {
       "press_selects_pad": true,
@@ -76,11 +77,12 @@
         "tail_energy_ratio": 0.0
       }
     ],
+    "build_sha256": "c5e99d9325c865cc180f9408aa1dd11bce8337e25cdd32fc3bcbe98239bfcde3",
     "pcm_bank_sha256": null,
     "pcm_flash_readonly": false,
-    "module_runtime_bytes": 151108,
-    "module_stored_bytes": 116644,
-    "module_reconstructed_sha256": "3984869289a5cf6131cf53c9ed7aa242ef4bac7bcaa0b256edcffa8a8006d997"
+    "module_runtime_bytes": 155744,
+    "module_stored_bytes": 121060,
+    "module_reconstructed_sha256": "27c381291ad228590561c07b460c6308723e495437bacc2868d7b3a6def75750"
   },
   "capture": {
     "passed": true,
@@ -88,7 +90,7 @@
     "velocity_snapshot": true,
     "ui_selection_does_not_replace_last_strike": true,
     "melodic_capture_delegated": true,
-    "app1_sha256": "d47f46d4204a90366ac06774050b9ee4c7b9cdfb6470ca65be9f10c24ad1a51d"
+    "app1_sha256": "c5e99d9325c865cc180f9408aa1dd11bce8337e25cdd32fc3bcbe98239bfcde3"
   },
   "chord_capture": {
     "passed": true,
@@ -122,7 +124,7 @@
       }
     },
     "outside_window_single": true,
-    "app1_sha256": "d47f46d4204a90366ac06774050b9ee4c7b9cdfb6470ca65be9f10c24ad1a51d"
+    "app1_sha256": "c5e99d9325c865cc180f9408aa1dd11bce8337e25cdd32fc3bcbe98239bfcde3"
   },
   "shortcut_guard": {
     "keyboard_on": {
@@ -138,7 +140,7 @@
       "pattern_edit_to": 5
     },
     "passed": true,
-    "app1_sha256": "d47f46d4204a90366ac06774050b9ee4c7b9cdfb6470ca65be9f10c24ad1a51d"
+    "app1_sha256": "c5e99d9325c865cc180f9408aa1dd11bce8337e25cdd32fc3bcbe98239bfcde3"
   },
   "sg_redraw_restore": {
     "address": "0x8015c01c",
@@ -158,7 +160,7 @@
     "bpm_item": 10,
     "effect": "BPM is a readout: pressing VALUE on it does not enter edit mode",
     "original_hex": "01214161012005b0f0bd",
-    "replacement_hex": "46f6fd2cc8f2fa3c6047"
+    "replacement_hex": "46f63d2cc8f2fa3c6047"
   },
   "midi": {
     "drum_notes": {
@@ -229,7 +231,7 @@
       ]
     },
     "baseline": {
-      "build": "v9.43-test3",
+      "build": "v9.44-test1",
       "identical_paths": 8192
     },
     "m_ch_item": {
@@ -241,7 +243,7 @@
       ],
       "value_cursor": [
         0,
-        21
+        22
       ],
       "change_stops_voices_and_clears_arp": true
     },
@@ -282,37 +284,497 @@
       "other_channel_or_page": "ignored"
     },
     "passed": true,
-    "app1_sha256": "d47f46d4204a90366ac06774050b9ee4c7b9cdfb6470ca65be9f10c24ad1a51d",
-    "revision": "v9.44-test1"
+    "app1_sha256": "c5e99d9325c865cc180f9408aa1dd11bce8337e25cdd32fc3bcbe98239bfcde3",
+    "revision": "v9.45-test1"
   },
   "midi_patches": [
     {
       "address": "0x80066d18",
       "bytes": 12,
       "original_hex": "0f2819d16ff030fb1e2815d0",
-      "replacement_hex": "46f6077cc8f2fa3c604700bf",
+      "replacement_hex": "46f6376cc8f2fa3c604700bf",
       "target_symbol": "kit_midi_control_gate"
     },
     {
       "address": "0x80066e64",
       "bytes": 10,
       "original_hex": "0f2d07d1a0780022e178",
-      "replacement_hex": "46f6217cc8f2fa3c6047",
+      "replacement_hex": "46f6516cc8f2fa3c6047",
       "target_symbol": "kit_midi_on_gate"
     },
     {
       "address": "0x800670b8",
       "bytes": 10,
       "original_hex": "0f2d07d1a07800210122",
-      "replacement_hex": "46f6657cc8f2fa3c6047",
+      "replacement_hex": "46f6956cc8f2fa3c6047",
       "target_symbol": "kit_midi_off_gate"
     },
     {
       "address": "0x80066174",
       "bytes": 10,
       "original_hex": "4df66c106388c8f2d300",
-      "replacement_hex": "47f23d3cc8f2fa3c6047",
+      "replacement_hex": "47f26d2cc8f2fa3c6047",
       "target_symbol": "kit_midi_cc_gate"
     }
-  ]
+  ],
+  "bounce": {
+    "audio": {
+      "factory_pads": 208,
+      "tweaked_pads": 64,
+      "frames_min": 629,
+      "frames_max": 417016,
+      "cap_reached": false,
+      "factory_frames": {
+        "1": [
+          47141,
+          8883,
+          5913,
+          18876,
+          23848,
+          18175,
+          14432,
+          101489,
+          1058,
+          22490,
+          30635,
+          1586,
+          21758,
+          12537,
+          10801,
+          1156
+        ],
+        "2": [
+          6225,
+          9030,
+          6825,
+          46671,
+          12356,
+          6203,
+          13176,
+          82557,
+          32741,
+          18212,
+          164326,
+          12336,
+          12643,
+          6427,
+          13557,
+          31871
+        ],
+        "3": [
+          10894,
+          8675,
+          21457,
+          148173,
+          24060,
+          24063,
+          21450,
+          35544,
+          5831,
+          17104,
+          41939,
+          100447,
+          47277,
+          16544,
+          71171,
+          11171
+        ],
+        "4": [
+          55746,
+          68201,
+          3436,
+          21387,
+          127135,
+          95759,
+          34408,
+          31519,
+          108602,
+          46971,
+          5033,
+          17659,
+          247911,
+          63535,
+          67158,
+          24599
+        ],
+        "5": [
+          81236,
+          28728,
+          14749,
+          41348,
+          62840,
+          63000,
+          62969,
+          298704,
+          11263,
+          43283,
+          28186,
+          43201,
+          40691,
+          16965,
+          417016,
+          52125
+        ],
+        "6": [
+          17901,
+          14353,
+          10888,
+          26924,
+          30263,
+          18255,
+          14316,
+          65084,
+          1983,
+          12678,
+          66038,
+          34681,
+          10022,
+          21180,
+          17962,
+          61661
+        ],
+        "7": [
+          14453,
+          9166,
+          5611,
+          25887,
+          18244,
+          10307,
+          93525,
+          26779,
+          6245,
+          11231,
+          17834,
+          35968,
+          7046,
+          178337,
+          9622,
+          18783
+        ],
+        "8": [
+          22231,
+          23852,
+          9721,
+          42719,
+          42257,
+          39598,
+          46174,
+          16773,
+          24880,
+          28971,
+          78443,
+          31503,
+          43677,
+          16748,
+          24802,
+          29523
+        ],
+        "9": [
+          8744,
+          19692,
+          18259,
+          46033,
+          9908,
+          5666,
+          3831,
+          19147,
+          1088,
+          4428,
+          10212,
+          2729,
+          4330,
+          48994,
+          52363,
+          10640
+        ],
+        "10": [
+          10439,
+          14124,
+          3188,
+          29469,
+          3799,
+          3758,
+          12242,
+          4370,
+          756,
+          2590,
+          3357,
+          1973,
+          11123,
+          12182,
+          20165,
+          9567
+        ],
+        "11": [
+          12275,
+          4681,
+          7047,
+          24597,
+          24482,
+          24573,
+          22572,
+          48007,
+          3418,
+          20870,
+          19180,
+          2097,
+          14983,
+          3004,
+          23564,
+          3224
+        ],
+        "12": [
+          4718,
+          9633,
+          7258,
+          17420,
+          30400,
+          30392,
+          30076,
+          65866,
+          4659,
+          7560,
+          8859,
+          7742,
+          5452,
+          9351,
+          41258,
+          7050
+        ],
+        "13": [
+          5619,
+          11252,
+          7919,
+          8465,
+          18842,
+          30772,
+          31387,
+          7515,
+          8831,
+          5344,
+          4898,
+          9098,
+          15486,
+          72145,
+          102793,
+          11063
+        ]
+      },
+      "tweaked_frames": {
+        "1": [
+          39408,
+          14795,
+          9242,
+          18880,
+          32861,
+          35422,
+          4829,
+          144383,
+          629,
+          8297,
+          14794,
+          1061,
+          19164,
+          7335,
+          15322,
+          910
+        ],
+        "5": [
+          28623,
+          21499,
+          6934,
+          6806,
+          46009,
+          46285,
+          86563,
+          299088,
+          11830,
+          59295,
+          38422,
+          42970,
+          144623,
+          40214,
+          106956,
+          80280
+        ],
+        "8": [
+          21996,
+          34120,
+          17821,
+          42523,
+          78719,
+          51434,
+          17717,
+          46819,
+          6120,
+          15102,
+          14666,
+          23225,
+          10929,
+          8633,
+          9694,
+          33266
+        ],
+        "13": [
+          3912,
+          10877,
+          7269,
+          6484,
+          25460,
+          30811,
+          31348,
+          10005,
+          11798,
+          7626,
+          9184,
+          10345,
+          7403,
+          126769,
+          58929,
+          2741
+        ]
+      },
+      "matches": "kit engine float-exact and PCM sample-exact to an unstruck velocity-127 REC, end fade as v9 export_mix, length = ring-out (-60 dB of the pad peak)"
+    },
+    "bank_value": {
+      "values": [
+        "--",
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "H",
+        "I",
+        "J"
+      ],
+      "clamped": true
+    },
+    "questions": {
+      "used_pads": [
+        4,
+        8,
+        13
+      ],
+      "answers": [
+        "OVER",
+        "KEEP",
+        "KEEP"
+      ],
+      "written": 14,
+      "replaced": [
+        4
+      ],
+      "kept_untouched": [
+        8,
+        13
+      ],
+      "old_file_deleted_first": true,
+      "edit_mode_kept_while_asking": true,
+      "rec_ignored": true,
+      "progress": [
+        "1/14",
+        "2/14",
+        "3/14",
+        "4/14",
+        "5/14",
+        "6/14",
+        "7/14",
+        "8/14",
+        "9/14",
+        "10/14",
+        "11/14",
+        "12/14",
+        "13/14",
+        "DONE"
+      ]
+    },
+    "exit": {
+      "while_asking": "nothing written, stays on the page",
+      "during_run": "3 pads written stay, no more"
+    },
+    "imprint_armed": "no start",
+    "during_run": {
+      "new_sample_kept": true,
+      "edits_not_applied": true
+    },
+    "cancel": {
+      "page_change": "STOP (running) / -- (asking)",
+      "machine_switch": "STOP"
+    },
+    "left_out": {
+      "level_0": "not asked, not written",
+      "sound_off": "not written"
+    },
+    "write_error": {
+      "shown": "ERROR",
+      "written_before": 2,
+      "stops": true,
+      "rec_destination_cleared": true
+    },
+    "melodic": "BOUNC not in the menu",
+    "baseline": {
+      "build": "v9.44-test1",
+      "identical_recs": 30,
+      "drum": 28,
+      "melodic": 2,
+      "pad_length_seconds_and_periods": true,
+      "frames": [
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        24000,
+        48000,
+        24000,
+        13963,
+        6981,
+        24000,
+        13963
+      ]
+    },
+    "passed": true,
+    "app1_sha256": "c5e99d9325c865cc180f9408aa1dd11bce8337e25cdd32fc3bcbe98239bfcde3",
+    "revision": "v9.45-test1",
+    "seconds": 2696
+  },
+  "bounce_patch": {
+    "address": "0x80132ac8",
+    "bytes": 10,
+    "original_hex": "4446bbf1010f4ff00000",
+    "replacement_hex": "47f28b2cc8f2fa3c6047",
+    "target_symbol": "kit_bounce_length_gate",
+    "guards": [
+      "0x80132ad2",
+      "0x80132a5e",
+      "0x80132ac4",
+      "0x80132c6e",
+      "0x80132aec",
+      "0x8353ba00",
+      "0x801327b8",
+      "0x8353b79c",
+      "0x801327c4"
+    ]
+  }
 }

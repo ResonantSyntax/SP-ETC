@@ -16,7 +16,10 @@ static u8 kit_shortcut_pending,kit_shortcut_chord;
 static int kit_imprint_armed(int current){
     return current==0x1e && !*(volatile u8*)0x80591C48u;
 }
+static int kit_bounce_event(int type,int key);   /* kit_bounce.inc: BOUNC's keys; 1 = consumed */
+static void kit_bounce_cancel(void);
 static void kit_shortcut_select(int kits){
+    kit_bounce_cancel();
     if(kit_mode)kit_last_mode=kit_mode;
     RELEASE_ALL();held_count=0;stop();kit_pads_down=0;
     for(int i=0;i<8;++i)kit_slot[i].live=0;
@@ -43,6 +46,7 @@ static void kit_shortcut_observe(void){
 }
 EXPORT int kit_shortcut_event(void *page,const u16 *event){
     (void)page;int type=event[0],key=event[1];
+    if(kit_bounce_event(type,key))return 1;
     if(type!=6||(key!=21&&key!=22))return 0;
     int current=*(volatile signed short*)0x80245880u;
     int intent=key==21?1:2;

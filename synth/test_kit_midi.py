@@ -449,9 +449,9 @@ def main():
         raise AssertionError(('M.CH change: all-stop and arp notes forgotten', len(stops), changes))
     m.uc.mem_write(BUF, bytes(8))
     m.call(0x800C1780, SETTINGS, 0x83, BUF, BUF + 4, stack0=0)
-    if (m.get(BUF), m.get(BUF + 4)) != (0, 21):
+    if (m.get(BUF), m.get(BUF + 4)) != (0, 22):                 # 22 = BOUNC (v9.45), drum mode only
         raise AssertionError(('VALUE cursor range', m.get(BUF), m.get(BUF + 4)))
-    report['m_ch_item'] = dict(name='M.CH', default=16, range=[1, 16], value_cursor=[0, 21],
+    report['m_ch_item'] = dict(name='M.CH', default=16, range=[1, 16], value_cursor=[0, 22],
                                change_stops_voices_and_clears_arp=True)
 
     # 4. CCs -----------------------------------------------------------------------------------------
