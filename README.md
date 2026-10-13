@@ -1,6 +1,6 @@
 # Tracelistener's SP-404MKII Sound Generator mod
 
-**[Open the synth patcher](https://tracelistener.github.io/doom-os-etc./)**
+**[Open the patcher](https://tracelistener.github.io/doom-os-etc./)**
 
 Sound Generator **v9.9.3** adds four live voices, 17 new waveforms, nine
 volume/filter-envelope presets, 34 scale choices and an arpeggiator to the SP-404MKII. Firmware processing happens
