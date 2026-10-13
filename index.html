@@ -235,6 +235,18 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
           </ul>
           <p class="t">With ARP on, pads and MIDI IN feed the arp instead of playing directly. Each step is released half a step later, so the ENV preset shapes every step and release tails overlap. The arp follows the tempo BPM-synced samples in the current bank follow: the PROJECT BPM, the bank's own BPM when the tempo is set to BANK, the MIDI clock when synced, or a playing pattern's tempo. It runs free from the first key, not locked to the pattern's beat grid. Turning ARP on stops notes played directly; leaving the Sound Generator page stops the arp. Settings reset at power-on.</p>
         </details>
+        <details class="env-guide">
+          <summary>Drum kit guide (v9.43)</summary>
+          <p class="t">For the Sound Generator + Kits build. SHIFT + PATTERN EDIT opens drum mode with the last kit you used; SHIFT + RECORD SETTING returns to the melodic Sound Generator. The 13 kits are TR808, DR110, KPR77, UDS, FM, TR909, TR606, SDS-V, MP-7, CR78, CR8K, TR707 and TR727. Every sound is synthesized on the SP; no samples are used.</p>
+          <ul>
+            <li><strong>Pads:</strong> each kit fills all 16 pads. Pads beyond a machine's own voices hold tuned or reshaped variants, shown with a + after the sound name. Strike a pad to select it for editing.</li>
+            <li><strong>Knobs:</strong> CTRL1 Tune (&plusmn;12 semitones), CTRL2 Decay, CTRL3 Tone. Tap SHIFT for Sweep, Noise and Attack; tap again to go back. Tune at 0 and the others at 50 play the machine's own sound.</li>
+            <li><strong>Change a pad's sound:</strong> hold the pad and turn VALUE to step through that machine's sounds.</li>
+            <li><strong>VALUE menu:</strong> ARP, RATE, HOLD and BPM (a readout), then KIT, PAD, SOUND and LEVEL (0&ndash;127). KIT steps through the 13 machines.</li>
+            <li><strong>REC:</strong> play, press REC, choose a pad (it blinks), then press REC again. It records the last pad you hit plus up to three others hit within 100 ms before it, each with its own timing and velocity. You don't need to hold the pads.</li>
+          </ul>
+          <p class="t">The arpeggiator also runs in drum mode and steps through the held pads; A.OCT applies only to melodic mode. Kit edits are not saved and reset at power-on.</p>
+        </details>
       </div>
     </article>
     <article class="row">
