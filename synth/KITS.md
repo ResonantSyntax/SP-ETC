@@ -5,8 +5,10 @@ plus BOUNC, which writes the current kit's sixteen pads, with their settings,
 into the sixteen pads of a sample bank ([Bounce a kit into a
 bank](#bounce-a-kit-into-a-bank)). It also fixes the drum REC length: a drum
 recording now always ends where its drums have rung out, never at the melodic
-Pad Length ([Drum REC length](#drum-rec-length)). test1 has emulator
-verification only and is not in the patcher. The patcher's published option is still v9.43 (build
+Pad Length ([Drum REC length](#drum-rec-length)). And every hit of the UDS,
+MP-7, TR-707 and TR-727 kits now starts clean, whatever its voice played before
+([Clean starts](#clean-starts)). test1 has emulator verification only and is not
+in the patcher. The patcher's published option is still v9.43 (build
 v9.43-test3, APP1 SHA-256 `f6b83372…a515`); its experimental option is the
 v9.44-test1 MIDI build.
 
@@ -155,11 +157,9 @@ milliseconds of the drum.
 
 How it works: the capture (first REC press) pre-renders each captured drum on
 its own export voice, exactly as the export will render it, and keeps the length
-for the export. The voice is cleared before and after; without that, the table
-voices (UDS, MP-7, TR-707, TR-727) would start their noise filters from the
-previous export's state, so a recording's first milliseconds would depend on what
-was recorded before. One new guarded jump in the stock exporter's length code
-takes the length, once:
+for the export. The voice is cleared before and after, so nothing the pre-render
+leaves behind can reach the file. One new guarded jump in the stock exporter's
+length code takes the length, once:
 
 | Site | Stock code | Now |
 | --- | --- | --- |
@@ -172,6 +172,25 @@ engine, its count test and the stock body's destination test. They are listed in
 the manifest as `kit_export_length_guards`. The REC exporter is not otherwise
 changed. For a melodic recording no length is waiting, and the gate runs only
 the three displaced instructions.
+
+## Clean starts
+
+Every hit of the UDS, MP-7, TR-707 and TR-727 kits now starts its noise filters
+at rest, as the other kits always did. These four kits share one engine (the
+table voices). It set each new hit's filter tuning but kept the filter memory of
+whatever that voice played last: the SG has four voices, and a hit lands on
+whichever is free, so a snare could start with the memory of the open hat that
+had just rung on its voice, or of a drum from another kit.
+
+Measured with every pad of the four kits struck right after a ringing open hat,
+cymbal or cabasa on the same voice (v9.44-test1): 57 of the 64 pads came out
+different from the same hit on a fresh voice. For half of them the difference
+stayed below −39 dB of the hit's own peak, and kicks and whistles were down at
+−67 to −80 dB. Noisy sounds changed their attack: the first 0.5–2.5 ms of an
+MP-7 quijada or snare, or a TR-707 clap, came out as different as the hit
+itself. Now the same pad hit at the same moment always sounds the same, and a
+live hit sounds the way its recording does. The fix is one line in the engine's
+start (`kitdata_start` clears its filters' state).
 
 ## MIDI
 
@@ -355,14 +374,14 @@ python synth/build_kits.py out/v9.6/SP404MKII_APP1.bin --zig /path/to/zig --out 
 ```
 
 A clean rebuild from stock 5.52 with these commands reproduces the v9.45-test1
-APP1 (`b7b6d14c…fc53`, 3,092,960 bytes) and its manifest byte for byte. The
+APP1 (`43558f05…90f4`, 3,092,992 bytes) and its manifest byte for byte. The
 v9.44-test1 APP1 (`d47f46d4…a51d`, 3,088,608 bytes) is rebuilt the same way from
 commit `6caf6af`, and the published v9.43 APP1 (`f6b83372…a515`, 3,085,968
 bytes) from commit `b1c1b26`. The kit builder requires only the files in this
 repository. Patch sites retain exact-byte guards. Zero-filled module sections are
 packed into guarded scatter rows and reconstructed to verify the complete runtime
 image before writing APP1.
-Module: 155,680 bytes at run time (limit 319,488), 120,996 stored.
+Module: 155,712 bytes at run time (limit 319,488), 121,028 stored.
 
 MIDI reaches the module through four guarded jumps in the stock MIDI handlers,
 which both MIDI ports share through the table at 0x802091ec:
@@ -449,6 +468,12 @@ update is one `arp_poll` call.
     destination;
   - the melodic menu never reaches BOUNC.
 
+Clean starts (`test_kit_restart.py`, on the ARM module's live render path): every
+pad of the UDS, MP-7, TR-707 and TR-727 kits, struck on a voice that has just been
+playing a ringing open hat, cymbal or cabasa for 43 ms, sounds sample for sample
+like the same hit on a fresh voice at the same moment (64 pads, 1,024 frames
+each). The same cases on v9.44-test1 differ on 57 pads.
+
 MIDI (`test_kit_midi.py`, run again on v9.45-test1; the VALUE cursor range is now
 0–22). The built image is booted the way its scatter loader
 does it, and MIDI messages go through the stock dispatcher with the Sound
@@ -511,11 +536,13 @@ python synth/test_kit_chord.py out/kits-v945
 python synth/test_kit_shortcut.py out/kits-v945
 python synth/test_kit_midi.py out/kits-v945 out/kits-v944
 python synth/test_kit_bounce.py out/kits-v945 out/kits-v944
+python synth/test_kit_restart.py out/kits-v945 out/kits-v944
 ```
 
 The second argument of `test_kit_midi.py` is optional: an earlier kits build to
 compare the M.CH 16 note paths against. The second argument of
-`test_kit_bounce.py` is optional too: a v9.44 build to compare REC against.
+`test_kit_bounce.py` is optional too: a v9.44 build to compare REC against, and
+for `test_kit_restart.py` an older build to show the hits that used to differ.
 `test_kit_bounce.py` takes about two hours in one process; `--quick` checks
 three kits and `--flow` runs everything but the per-pad audio part. The audio
 part can be split over processes with `--kits=3,10 --tweaked= --audio-only

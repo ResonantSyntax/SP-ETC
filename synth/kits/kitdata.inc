@@ -161,6 +161,10 @@ static const float kit_dv_bells[10] = {16805, 14029, 10972, 8196, 6164, 4737, 40
 static void kitdata_start(kit_voice *v, float r, float k) {
     const kit_dv *D = &kit_dvs[v->drum - U_BD];
     int j;
+    /* Every hit starts its noise filters at rest, as the other engines do.
+     * bq_bp/bq_hp/bq_lp set coefficients only, so before v9.45 a hit began
+     * with the filter memory of whatever this voice played last. */
+    for (j = 0; j < 5; ++j) v->q[j].z1 = v->q[j].z2 = 0;
     v->f = D->f0 * r; v->fend = D->fe * r;
     v->pe = D->tb > 0 ? 1.0f : 0.0f; v->pdec = D->tb > 0 ? KIT_TAU(D->tb) : 0.0f;
     if (D->tb <= 0) v->fend = v->f;

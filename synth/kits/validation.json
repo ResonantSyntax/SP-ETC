@@ -1,12 +1,12 @@
 {
   "candidate": "v9.45-test1",
-  "app1_sha256": "b7b6d14c5b417c99aa674c9b3e99416576aed83a8dd6fd787dd3bebe123ffc53",
-  "app1_bytes": 3092960,
+  "app1_sha256": "43558f05b2740d2bb32fe7b9bfa8b204e4693c95414a984eaa4648841c6690f4",
+  "app1_bytes": 3092992,
   "source_files": 24,
   "hardware_verified": false,
   "public_source_rebuild_matches": true,
   "browser_checks_passed": true,
-  "notes": "Emulator checks (synth/test_kits.py, test_kit_capture.py, test_kit_chord.py, test_kit_shortcut.py, test_kit_midi.py and the new test_kit_bounce.py, which runs drum REC and BOUNC through the real stock REC exporter on the built image with modelled storage) and a clean rebuild from stock with the documented build_v9 -> build_scales --fixes -> build_kits commands all match this APP1. synth/test_browser.cjs passes unchanged: the patcher still produces v9.43 (this candidate is not published). v9.45-test1 adds the drum REC length fix (each drum to its own ring-out, never PAD LENGTH) and BOUNC (VALUE item 22, drum mode: the kit into a sample bank) to v9.44-test1 and has emulator verification only; writes to the SP's storage are verified only on hardware.",
+  "notes": "Emulator checks (synth/test_kits.py, test_kit_capture.py, test_kit_chord.py, test_kit_shortcut.py, test_kit_midi.py, the new test_kit_bounce.py, which runs drum REC and BOUNC through the real stock REC exporter on the built image with modelled storage, and the new test_kit_restart.py) and a clean rebuild from stock with the documented build_v9 -> build_scales --fixes -> build_kits commands all match this APP1. synth/test_browser.cjs passes unchanged: the patcher still produces v9.43 (this candidate is not published). v9.45-test1 adds the drum REC length fix (each drum to its own ring-out, never PAD LENGTH), clean starts for the UDS/MP-7/TR-707/TR-727 table voices (their noise filters start at rest at every hit) and BOUNC (VALUE item 22, drum mode: the kit into a sample bank) to v9.44-test1 and has emulator verification only; writes to the SP's storage are verified only on hardware.",
   "host_arm": {
     "schema": "kit-unicorn-check-v2",
     "passed": true,
@@ -77,12 +77,12 @@
         "tail_energy_ratio": 0.0
       }
     ],
-    "build_sha256": "b7b6d14c5b417c99aa674c9b3e99416576aed83a8dd6fd787dd3bebe123ffc53",
+    "build_sha256": "43558f05b2740d2bb32fe7b9bfa8b204e4693c95414a984eaa4648841c6690f4",
     "pcm_bank_sha256": null,
     "pcm_flash_readonly": false,
-    "module_runtime_bytes": 155680,
-    "module_stored_bytes": 120996,
-    "module_reconstructed_sha256": "68a5a635cead6462c337cd03428ba84894405371af447dbcf4114427a5ec23c6"
+    "module_runtime_bytes": 155712,
+    "module_stored_bytes": 121028,
+    "module_reconstructed_sha256": "6ea718a5d0d922693eab4771b786684dab16f9fd8cf84c18bbef1081f5b9e796"
   },
   "capture": {
     "passed": true,
@@ -95,7 +95,7 @@
     "velocity_snapshot": true,
     "ui_selection_does_not_replace_last_strike": true,
     "melodic_capture_delegated": true,
-    "app1_sha256": "b7b6d14c5b417c99aa674c9b3e99416576aed83a8dd6fd787dd3bebe123ffc53"
+    "app1_sha256": "43558f05b2740d2bb32fe7b9bfa8b204e4693c95414a984eaa4648841c6690f4"
   },
   "chord_capture": {
     "passed": true,
@@ -129,7 +129,7 @@
       }
     },
     "outside_window_single": true,
-    "app1_sha256": "b7b6d14c5b417c99aa674c9b3e99416576aed83a8dd6fd787dd3bebe123ffc53"
+    "app1_sha256": "43558f05b2740d2bb32fe7b9bfa8b204e4693c95414a984eaa4648841c6690f4"
   },
   "shortcut_guard": {
     "keyboard_on": {
@@ -145,7 +145,7 @@
       "pattern_edit_to": 5
     },
     "passed": true,
-    "app1_sha256": "b7b6d14c5b417c99aa674c9b3e99416576aed83a8dd6fd787dd3bebe123ffc53"
+    "app1_sha256": "43558f05b2740d2bb32fe7b9bfa8b204e4693c95414a984eaa4648841c6690f4"
   },
   "sg_redraw_restore": {
     "address": "0x8015c01c",
@@ -289,7 +289,7 @@
       "other_channel_or_page": "ignored"
     },
     "passed": true,
-    "app1_sha256": "b7b6d14c5b417c99aa674c9b3e99416576aed83a8dd6fd787dd3bebe123ffc53",
+    "app1_sha256": "43558f05b2740d2bb32fe7b9bfa8b204e4693c95414a984eaa4648841c6690f4",
     "revision": "v9.45-test1"
   },
   "midi_patches": [
@@ -819,9 +819,97 @@
       ]
     },
     "passed": true,
-    "app1_sha256": "b7b6d14c5b417c99aa674c9b3e99416576aed83a8dd6fd787dd3bebe123ffc53",
+    "app1_sha256": "43558f05b2740d2bb32fe7b9bfa8b204e4693c95414a984eaa4648841c6690f4",
     "revision": "v9.45-test1",
-    "seconds": 941
+    "seconds": 1224
+  },
+  "restart": {
+    "passed": true,
+    "kits": [
+      4,
+      9,
+      12,
+      13
+    ],
+    "pads": 64,
+    "frames": 1024,
+    "history_ms": 43,
+    "app1_sha256": "43558f05b2740d2bb32fe7b9bfa8b204e4693c95414a984eaa4648841c6690f4",
+    "baseline": {
+      "build": "v9.44-test1",
+      "pads_that_differed": {
+        "4": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16
+        ],
+        "9": [
+          2,
+          3,
+          4,
+          8,
+          9,
+          12,
+          13,
+          14,
+          15
+        ],
+        "12": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16
+        ],
+        "13": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16
+        ]
+      },
+      "count": 57,
+      "difference_db_re_peak": {
+        "largest": 3.7,
+        "median": -39.1
+      }
+    }
   },
   "export_length_patch": {
     "address": "0x80132ac8",

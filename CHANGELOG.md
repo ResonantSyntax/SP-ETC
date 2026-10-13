@@ -9,6 +9,11 @@ normal sample kit:
   out (60 dB below its own peak, at most 10 s). It used to take the melodic Pad
   Length, which drum mode doesn't show; set to a waveform-cycle value, a drum
   REC saved only a few milliseconds. Melodic REC still uses Pad Length.
+- Every hit of the UDS, MP-7, TR-707 and TR-727 kits starts its noise filters
+  at rest, as the other kits do. A hit used to start with the filter memory of
+  whatever its voice played last; right after a ringing open hat or cymbal that
+  changed the first 0.5–2.5 ms of noisy hits such as the MP-7 quijada and snare
+  or the TR-707 clap. The same pad now sounds the same every time.
 - BOUNC, the last item of the drum VALUE menu: press VALUE, turn to a bank A–J,
   press VALUE. The kit's sixteen pads, each with its own Tune, Decay, Tone,
   Sweep, Noise, Attack and Level, are written into that bank's sixteen pads by
@@ -20,9 +25,10 @@ normal sample kit:
   keep the stock imprint name SG.
 - One new guarded jump in the stock exporter's length code (0x80132ac8) takes
   the drum length. Melodic REC writes the same files as in v9.44.
-- New emulator test `synth/test_kit_bounce.py` runs drum REC (also with the two
-  real REC presses) and every bounce through the real stock exporter with
-  modelled storage. Hardware test pending: try it in a scratch project first.
+- New emulator tests: `synth/test_kit_bounce.py` runs drum REC (also with the
+  two real REC presses) and every bounce through the real stock exporter with
+  modelled storage; `synth/test_kit_restart.py` checks the clean starts. Hardware
+  test pending: try it in a scratch project first.
 
 ## Synthesized kits v9.44 (test candidate, not yet in the patcher)
 
