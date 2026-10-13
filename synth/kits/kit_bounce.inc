@@ -16,16 +16,14 @@
  * are exactly what a drum REC of that pad writes. Each pad plays at velocity
  * 127 with the noise seed and shared-source origin 0 REC uses for a pad not
  * struck in this kit, on a cleared export voice (so the same kit always
- * bounces the same files), and ends where it has decayed 60 dB below its own peak,
- * at most 10 s: a pre-render on the export voice finds that frame and the
- * exporter's length code (hook at 0x80132ac8) takes it instead of PAD LENGTH.
+ * bounces the same files), and ends where it has decayed 60 dB below its own
+ * peak, at most 10 s, as every drum export does (kit_record.inc: a pre-render
+ * finds that frame and the exporter's length hook at 0x80132ac8 takes it).
  * v9's export mix fades the last 10 ms, as on every REC. Pads whose sound is
  * off, or whose LEVEL is 0, are left out. Just before each write the bank is
  * checked again: a pad that holds a sample by then is only replaced if OVER
  * was chosen for it. */
 #define KIT_BOUNCE_ITEM 22
-#define KIT_BOUNCE_CAP 480000u                       /* frames: 10 s */
-#define KIT_BOUNCE_FLOOR 1e-3f                       /* -60 dB of the pad's own peak */
 #define KIT_BOUNCE_PAGE (*(volatile signed short *)0x80245880u)
 #define KIT_BOUNCE_KB ((volatile u8 *)0x80591C48u)   /* stock keyboard: [0] on (no imprint armed) */
 #define KIT_BOUNCE_EDIT (*(volatile int *)0x80591C5Cu)   /* +0x14: VALUE edit mode */
@@ -43,7 +41,6 @@ EXPORT volatile u16 kit_bounce_want;                 /* pads that sound */
 EXPORT volatile u16 kit_bounce_used;                 /* of those, pads whose bank pad held a sample */
 EXPORT volatile u16 kit_bounce_over;                 /* used pads to replace (OVER) */
 EXPORT volatile u16 kit_bounce_write, kit_bounce_wrote;
-EXPORT volatile u32 kit_bounce_frames;               /* nonzero: the exporter writes this many frames */
 EXPORT volatile u32 kit_bounce_length[16];           /* frames per pad, 0 = not written */
 static kit_pad kit_bounce_recipe[16];
 
@@ -154,36 +151,6 @@ static int kit_bounce_event(int type, int key) {
     return 0;
 }
 
-/* Export voice 4 cleared. kit_start leaves some filter state from the voice's
- * previous sound (the table voices' noise filters), so without this a pad's
- * first milliseconds would depend on what was exported before it. */
-static void kit_bounce_clear(void) {
-    volatile u32 *w = (volatile u32 *)&kit_slot[4];
-    for (u32 k = 0; k < sizeof(kit_voice) / 4; ++k) w[k] = 0;
-}
-
-/* Pre-render the pad on export voice 4 as the export will (same recipe, seed
- * and origin, same per-sample steps as kit_output_slot) and return the frames
- * up to its last sample at or above -60 dB of its own peak (0 = silent), at
- * most KIT_BOUNCE_CAP. The export starts again from a cleared voice and every
- * shared source it uses from frame 0, so this leaves nothing that changes the
- * file. */
-static u32 kit_bounce_measure(int pad) {
-    kit_voice *v = &kit_slot[4];
-    kit_bounce_clear();
-    kit_start(v, 4, pad);
-    float peak = 0;
-    u32 end = 0;
-    for (u32 n = 0; n < KIT_BOUNCE_CAP && v->live; ++n) {
-        v->source_frame = v->n + kit_export_origin[0];
-        float y = kit_absf(kit_limit(kit_render_slot(v, 4)));
-        if (y > peak) peak = y;
-        if (y > 0 && y >= peak * KIT_BOUNCE_FLOOR) end = n + 1;
-    }
-    v->live = 0;
-    return end;
-}
-
 /* One pad through the stock exporter, as a drum REC of that pad when it was
  * not struck in this kit: 1 written, 0 left out (silent, or the bank pad holds
  * a sample that is not to be replaced), -1 the exporter wrote no file. */
@@ -206,14 +173,13 @@ static int kit_bounce_pad(int p) {
     kit_export_count = 1; kit_export_active = 1;
     KIT_BOUNCE_COUNT = 1;                             /* the engine renders this voice, no capture */
     DISPATCH_ON();
-    u32 frames = kit_bounce_measure(p);
+    u32 frames = kit_export_measure(0, p, KIT_EXPORT_CAP);
     kit_bounce_length[p] = frames;
-    kit_bounce_clear();
     if (!frames) { KIT_BOUNCE_COUNT = 0; return 0; }
     v0[0x17c/4] = (u32)abs;                           /* REC's destination: bank * 16 + pad */
-    kit_bounce_frames = frames;
+    kit_export_frames = frames;                       /* the length hook takes it once */
     KIT_EXPORT((volatile u8 *)KIT_SINGLETON);
-    kit_bounce_frames = 0;
+    kit_export_frames = 0;
     *(volatile u16 *)0x802496F0u = 0xFFFF;            /* the redraw stock REC requests */
     if (v0[0x17c/4] != 0xFFFFFFFFu) {                 /* not written: the exporter keeps the target */
         v0[0x17c/4] = 0xFFFFFFFFu;
@@ -249,18 +215,4 @@ static void kit_bounce_step(void) {
     if (kit_bounce_state != KIT_BOUNCE_RUN) { kit_edit_changed = 1; return; }   /* cancelled meanwhile */
     kit_bounce_set(kit_bounce_first(kit_bounce_write & ~((1u << kit_bounce_next) - 1u)) < 0 ?
                    KIT_BOUNCE_DONE : KIT_BOUNCE_RUN);
-}
-
-/* Stock exporter, 0x80132ac8 (mov r4, r8; cmp.w fp, #1; mov.w r0, #0): fp
- * holds the frame count and [sp, #4] the loop's frame limit, both just
- * computed from PAD LENGTH. While a bounce writes, both become its length.
- * The displaced instructions follow; the flags of their cmp reach the stock
- * blt.w at 0x80132ad6 after its str (which leaves them alone). */
-__attribute__((naked, used)) EXPORT void kit_bounce_length_gate(void) {
-    __asm__ volatile(
-        "movw r12, #:lower16:kit_bounce_frames\n\tmovt r12, #:upper16:kit_bounce_frames\n\t"
-        "ldr r12, [r12]\n\tcmp r12, #0\n\tbeq 1f\n\t"
-        "mov r11, r12\n\tstr r12, [sp, #4]\n"
-        "1:\n\tmov r4, r8\n\tcmp.w r11, #1\n\tmov.w r0, #0\n\t"
-        "movw r12, #0x2ad3\n\tmovt r12, #0x8013\n\tbx r12\n");                 /* 0x80132ad2 */
 }

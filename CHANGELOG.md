@@ -5,20 +5,24 @@
 test1, built on v9.44-test1, so a kit dialled in on the synth can become a
 normal sample kit:
 
+- Drum REC fix: a drum recording now ends where the last of its drums has rung
+  out (60 dB below its own peak, at most 10 s). It used to take the melodic Pad
+  Length, which drum mode doesn't show; set to a waveform-cycle value, a drum
+  REC saved only a few milliseconds. Melodic REC still uses Pad Length.
 - BOUNC, the last item of the drum VALUE menu: press VALUE, turn to a bank A–J,
   press VALUE. The kit's sixteen pads, each with its own Tune, Decay, Tone,
   Sweep, Noise, Attack and Level, are written into that bank's sixteen pads by
   the same code as a REC imprint. Empty pads are filled; for each pad that
   already holds a sample the item asks KEEP or OVER first (KEEP by default).
   The value counts the pads written. EXIT cancels; pads already written stay.
-- Each sample is a first hit at velocity 127. It ends where the drum has fallen
-  60 dB below its own peak (at most 10 s), with v9's 10 ms end fade. Pads with
-  LEVEL 0 are left out. Files keep the stock imprint name SG.
-- One new guarded jump in the stock exporter's length code (0x80132ac8). REC
-  writes the same files as in v9.44.
-- New emulator test `synth/test_kit_bounce.py` runs every bounce through the
-  real stock exporter with modelled storage. Hardware test pending: try it in a
-  scratch project first.
+- Each sample is a first hit at velocity 127 and has the same length as a drum
+  REC of it, with v9's 10 ms end fade. Pads with LEVEL 0 are left out. Files
+  keep the stock imprint name SG.
+- One new guarded jump in the stock exporter's length code (0x80132ac8) takes
+  the drum length. Melodic REC writes the same files as in v9.44.
+- New emulator test `synth/test_kit_bounce.py` runs drum REC (also with the two
+  real REC presses) and every bounce through the real stock exporter with
+  modelled storage. Hardware test pending: try it in a scratch project first.
 
 ## Synthesized kits v9.44 (test candidate, not yet in the patcher)
 

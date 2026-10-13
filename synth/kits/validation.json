@@ -1,12 +1,12 @@
 {
   "candidate": "v9.45-test1",
-  "app1_sha256": "c5e99d9325c865cc180f9408aa1dd11bce8337e25cdd32fc3bcbe98239bfcde3",
-  "app1_bytes": 3093024,
+  "app1_sha256": "b7b6d14c5b417c99aa674c9b3e99416576aed83a8dd6fd787dd3bebe123ffc53",
+  "app1_bytes": 3092960,
   "source_files": 24,
   "hardware_verified": false,
   "public_source_rebuild_matches": true,
   "browser_checks_passed": true,
-  "notes": "Emulator checks (synth/test_kits.py, test_kit_capture.py, test_kit_chord.py, test_kit_shortcut.py, test_kit_midi.py and the new test_kit_bounce.py, which runs BOUNC through the real stock REC exporter on the built image with modelled storage) and a clean rebuild from stock with the documented build_v9 -> build_scales --fixes -> build_kits commands all match this APP1. synth/test_browser.cjs passes unchanged: the patcher still produces v9.43 (this candidate is not published). v9.45-test1 adds BOUNC (VALUE item 22, drum mode: the kit into a sample bank) to v9.44-test1 and has emulator verification only; writes to the SP's storage are verified only on hardware.",
+  "notes": "Emulator checks (synth/test_kits.py, test_kit_capture.py, test_kit_chord.py, test_kit_shortcut.py, test_kit_midi.py and the new test_kit_bounce.py, which runs drum REC and BOUNC through the real stock REC exporter on the built image with modelled storage) and a clean rebuild from stock with the documented build_v9 -> build_scales --fixes -> build_kits commands all match this APP1. synth/test_browser.cjs passes unchanged: the patcher still produces v9.43 (this candidate is not published). v9.45-test1 adds the drum REC length fix (each drum to its own ring-out, never PAD LENGTH) and BOUNC (VALUE item 22, drum mode: the kit into a sample bank) to v9.44-test1 and has emulator verification only; writes to the SP's storage are verified only on hardware.",
   "host_arm": {
     "schema": "kit-unicorn-check-v2",
     "passed": true,
@@ -77,20 +77,25 @@
         "tail_energy_ratio": 0.0
       }
     ],
-    "build_sha256": "c5e99d9325c865cc180f9408aa1dd11bce8337e25cdd32fc3bcbe98239bfcde3",
+    "build_sha256": "b7b6d14c5b417c99aa674c9b3e99416576aed83a8dd6fd787dd3bebe123ffc53",
     "pcm_bank_sha256": null,
     "pcm_flash_readonly": false,
-    "module_runtime_bytes": 155744,
-    "module_stored_bytes": 121060,
-    "module_reconstructed_sha256": "27c381291ad228590561c07b460c6308723e495437bacc2868d7b3a6def75750"
+    "module_runtime_bytes": 155680,
+    "module_stored_bytes": 120996,
+    "module_reconstructed_sha256": "68a5a635cead6462c337cd03428ba84894405371af447dbcf4114427a5ec23c6"
   },
   "capture": {
     "passed": true,
     "released_pad_cases": 208,
+    "ring_out_frames": [
+      756,
+      417016
+    ],
+    "melodic_keeps_pad_length": true,
     "velocity_snapshot": true,
     "ui_selection_does_not_replace_last_strike": true,
     "melodic_capture_delegated": true,
-    "app1_sha256": "c5e99d9325c865cc180f9408aa1dd11bce8337e25cdd32fc3bcbe98239bfcde3"
+    "app1_sha256": "b7b6d14c5b417c99aa674c9b3e99416576aed83a8dd6fd787dd3bebe123ffc53"
   },
   "chord_capture": {
     "passed": true,
@@ -124,7 +129,7 @@
       }
     },
     "outside_window_single": true,
-    "app1_sha256": "c5e99d9325c865cc180f9408aa1dd11bce8337e25cdd32fc3bcbe98239bfcde3"
+    "app1_sha256": "b7b6d14c5b417c99aa674c9b3e99416576aed83a8dd6fd787dd3bebe123ffc53"
   },
   "shortcut_guard": {
     "keyboard_on": {
@@ -140,7 +145,7 @@
       "pattern_edit_to": 5
     },
     "passed": true,
-    "app1_sha256": "c5e99d9325c865cc180f9408aa1dd11bce8337e25cdd32fc3bcbe98239bfcde3"
+    "app1_sha256": "b7b6d14c5b417c99aa674c9b3e99416576aed83a8dd6fd787dd3bebe123ffc53"
   },
   "sg_redraw_restore": {
     "address": "0x8015c01c",
@@ -160,7 +165,7 @@
     "bpm_item": 10,
     "effect": "BPM is a readout: pressing VALUE on it does not enter edit mode",
     "original_hex": "01214161012005b0f0bd",
-    "replacement_hex": "46f63d2cc8f2fa3c6047"
+    "replacement_hex": "46f6cd2cc8f2fa3c6047"
   },
   "midi": {
     "drum_notes": {
@@ -284,7 +289,7 @@
       "other_channel_or_page": "ignored"
     },
     "passed": true,
-    "app1_sha256": "c5e99d9325c865cc180f9408aa1dd11bce8337e25cdd32fc3bcbe98239bfcde3",
+    "app1_sha256": "b7b6d14c5b417c99aa674c9b3e99416576aed83a8dd6fd787dd3bebe123ffc53",
     "revision": "v9.45-test1"
   },
   "midi_patches": [
@@ -292,28 +297,28 @@
       "address": "0x80066d18",
       "bytes": 12,
       "original_hex": "0f2819d16ff030fb1e2815d0",
-      "replacement_hex": "46f6376cc8f2fa3c604700bf",
+      "replacement_hex": "46f6c76cc8f2fa3c604700bf",
       "target_symbol": "kit_midi_control_gate"
     },
     {
       "address": "0x80066e64",
       "bytes": 10,
       "original_hex": "0f2d07d1a0780022e178",
-      "replacement_hex": "46f6516cc8f2fa3c6047",
+      "replacement_hex": "46f6e16cc8f2fa3c6047",
       "target_symbol": "kit_midi_on_gate"
     },
     {
       "address": "0x800670b8",
       "bytes": 10,
       "original_hex": "0f2d07d1a07800210122",
-      "replacement_hex": "46f6956cc8f2fa3c6047",
+      "replacement_hex": "46f6257cc8f2fa3c6047",
       "target_symbol": "kit_midi_off_gate"
     },
     {
       "address": "0x80066174",
       "bytes": 10,
       "original_hex": "4df66c106388c8f2d300",
-      "replacement_hex": "47f26d2cc8f2fa3c6047",
+      "replacement_hex": "47f2fd2cc8f2fa3c6047",
       "target_symbol": "kit_midi_cc_gate"
     }
   ],
@@ -324,6 +329,16 @@
       "frames_min": 629,
       "frames_max": 417016,
       "cap_reached": false,
+      "pad_lengths_used": [
+        -8,
+        -4,
+        -1,
+        0,
+        1,
+        2,
+        4,
+        20
+      ],
       "factory_frames": {
         "1": [
           47141,
@@ -634,7 +649,8 @@
           2741
         ]
       },
-      "matches": "kit engine float-exact and PCM sample-exact to an unstruck velocity-127 REC, end fade as v9 export_mix, length = ring-out (-60 dB of the pad peak)"
+      "matches": "the bounce file is the file a drum REC of the pad (unstruck, velocity 127) writes at any PAD LENGTH -8..20; kit engine float-exact and PCM sample-exact to a longer REC of it up to the end fade, end fade as v9 export_mix, length = ring-out (-60 dB of the pad peak)",
+      "run": "8 test_kit_bounce.py processes in parallel (--kits/--tweaked/--audio-only and --flow)"
     },
     "bank_value": {
       "values": [
@@ -714,57 +730,105 @@
       "stops": true,
       "rec_destination_cleared": true
     },
-    "melodic": "BOUNC not in the menu",
+    "melodic_menu": "BOUNC not in the menu",
+    "rec_keys": {
+      "pad_lengths": [
+        -8,
+        -1,
+        0,
+        4
+      ],
+      "identical": true,
+      "frames": 47141,
+      "seconds": 0.982,
+      "whole_kick": "ring-out, as the longer REC shows",
+      "v9.44_frames_at_-8": 462
+    },
+    "rec_chord": {
+      "pads": [
+        2,
+        1
+      ],
+      "delays": [
+        64,
+        0
+      ],
+      "ends": [
+        9078,
+        47141
+      ],
+      "frames": 47141,
+      "pad_lengths": [
+        -1,
+        4
+      ],
+      "identical": true
+    },
+    "rec_silent": {
+      "frames": 480,
+      "all_zero": true
+    },
+    "rec_melodic": {
+      "frames_by_pad_length": {
+        "1": 24000,
+        "4": 96000,
+        "-1": 13963,
+        "-8": 109
+      },
+      "uses_pad_length": true
+    },
     "baseline": {
       "build": "v9.44-test1",
-      "identical_recs": 30,
-      "drum": 28,
-      "melodic": 2,
-      "pad_length_seconds_and_periods": true,
-      "frames": [
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        24000,
-        48000,
-        24000,
-        13963,
-        6981,
-        24000,
-        13963
+      "drum_recs_same_audio": 28,
+      "drum_frames": [
+        47141,
+        18876,
+        14432,
+        22490,
+        21758,
+        1156,
+        17901,
+        26924,
+        14316,
+        12678,
+        10022,
+        61661,
+        10439,
+        29469,
+        12242,
+        2590,
+        11123,
+        9567,
+        4718,
+        17420,
+        30076,
+        7560,
+        5452,
+        7050,
+        46009,
+        7626,
+        144383,
+        3283
+      ],
+      "melodic_recs_identical": 4,
+      "melodic_pad_lengths": [
+        1,
+        4,
+        -1,
+        -8
       ]
     },
     "passed": true,
-    "app1_sha256": "c5e99d9325c865cc180f9408aa1dd11bce8337e25cdd32fc3bcbe98239bfcde3",
+    "app1_sha256": "b7b6d14c5b417c99aa674c9b3e99416576aed83a8dd6fd787dd3bebe123ffc53",
     "revision": "v9.45-test1",
-    "seconds": 2696
+    "seconds": 941
   },
-  "bounce_patch": {
+  "export_length_patch": {
     "address": "0x80132ac8",
     "bytes": 10,
     "original_hex": "4446bbf1010f4ff00000",
-    "replacement_hex": "47f28b2cc8f2fa3c6047",
-    "target_symbol": "kit_bounce_length_gate",
+    "replacement_hex": "47f21b3cc8f2fa3c6047",
+    "target_symbol": "kit_export_length_gate",
     "guards": [
       "0x80132ad2",
       "0x80132a5e",
@@ -775,6 +839,7 @@
       "0x801327b8",
       "0x8353b79c",
       "0x801327c4"
-    ]
+    ],
+    "effect": "drum REC and BOUNC end at the drum ring-out (-60 dB of each drum peak, at most 10 s); melodic REC keeps PAD LENGTH"
   }
 }

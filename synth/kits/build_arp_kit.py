@@ -305,15 +305,18 @@ def main():
     builder.EXPORTS += UI_EXPORTS
     from apply_kit_midi import apply_kit_midi, EXPORTS as MIDI_EXPORTS
     builder.EXPORTS += MIDI_EXPORTS
-    from apply_kit_bounce import apply_kit_bounce, EXPORTS as BOUNCE_EXPORTS, STATE as BOUNCE_STATE
-    builder.EXPORTS += BOUNCE_EXPORTS
+    from apply_kit_length import apply_kit_length, EXPORTS as LENGTH_EXPORTS, STATE as LENGTH_STATE
+    builder.EXPORTS += LENGTH_EXPORTS
     builder.STATE = builder.STATE + ("kit_capture_count", "kit_record_pad", "kit_record_velocity", "kit_menu_cursor", "kit_variants", "kit_master_limited", "kit_shortcut_trace", "kit_ui_shift", "kit_mode", "kit_edit_pad", "kit_pads", "kit_pads_ready", "kit_slot", "kit_pads_down",
                                      "kit_clock_next", "kit_live_cursor", "kit_voice_stride", "kit_cy_envelope_version",
                                      "kit_cy_states", "kit_cy_caches", "kit_cy_cache_next",
                                      "kit_606_states", "kit_606_caches", "kit_606_cache_next")
     builder.STATE = builder.STATE + ("kit_bd_circuit", "kit_bd_manager", "kit_bd_state_stride")
     builder.STATE = builder.STATE + ("kit_midi_channel", "kit_last_hit", "kit_edit_changed", "kit_midi_down")
-    builder.STATE = builder.STATE + BOUNCE_STATE
+    builder.STATE = builder.STATE + LENGTH_STATE + (
+        "kit_bounce_state", "kit_bounce_bank", "kit_bounce_mode", "kit_bounce_ask", "kit_bounce_next",
+        "kit_bounce_done", "kit_bounce_total", "kit_bounce_want", "kit_bounce_used", "kit_bounce_over",
+        "kit_bounce_write", "kit_bounce_wrote", "kit_bounce_length")
     sound_names = re.findall(r'"([^"]+)"', engine[engine.index("kit_sound_names[KIT_SOUNDS][6] = {"):].split("};")[0])
     kit_names = re.findall(r'"([^"]+)"', engine[engine.index("kit_kit_names[KIT_KITS + 1][6] = {"):].split("};")[0])
     builder.MENU = dict(builder.MENU, items=builder.MENU["items"] + ["KIT", "PAD", "SOUND", "TUNE", "DECAY", "TONE", "LEVEL", "SWEEP", "NOISE", "ATTACK", "M.CH", "BOUNC"],
@@ -442,16 +445,22 @@ def main():
     image, midi_patches, midi_guards = apply_kit_midi(image, info['arp_symbols'], builder)
     info['kit_midi_patches'] = midi_patches
     info['kit_midi_guards'] = midi_guards
-    image, bounce_patch, bounce_guards = apply_kit_bounce(image, info['arp_symbols'], builder)
-    info['kit_bounce_patch'] = bounce_patch
-    info['kit_bounce_guards'] = bounce_guards
+    image, length_patch, length_guards = apply_kit_length(image, info['arp_symbols'], builder)
+    info['kit_export_length_patch'] = length_patch
+    info['kit_export_length_guards'] = length_guards
+    info['kit_drum_rec_length'] = ('Drum REC never uses PAD LENGTH (the melodic setting 0x7e, +0x180, which drum mode does not '
+                                   'show). The capture pre-renders each captured drum alone on a cleared export voice; the '
+                                   'recording ends where the last of them (its offset plus its own ring-out: the last sample at '
+                                   'or above -60 dB of its own peak) has rung out, at most 10 s (480 frames if all are silent). '
+                                   'The exporter length hook takes that once instead of PAD LENGTH. Melodic captures set no '
+                                   'length, so melodic REC keeps PAD LENGTH (seconds or periods) as stock.')
     info['kit_bounce'] = ('BOUNC (VALUE item 22, drum mode): press VALUE, turn to a bank A..J, press VALUE. Each of the 16 pads '
                           '(its current Tune/Decay/Tone/Sweep/Noise/Attack/Level, copied when the bank is chosen; pads with the '
                           'sound off or LEVEL 0 are left out) is written, one per SG screen update, through the stock REC exporter '
                           'to bank * 16 + pad, as a drum REC of that pad not struck in this kit: velocity 127, its never-struck '
                           'noise seed and source origin 0, the stock imprint name SG. Empty pads are filled; for each pad that '
                           'holds a sample the item asks KEEP/OVER first (KEEP by default). Length: up to the last sample at or '
-                          "above -60 dB of the pad's own peak (a pre-render), at most 10 s, through the exporter length hook; "
+                          "above -60 dB of the pad's own peak (a pre-render), at most 10 s, as for drum REC; "
                           "v9's 10 ms end fade applies as on every REC. EXIT cancels (written pads stay); REC is ignored while it runs.")
     info['kit_midi'] = ('M.CH (VALUE item 21, both modes, default 16 = stock): the SG plays that MIDI channel while its page is open. '
                         'Channel 16 is otherwise the control channel on every page and never plays the SG. '
@@ -477,8 +486,8 @@ def main():
                 kit_turn_sites=[[s, n] for s, n, *_ in TURN_SITES], kit_turn_gate=turn_gate,
                 kit_engine_sha256=sha(engine.encode()), kit_source_sha256=source_hashes, generated_source_sha256=sha(gen.read_bytes()),
                 kit_completed_note_hooks=completed_note_hooks, synthesis_only=True,
-                kit=f"Synthesis-only kit mode: {len(kit_names)-1} kits, {len(sound_names)} synthesized drums; no PCM playback or external audio bank; 808/909/606/SDS/CR78/CR8K/DR110/KPR77 models calibrated to recordings and ACB captures, Lel' UDS and Mini Pops 7 fitted to recordings, TR-707/727 synthesized from plug-in captures, DX-style FM; four voices, main-display Tune/Decay/Tone; MIDI channel M.CH, notes 36-51 on pads 1-16 and CC control; BOUNC writes the kit into a sample bank; edits RAM-only; no ACB-equivalence claim",
-                tests="Reproduce using synth/test_kits.py, test_kit_capture.py, test_kit_chord.py, test_kit_shortcut.py, test_kit_midi.py (MIDI through the real stock dispatcher) and test_kit_bounce.py (BOUNC through the real stock exporter); see synth/KITS.md. Hardware confirmation remains outstanding.")
+                kit=f"Synthesis-only kit mode: {len(kit_names)-1} kits, {len(sound_names)} synthesized drums; no PCM playback or external audio bank; 808/909/606/SDS/CR78/CR8K/DR110/KPR77 models calibrated to recordings and ACB captures, Lel' UDS and Mini Pops 7 fitted to recordings, TR-707/727 synthesized from plug-in captures, DX-style FM; four voices, main-display Tune/Decay/Tone; MIDI channel M.CH, notes 36-51 on pads 1-16 and CC control; drum REC ends at each drum's own ring-out, not PAD LENGTH; BOUNC writes the kit into a sample bank; edits RAM-only; no ACB-equivalence claim",
+                tests="Reproduce using synth/test_kits.py, test_kit_capture.py, test_kit_chord.py, test_kit_shortcut.py, test_kit_midi.py (MIDI through the real stock dispatcher) and test_kit_bounce.py (drum REC length and BOUNC through the real stock exporter); see synth/KITS.md. Hardware confirmation remains outstanding.")
     (out / "SP404MKII_APP1.bin").write_bytes(image); (out / "SP404MKII_APP0.bin").write_bytes(app0)
     (out / "manifest.json").write_text(json.dumps(info, indent=2, sort_keys=True) + "\n", encoding="ascii", newline="\n")
     print(f"{REVISION} APP1: {len(image)} bytes; SHA-256 {info['sha256']}; kit_gate {kit_gate:#x}")

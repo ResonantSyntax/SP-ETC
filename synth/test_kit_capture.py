@@ -1,4 +1,6 @@
-"""Compiled capture contracts: all pads, released selection and melodic delegation."""
+"""Compiled capture contracts: all pads, released selection, the drum ring-out length
+(v9.45: every drum capture sets one; melodic sets none and keeps PAD LENGTH) and
+melodic delegation."""
 import hashlib,json,struct,sys
 from pathlib import Path
 from unicorn import Uc,UC_ARCH_ARM,UC_MODE_THUMB
@@ -15,10 +17,10 @@ u.reg_write(ar.UC_ARM_REG_C1_C0_2,0xf<<20);u.reg_write(ar.UC_ARM_REG_FPEXC,0x400
 def call(name,*args):
  u.reg_write(ar.UC_ARM_REG_SP,0x20203f00);u.reg_write(ar.UC_ARM_REG_LR,0x1001)
  for i,v in enumerate(args):u.reg_write(getattr(ar,'UC_ARM_REG_R'+str(i)),v)
- u.emu_start(S[name]|1,0x1000,count=2000000)
+ u.emu_start(S[name]|1,0x1000,count=2000000000)   # a drum capture pre-renders its ring-out
  assert u.reg_read(ar.UC_ARM_REG_PC)==0x1000
  return u.reg_read(ar.UC_ARM_REG_R0)
-cases=0
+cases=0;lengths=[]
 for kit in range(1,14):
  u.mem_write(S['kit_mode'],bytes([kit]))
  for pad in range(16):
@@ -33,7 +35,11 @@ for kit in range(1,14):
   assert struct.unpack('<I',u.mem_read(0x8353c700,4))[0]==1
   assert u.mem_read(0x8353c004,1)==b'\0'
   assert u.mem_read(S['kit_pads_down'],2)==b'\0\0'
+  frames=struct.unpack('<I',u.mem_read(S['kit_export_frames'],4))[0]
+  assert 0<frames<=480000,(kit,pad,frames)
+  lengths.append(frames)
   cases+=1
 u.mem_write(S['kit_mode'],b'\0');assert call('kit_capture_selected')==0
-report=dict(passed=True,released_pad_cases=cases,velocity_snapshot=True,ui_selection_does_not_replace_last_strike=True,melodic_capture_delegated=True,app1_sha256=m['sha256'])
+assert struct.unpack('<I',u.mem_read(S['kit_export_frames'],4))[0]==0   # melodic: PAD LENGTH
+report=dict(passed=True,released_pad_cases=cases,ring_out_frames=[min(lengths),max(lengths)],melodic_keeps_pad_length=True,velocity_snapshot=True,ui_selection_does_not_replace_last_strike=True,melodic_capture_delegated=True,app1_sha256=m['sha256'])
 (out/'capture_check.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report))

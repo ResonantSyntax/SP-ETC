@@ -53,7 +53,7 @@ def main():
         uc.reg_write(ar.UC_ARM_REG_LR, RET | 1)
         for k, a in enumerate(args):
             uc.reg_write(getattr(ar, f'UC_ARM_REG_R{k}'), a & 0xFFFFFFFF)
-        uc.emu_start(S[fn] | 1, RET, count=5000000)
+        uc.emu_start(S[fn] | 1, RET, count=2000000000)   # a drum capture pre-renders its ring-out
         if uc.reg_read(ar.UC_ARM_REG_PC) != RET:
             raise RuntimeError(('instruction limit or early exit', fn))
         return uc.reg_read(ar.UC_ARM_REG_R0), struct.unpack('<f', struct.pack('<I', uc.reg_read(ar.UC_ARM_REG_S0)))[0]

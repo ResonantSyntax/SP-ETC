@@ -1,4 +1,4 @@
-"""BOUNC (kits v9.45): the kit into a sample bank, through the real stock REC exporter.
+"""Drum REC length and BOUNC (kits v9.45), through the real stock REC exporter.
 
 The built APP1 is booted as test_kit_midi.py does it (its Machine). The stock
 exporter runs for real: 0x801327b8, the v4 export engine, Roland's renderer and
@@ -8,21 +8,22 @@ close, delete, the header, the stream cache and the pad registration (size,
 name, load, save). A pad holds a sample exactly when the model holds its file,
 which is also what 0x800d8b00 answers. Keys reach the SG page through the stock
 page dispatcher 0x800a80a8 (the kits' event hook included) and the SG page's own
-handlers (vtable 0x80229668). One SG screen update is one call of arp_poll. No
-screen, SD card, eMMC or RTOS: writes to a real card are not covered.
+handlers (vtable 0x80229668); the two dialog calls of the stock REC press
+(0x800d8c88, 0x800da720) are stubbed. One SG screen update is one call of
+arp_poll. No screen, SD card, eMMC or RTOS: writes to real storage are not
+covered.
 
 1. Audio. All 13 kits x 16 factory pads, then four kits (TR808, FM, SDS-V,
    TR727) with every pad's six knobs and LEVEL changed. Bouncing pad p writes
    one file, to bank * 16 + p: path, open, header, stream cache, size, name SG,
-   load and save all name that pad, and nothing else is touched. Its audio is a
-   drum REC of pad p as REC takes a pad not struck in this kit, at velocity
-   127, on a cleared export voice (BOUNC clears it; REC keeps whatever filter
-   state the table voices' previous export left): the kit engine's output is
-   the same float for float, the PCM the same sample for sample up to v9's
-   10 ms end fade, and the fade frames are exactly v9's fade of the REC frames.
-   The length is the ring-out: the frame after the last sample at or above
-   -60 dB of the pad's own peak, at most 10 s. The header and the size match
-   that length.
+   load and save all name that pad, and nothing else is touched. A drum REC of
+   the same pad (not struck in this kit, velocity 127), with PAD LENGTH at any
+   of -8 .. 20, writes the very same file. A REC of it made longer through the
+   same length setting shows the rest: the bounce's kit engine output is the
+   same float for float, its PCM the same sample for sample up to v9's 10 ms
+   end fade, the fade frames are exactly v9's fade of those frames, and the
+   length is the ring-out: the frame after the last sample at or above -60 dB
+   of the pad's own peak, at most 10 s.
 2. The flow. An empty bank fills at once. A bank with samples asks about each
    used pad (KEEP/OVER, KEEP by default), keeps edit mode on while asking,
    replaces only OVER pads (old file deleted first) and never touches a KEEP
@@ -34,13 +35,21 @@ screen, SD card, eMMC or RTOS: writes to a real card are not covered.
    cancels. Pads with LEVEL 0 or the sound off are left out and never asked
    about. A file that cannot be created stops the bounce with ERROR. The bank
    value stops at -- and J.
-3. With a v9.44 build as the second argument: drum REC (factory and tweaked
-   pads, seconds and periods PAD LENGTH) and melodic REC write byte-identical
-   files with identical headers and registrations on both builds, so the length
-   hook does nothing outside BOUNC.
+3. Drum REC never uses PAD LENGTH. A struck 808 kick recorded with the two real
+   REC presses (the stock SG key handler) at PAD LENGTH -8, -1, 0 and 4 writes
+   one and the same file, the whole kick to its ring-out (with a v9.44 build as
+   the second argument, the same presses at -8 give that build's tiny blip). Two
+   pads struck 64 frames apart (MIDI through the stock dispatcher and the real
+   render loop) record together and end where the later drum rings out,
+   whatever PAD LENGTH says. A silent capture writes 10 ms of silence. Melodic
+   REC keeps PAD LENGTH: 0.5 s, 2 s, 128 cycles and 1 cycle of A4 for 1, 4, -1
+   and -8.
+4. With a v9.44 build as the second argument: melodic REC (seconds and periods)
+   writes byte-identical files on both builds, and drum REC gives the same audio
+   as v9.44 up to its own end (v9.44 made longer through PAD LENGTH).
 
 Usage: python synth/test_kit_bounce.py out/kits-v945 [out/kits-v944] [--quick | --flow]
-(--quick: three kits for part 1; --flow: no part 1. The full run takes about 40 minutes.)
+(--quick: three kits for part 1; --flow: no part 1. The full run takes about an hour.)
 """
 from __future__ import annotations
 
@@ -60,15 +69,17 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from test_kit_midi import Machine, RET, STACK, BUF, KB, PAGE, SG  # noqa: E402
 
-V0, EXPORT_BASE, COUNT = 0x80249800, 0x8353C000, 0x8353C700
-EXPORTER, PCM_BUF, HEADER_BUF = 0x801327B8, 0x80BCD208, 0x30018000
+V0, EXPORT_BASE, COUNT, VOICE = 0x80249800, 0x8353C000, 0x8353C700, 0x1B0
+EXPORTER, CAPTURE_INIT, PCM_BUF, HEADER_BUF = 0x801327B8, 0x8353B500, 0x80BCD208, 0x30018000
 DISPATCHER, SG_VTABLE, FAKE_PAGE, EVENT = 0x800A80A8, 0x80229668, 0x83D00000, 0x30017000
+DIALOG, PAD_SELECT = 0x800D8C88, 0x800DA720   # stock REC press: dialog manager, destination pad UI
 PAGE_REQUEST = 0x8024587C                 # 0x800da598(n) stores the page it requests here
 EDIT = KB + 0x14
-CAP, FLOOR, FADE = 480000, np.float32(1e-3), 480
+CAP, FLOOR, FADE, SILENT = 480000, np.float32(1e-3), 480, 480
 VALUE, EXIT, REC_KEY = 0x31, 0x22, 0x1B
 IDLE, ASK, RUN, DONE, STOP, FAIL = range(6)
 SCRATCH_BANK = 9                          # references are recorded into bank J
+PAD_LENGTHS = (-8, -4, -1, 0, 1, 2, 4, 20)  # setting 0x7e range: periods (<= 0) and 0.5 s steps
 # Stock file and project calls the exporter makes (all modelled, see Bouncer._fs).
 FS = dict(project=0x800E1190, path=0x800D60C8, open=0x800DEC60, write=0x800DD9B8, close=0x800DEBD8,
           delete=0x800DECD8, alloc=0x800E1176, free=0x800E25B8, header=0x800C6B88, cache_close=0x800D0030,
@@ -87,7 +98,7 @@ class Bouncer(Machine):
     def __init__(self, folder, parent_symbols):
         self.files, self.log, self.fds, self.next_fd = {}, [], {}, 3
         self.fail_create = set()                                  # pads whose file cannot be created
-        self.capture_y, self.y = False, []
+        self.capture_y, self.y = False, {j: [] for j in range(4)}
         super().__init__(folder, parent_symbols)
         self._fpv5()
         self._fs()
@@ -96,6 +107,8 @@ class Bouncer(Machine):
         for k in range(3):                                        # ... and three child widgets
             self.put(FAKE_PAGE + 0x1A6C + 4 * k, FAKE_PAGE + 0x2000 + 0x100 * k, '<I')
         self.stub(0x800D0018)                                     # widget redraw request
+        self.stub(DIALOG, log='dialog')
+        self.stub(PAD_SELECT, log='pad_select')
         self.put(V0 + 0x5C, 33)                                   # note A4 and TUNE 440.0 Hz, as the SP
         self.put(V0 + 0x60, 4400)                                 # starts (PAD LENGTH in periods uses them)
 
@@ -234,7 +247,7 @@ class Bouncer(Machine):
         self.stub(FS['project'])
 
     def _osc_hook(self):
-        """Every kit_output return for export voice 0 (s0, right after the call in kit_gate)."""
+        """Every kit_output return for an export voice (s0, right after the call in kit_gate)."""
         md = Cs(CS_ARCH_ARM, CS_MODE_THUMB | CS_MODE_MCLASS)
         gate, target = self.S['kit_gate'] & ~1, self.S['kit_output'] & ~1
         after = None
@@ -246,14 +259,22 @@ class Bouncer(Machine):
             raise AssertionError('kit_gate: no call to kit_output')
 
         def hook(uc, address, size, _):
-            if self.capture_y and uc.reg_read(ar.UC_ARM_REG_R4) == EXPORT_BASE:
-                self.y.append(uc.reg_read(ar.UC_ARM_REG_S0))
+            d = uc.reg_read(ar.UC_ARM_REG_R4) - EXPORT_BASE
+            if self.capture_y and 0 <= d < 4 * VOICE and d % VOICE == 0:
+                self.y[d // VOICE].append(uc.reg_read(ar.UC_ARM_REG_S0))
         self.uc.hook_add(UC_HOOK_CODE, hook, begin=after, end=after)
+
+    def start_y(self):
+        self.capture_y, self.y = True, {j: [] for j in range(4)}
+
+    def stop_y(self):
+        self.capture_y = False
+        return {j: list(v) for j, v in self.y.items()}
 
     # -- the SG page --
     def event(self, kind, a=0, b=0):
         self.uc.mem_write(EVENT, struct.pack('<3h', kind, a, b))
-        return self.call(DISPATCHER, FAKE_PAGE, EVENT, count=50_000_000)
+        return self.call(DISPATCHER, FAKE_PAGE, EVENT)
 
     def press(self, key):
         handled = self.event(5, key)
@@ -293,43 +314,70 @@ class Bouncer(Machine):
             raise AssertionError(('bank value', self.item()))
 
     def run(self, limit=40):
-        """SG screen updates until the bounce is no longer running; the log of each update.
-        self.progress holds the BOUNC value after each update."""
+        """SG screen updates until the bounce is no longer running; the log and export
+        voice 0's kit output of each update. self.progress holds the BOUNC value after each."""
         steps, self.progress = [], []
         for _ in range(limit):
             if self.bstate() != RUN:
                 return steps
             mark = len(self.log)
-            self.capture_y, self.y = True, []
+            self.start_y()
             self.poll()
-            self.capture_y = False
-            steps.append((self.log[mark:], list(self.y)))
+            steps.append((self.log[mark:], self.stop_y()[0]))
             self.progress.append(self.item()[1])
         raise AssertionError('bounce did not finish')
 
-    # -- REC (the reference) --
+    # -- REC --
     def clear_export_voice(self):
         stride = self.get(self.S['kit_voice_stride'], '<I')
-        self.uc.mem_write(self.S['kit_slot'] + 4 * stride, bytes(stride))
+        self.uc.mem_write(self.S['kit_slot'] + 4 * stride, bytes(4 * stride))
 
-    def rec(self, pad, abs_pad, units, velocity=127, clear=False):
-        """A drum REC of `pad` through the stock exporter (count 0: the kit capture runs).
-        clear: start from a cleared export voice, as BOUNC does (REC itself keeps whatever
-        filter state the voice's previous export left in the table voices)."""
-        if clear:
-            self.clear_export_voice()
+    def rec(self, pad, abs_pad, units, velocity=127, frames=None):
+        """A drum REC of `pad` as the two REC presses run it: the first-press capture
+        (0x8353b500: capture, then every voice released), then the export to abs_pad
+        with PAD LENGTH `units`. frames: replace the length the capture chose (the
+        exporter's length setting), to render past it. Returns the file, the file calls,
+        every export voice's kit output and the length the capture chose."""
         self.setsym('kit_record_pad', pad)
         self.setsym('kit_record_velocity', velocity)
-        self.put(COUNT, 0, '<I')
+        self.call(CAPTURE_INIT)
+        chosen = None                                             # builds before v9.45 have no length setting
+        if 'kit_export_frames' in self.S:
+            chosen = self.get(self.S['kit_export_frames'], '<I')
+            if frames is not None:
+                self.put(self.S['kit_export_frames'], frames, '<I')
+        elif frames is not None:
+            raise ValueError('this build has no export length setting')
         self.put(V0 + 0x17C, abs_pad)
         self.put(V0 + 0x180, units)
         mark = len(self.log)
-        self.capture_y, self.y = True, []
+        self.start_y()
         self.call(EXPORTER, V0)
-        self.capture_y = False
+        y = self.stop_y()
         if self.get(V0 + 0x17C) != -1:
             raise AssertionError(('REC did not finish', abs_pad))
-        return self.files[abs_pad], self.log[mark:], list(self.y)
+        return self.files[abs_pad], self.log[mark:], y, chosen
+
+    def rec_keys(self, abs_pad, units):
+        """REC exactly as on the unit: REC pressed (the stock SG key handler arms the imprint
+        and captures), the destination chosen (+0x17c, as a pad press sets it), REC again."""
+        self.put(V0 + 0x180, units)
+        if self.press(REC_KEY) != 1 or self.get(KB, '<B') != 0:
+            raise AssertionError('first REC press did not arm the imprint')
+        self.put(V0 + 0x17C, abs_pad)
+        mark = len(self.log)
+        self.start_y()
+        self.press(REC_KEY)
+        y = self.stop_y()
+        if self.get(KB, '<B') != 1 or self.get(V0 + 0x17C) != -1 or abs_pad not in self.files:
+            raise AssertionError(('second REC press did not imprint', self.get(KB, '<B')))
+        return self.files[abs_pad], self.log[mark:], y
+
+    def strike(self, pad, vel=100, blocks=1):
+        """A pad struck by MIDI (channel 16, note 36 + pad) and the real render loop after it."""
+        self.send(0x9F, 36 + pad, vel)
+        self.render(blocks)
+        self.send(0x8F, 36 + pad, 0)
 
     def pad_bytes(self, kit, pad):
         return bytes(self.uc.mem_read(self.S['kit_pads'] + ((kit - 1) * 16 + pad) * 8, 8))
@@ -350,8 +398,12 @@ def pcm(file):
     return np.frombuffer(data, dtype='>i2').astype(np.int64).reshape(-1, channels)
 
 
+def same_file(a, b):
+    return a['header'] == b['header'] and a['writes'] == b['writes']
+
+
 def ring_out(y_bits):
-    """The kit_bounce_measure rule on float32 kit_output values."""
+    """kit_export_measure's rule on float32 kit_output values."""
     peak, end = np.float32(0), 0
     for n, bits in enumerate(y_bits):
         y = np.float32(abs(f32(bits)))
@@ -362,10 +414,11 @@ def ring_out(y_bits):
     return end
 
 
-def fade_model(rec_frames, length):
-    """v9 export_mix's end fade, applied to REC frames that the master stage passed linearly."""
+def fade_model(long_frames, length):
+    """v9 export_mix's end fade at `length`, applied to longer frames that the master
+    stage passed linearly."""
     fade = max(min(length // 4, FADE), 1)
-    out = rec_frames[length - fade:length].copy()
+    out = long_frames[length - fade:length].copy()
     for k in range(fade):
         i = length - fade + k
         left = length - (i + 1)
@@ -379,13 +432,37 @@ def fade_model(rec_frames, length):
     return out, fade
 
 
-def check_pad(m, kit, pad, bank, steps_entry, label):
-    """One bounced pad against an unstruck velocity-127 REC of it."""
+def against_long(m, pad, frames_, y_short, label, velocity=127):
+    """frames_/y_short (an export of `length` frames) against a REC of the same capture made
+    longer through the length setting: same kit output, same PCM up to the end fade, the fade
+    as v9 makes it, and `length` is the ring-out."""
+    length = len(frames_)
+    long_file, _, y_long, chosen = m.rec(pad, SCRATCH_BANK * 16 + pad, 1, velocity, frames=length + 2 * FADE)
+    long_frames = pcm(long_file)
+    if chosen != length:
+        raise AssertionError((label, 'REC chose another length', chosen, length))
+    if len(y_long[0]) != length + 2 * FADE or y_short != y_long[0][:length]:
+        bad = next((i for i in range(length) if y_short[i] != y_long[0][i]), None)
+        raise AssertionError((label, 'kit engine output differs', bad))
+    if ring_out(y_long[0]) != length and length != CAP:
+        raise AssertionError((label, 'not the ring-out', length, ring_out(y_long[0])))
+    tail, fade = fade_model(long_frames, length)
+    if not np.array_equal(frames_[:length - fade], long_frames[:length - fade]):
+        bad = int(np.argmax(np.any(frames_[:length - fade] != long_frames[:length - fade], axis=1)))
+        raise AssertionError((label, 'PCM differs', bad, frames_[bad], long_frames[bad]))
+    if not np.array_equal(frames_[length - fade:], tail):
+        raise AssertionError((label, 'end fade differs'))
+    del m.files[SCRATCH_BANK * 16 + pad]
+    return int(np.abs(long_frames).max())
+
+
+def check_pad(m, kit, pad, bank, steps_entry, label, units):
+    """One bounced pad: its file calls, a plain REC of it at PAD LENGTH `units`, and the long REC."""
     log, y_bounce = steps_entry
     target = bank * 16 + pad
     file = m.files[target]
-    frames = pcm(file)
-    length, channels = len(frames), frames.shape[1]
+    frames_ = pcm(file)
+    length, channels = len(frames_), frames_.shape[1]
     if not 0 < length <= CAP or m.get(m.S['kit_bounce_length'] + 4 * pad, '<I') != length:
         raise AssertionError((label, 'length', length))
     touched = {e[1] for e in log if len(e) > 1 and e[0] != 'save'}
@@ -393,32 +470,19 @@ def check_pad(m, kit, pad, bank, steps_entry, label):
                 ('create', target), ('cache_pad', target), ('pad_info', target), ('close', target),
                 ('size', target, 0x200 + length * channels * 2), ('name', target, 'SG'), ('load', target),
                 ('save', -1)]
-    if touched != {target} or log != want_log:
+    if touched != {target} or log != want_log or len(y_bounce) != length:
         raise AssertionError((label, 'file calls', log))
     if file['header'] != (channels, length * channels * 2):
         raise AssertionError((label, 'header', file['header']))
-    # The reference: REC of the same pad into bank J, longer than the bounce.
-    units = (length + 2 * FADE + 23999) // 24000
-    ref, _, y_rec = m.rec(pad, SCRATCH_BANK * 16 + pad, units, clear=True)
-    rec_frames = pcm(ref)
-    if len(y_bounce) != length or len(y_rec) != units * 24000:
-        raise AssertionError((label, 'oscillator calls', len(y_bounce), len(y_rec)))
-    if y_bounce != y_rec[:length]:
-        bad = next(i for i in range(length) if y_bounce[i] != y_rec[i])
-        raise AssertionError((label, 'kit engine output differs', bad, f32(y_bounce[bad]), f32(y_rec[bad])))
-    if ring_out(y_rec) != length and length != CAP:
-        raise AssertionError((label, 'not the ring-out', length, ring_out(y_rec)))
-    tail, fade = fade_model(rec_frames, length)
-    if not np.array_equal(frames[:length - fade], rec_frames[:length - fade]):
-        bad = int(np.argmax(np.any(frames[:length - fade] != rec_frames[:length - fade], axis=1)))
-        raise AssertionError((label, 'PCM differs', bad, frames[bad], rec_frames[bad]))
-    if not np.array_equal(frames[length - fade:], tail):
-        raise AssertionError((label, 'end fade differs'))
+    plain, _, y_plain, chosen = m.rec(pad, SCRATCH_BANK * 16 + pad, units)
+    if not same_file(plain, file) or y_plain[0] != y_bounce or chosen != length:
+        raise AssertionError((label, 'REC at PAD LENGTH', units, 'differs from the bounce'))
     del m.files[SCRATCH_BANK * 16 + pad]
-    return dict(frames=length, peak=int(np.abs(rec_frames).max()))
+    peak = against_long(m, pad, frames_, y_bounce, label)
+    return dict(frames=length, peak=peak)
 
 
-def bounce_all(m, kit, bank, label):
+def bounce_all(m, kit, bank, label, salt=0):
     m.files.clear()
     m.setsym('kit_mode', kit)
     m.choose(bank)
@@ -431,7 +495,8 @@ def bounce_all(m, kit, bank, label):
         raise AssertionError((label, 'files', sorted(m.files)))
     out = {}
     for pad in range(16):
-        out[pad] = check_pad(m, kit, pad, bank, steps[pad], f'{label} pad {pad + 1}')
+        units = PAD_LENGTHS[(pad + salt) % len(PAD_LENGTHS)]
+        out[pad] = check_pad(m, kit, pad, bank, steps[pad], f'{label} pad {pad + 1}', units)
     return out
 
 
@@ -447,36 +512,67 @@ def tweak(seed, pad, raw):
     return bytes([sound, tune & 0xFF, decay, tone, level, sweep, noise, attack])
 
 
+def melodic(build):
+    """The melodic Sound Generator on a Saw at A4."""
+    build.setsym('kit_mode', 0)
+    build.uc.mem_write(V0 + 0x70, bytes([6, 6]))
+    build.put(V0 + 0x5C, 33)
+    build.put(V0 + 0x74, 10000)
+    build.put(V0 + 0x198, 10000)
+
+
+def option(name):
+    for a in sys.argv[1:]:
+        if a.startswith(f'--{name}='):
+            return a.split('=', 1)[1]
+    return None
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
     quick = '--quick' in sys.argv
     out = Path(args[0]).resolve()
     baseline = Path(args[1]).resolve() if len(args) > 1 else None
     parent = json.loads((out / 'manifest.json').read_text(encoding='utf-8'))['symbols']
+    base_parent = json.loads((baseline / 'manifest.json').read_text(encoding='utf-8'))['symbols'] if baseline else None
     report, t0 = {}, time.time()
+    # Part 1 can be split over processes: --kits=1,2 --tweaked=5 --audio-only --report=FILE.
+    listed = lambda text: [int(k) for k in text.split(',') if k]
+    report_path = Path(option('report')).resolve() if option('report') else out / 'bounce_check.json'
 
     # 1. Audio ---------------------------------------------------------------------------------------
     m = Bouncer(out, parent)
-    kits = [] if '--flow' in sys.argv else [1, 6, 12] if quick else list(range(1, 14))
+    kits = ([] if '--flow' in sys.argv else [1, 6, 12] if quick else list(range(1, 14))) \
+        if option('kits') is None else listed(option('kits'))
+    tweaked_kits = ([] if not kits else [12] if quick else [1, 5, 8, 13]) \
+        if option('tweaked') is None else listed(option('tweaked'))
     factory, lengths, tweaked = {}, [], {}
     for kit in kits:
-        res = bounce_all(m, kit, 1, f'kit {kit}')
+        res = bounce_all(m, kit, 1, f'kit {kit}', salt=kit)
         factory[kit] = [r['frames'] for r in res.values()]
         lengths += factory[kit]
         print(f'kit {kit}: 16 pads exact ({time.time() - t0:.0f} s)', flush=True)
-    for kit in ([] if not kits else [12] if quick else [1, 5, 8, 13]):
+    for kit in tweaked_kits:
         for pad in range(16):
             m.set_pad(kit, pad, tweak(kit, pad, m.pad_bytes(kit, pad)))
-        res = bounce_all(m, kit, 2, f'kit {kit} tweaked')
+        res = bounce_all(m, kit, 2, f'kit {kit} tweaked', salt=kit + 3)
         tweaked[kit] = [r['frames'] for r in res.values()]
         lengths += tweaked[kit]
         print(f'kit {kit} tweaked: 16 pads exact ({time.time() - t0:.0f} s)', flush=True)
     report['audio'] = dict(factory_pads=16 * len(factory), tweaked_pads=16 * len(tweaked),
                            frames_min=min(lengths, default=0), frames_max=max(lengths, default=0),
-                           cap_reached=CAP in lengths,
+                           cap_reached=CAP in lengths, pad_lengths_used=list(PAD_LENGTHS),
                            factory_frames=factory, tweaked_frames=tweaked,
-                           matches='kit engine float-exact and PCM sample-exact to an unstruck velocity-127 REC, '
-                                   'end fade as v9 export_mix, length = ring-out (-60 dB of the pad peak)')
+                           matches='the bounce file is the file a drum REC of the pad (unstruck, velocity 127) '
+                                   'writes at any PAD LENGTH -8..20; kit engine float-exact and PCM sample-exact '
+                                   'to a longer REC of it up to the end fade, end fade as v9 export_mix, '
+                                   'length = ring-out (-60 dB of the pad peak)')
+    if '--audio-only' in sys.argv:
+        report.update(passed=True, app1_sha256=m.man['sha256'], revision=m.man['revision'],
+                      seconds=round(time.time() - t0))
+        report_path.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+        print(json.dumps(dict(report['audio'], passed=True)))
+        return
 
     # 2. The flow ------------------------------------------------------------------------------------
     m = Bouncer(out, parent)
@@ -596,7 +692,7 @@ def main():
     ref_pad = 8
     m.files.clear()
     original = m.pad_bytes(kit, ref_pad)
-    ref, _, _ = m.rec(ref_pad, SCRATCH_BANK * 16 + ref_pad, 2, clear=True)
+    ref, _, _, _ = m.rec(ref_pad, SCRATCH_BANK * 16 + ref_pad, 2)
     m.choose(bank)
     m.press(VALUE)
     m.poll()
@@ -608,10 +704,7 @@ def main():
     m.run()
     if m.files[bank * 16 + 5] is not late or m.sym('kit_bounce_wrote', '<H') != 0xFFFF & ~(1 << 5):
         raise AssertionError(('late sample replaced', hex(m.sym('kit_bounce_wrote', '<H'))))
-    got = pcm(m.files[bank * 16 + ref_pad])
-    want = pcm(ref)
-    n = len(got) - FADE
-    if not np.array_equal(got[:n], want[:n]):
+    if not same_file(m.files[bank * 16 + ref_pad], ref):
         raise AssertionError('an edit during the run reached the bounce')
     m.set_pad(kit, ref_pad, original)
     m.press(VALUE)
@@ -648,12 +741,11 @@ def main():
     m.choose(bank)
     m.press(VALUE)
     m.poll()
-    m.uc.mem_write(0x80592448, bytes(16))
     keys = bytearray(16); keys[42 >> 3] |= 1 << (42 & 7); keys[21 >> 3] |= 1 << (21 & 7)
     m.uc.mem_write(0x80592448, bytes(keys))                         # SHIFT + PATTERN EDIT held
     m.call(m.S['kit_ui_key_query'], 42, 0)
     m.uc.mem_write(EVENT, struct.pack('<3h', 6, 21, 0))
-    m.call(m.S['kit_shortcut_event'], FAKE_PAGE, EVENT, count=50_000_000)
+    m.call(m.S['kit_shortcut_event'], FAKE_PAGE, EVENT)
     m.uc.mem_write(0x80592448, bytes(16))
     m.call(m.S['kit_ui_key_query'], 42, 0)
     if m.bstate() != STOP:
@@ -663,7 +755,6 @@ def main():
 
     # Pads with LEVEL 0 or the sound off: left out, never asked about.
     m.files.clear()
-    bank = 0
     m.files[2] = dict(pad=2, mode='write', writes=[], header=(2, 0))   # pad 3 used, but its LEVEL is 0
     saved = [m.pad_bytes(kit, p) for p in (2, 3)]
     silent = bytearray(saved[0]); silent[4] = 0
@@ -708,54 +799,125 @@ def main():
     m.press(VALUE)
     report['write_error'] = dict(shown='ERROR', written_before=2, stops=True, rec_destination_cleared=True)
 
-    # Melodic mode: BOUNC is not in the menu and its keys do nothing.
+    # Melodic mode: BOUNC is not in the menu.
     m.setsym('kit_mode', 0)
     for _ in range(25):
         m.turn(1)
     if m.cursor() == 22:
         raise AssertionError('melodic menu reaches BOUNC')
-    report['melodic'] = 'BOUNC not in the menu'
+    report['melodic_menu'] = 'BOUNC not in the menu'
+    print(f'flow checks passed ({time.time() - t0:.0f} s)', flush=True)
 
-    # 3. The hook is inert outside BOUNC -------------------------------------------------------------
+    # 3. Drum REC never uses PAD LENGTH -------------------------------------------------------------
+    def keys_case(folder, syms, units_list):
+        """A struck 808 kick, REC pressed twice on the SG page at each PAD LENGTH."""
+        b = Bouncer(folder, syms)
+        b.setsym('kit_mode', 1)
+        b.strike(0, 100)
+        files = []
+        for units in units_list:
+            file, log, y = b.rec_keys(SCRATCH_BANK * 16, units)
+            files.append((file, y))
+            del b.files[SCRATCH_BANK * 16]
+        return b, files
+    m, files = keys_case(out, parent, (-8, -1, 0, 4))
+    first, y_first = files[0]
+    if not all(same_file(f, first) for f, _ in files):
+        raise AssertionError('drum REC depends on PAD LENGTH')
+    kick = pcm(first)
+    against_long(m, 0, kick, y_first[0], 'struck kick REC', velocity=m.sym('kit_record_velocity'))
+    keys_report = dict(pad_lengths=[-8, -1, 0, 4], identical=True, frames=len(kick),
+                       seconds=round(len(kick) / 48000, 3), whole_kick='ring-out, as the longer REC shows')
     if baseline:
-        base_parent = json.loads((baseline / 'manifest.json').read_text(encoding='utf-8'))['symbols']
-        builds = [Bouncer(out, parent), Bouncer(baseline, base_parent)]
-        cases = []
-        for kit in (1, 6, 10, 12):
-            for pad in range(0, 16, 3):
-                cases.append((kit, pad, 1, None))
-        cases += [(5, 4, 2, 'tweak'), (13, 9, 1, 'tweak'), (1, 7, -1, None), (12, 0, -2, None)]
-        results = []
-        for build in builds:
-            res = []
-            for kit, pad, units, mod in cases:
+        _, old_files = keys_case(baseline, base_parent, (-8,))
+        keys_report['v9.44_frames_at_-8'] = len(pcm(old_files[0][0]))
+        if keys_report['v9.44_frames_at_-8'] >= len(kick) // 10:
+            raise AssertionError(('v9.44 should show the short drum REC', keys_report['v9.44_frames_at_-8']))
+    report['rec_keys'] = keys_report
+
+    # Two pads struck 64 frames apart record together and end where the later drum rings out.
+    m = Bouncer(out, parent)
+    m.setsym('kit_mode', 1)
+    m.strike(0, 100)                                              # kick
+    m.strike(1, 90, blocks=2)                                     # snare, one block later
+    chords = []
+    for units in (-1, 4):
+        file, _, y, chosen = m.rec(1, SCRATCH_BANK * 16 + 1, units, velocity=90)
+        chords.append((file, y, chosen))
+        del m.files[SCRATCH_BANK * 16 + 1]
+    if not same_file(chords[0][0], chords[1][0]) or m.get(COUNT, '<I') != 0:
+        raise AssertionError('chord REC depends on PAD LENGTH')
+    length = len(pcm(chords[0][0]))
+    _, _, y_long, _ = m.rec(1, SCRATCH_BANK * 16 + 1, 1, velocity=90, frames=length + 2 * FADE)
+    del m.files[SCRATCH_BANK * 16 + 1]
+    delays = {0: 64, 1: 0}                                        # the snare (anchor) one block after the kick
+    if len(y_long[1]) != length + 2 * FADE or any(y_long[0][:64]):
+        raise AssertionError('the chord did not capture both drums at their offsets')
+    ends = {j: delays[j] + ring_out(y_long[j][delays[j]:]) for j in (0, 1)}
+    if length != max(ends.values()):
+        raise AssertionError(('chord length', ends, length))
+    report['rec_chord'] = dict(pads=[2, 1], delays=[64, 0], ends=[ends[0], ends[1]], frames=length,
+                               pad_lengths=[-1, 4], identical=True)
+
+    # A silent capture writes 10 ms of silence; melodic REC keeps PAD LENGTH.
+    level0 = bytearray(m.pad_bytes(1, 5)); level0[4] = 0
+    m.set_pad(1, 5, level0)
+    file, _, _, chosen = m.rec(5, SCRATCH_BANK * 16 + 5, -1)
+    if chosen != SILENT or len(pcm(file)) != SILENT or np.any(pcm(file)):
+        raise AssertionError(('silent capture', chosen, len(pcm(file))))
+    del m.files[SCRATCH_BANK * 16 + 5]
+    melodic(m)
+    mel = {}
+    for units, want in ((1, 24000), (4, 96000), (-1, 13963), (-8, 109)):
+        file, _, _, chosen = m.rec(0, SCRATCH_BANK * 16, units)
+        mel[units] = len(pcm(file))
+        del m.files[SCRATCH_BANK * 16]
+        if mel[units] != want or chosen != 0:
+            raise AssertionError(('melodic REC', units, mel[units], want, chosen))
+    report['rec_silent'] = dict(frames=SILENT, all_zero=True)
+    report['rec_melodic'] = dict(frames_by_pad_length={str(k): v for k, v in mel.items()}, uses_pad_length=True)
+    print(f'REC length checks passed ({time.time() - t0:.0f} s)', flush=True)
+
+    # 4. Against v9.44 ---------------------------------------------------------------------------
+    if baseline:
+        new, old = Bouncer(out, parent), Bouncer(baseline, base_parent)
+        cases = [(kit, pad, None) for kit in (1, 6, 10, 12) for pad in range(0, 16, 3)]
+        cases += [(5, 4, 'tweak'), (13, 9, 'tweak'), (1, 7, 'tweak'), (12, 0, 'tweak')]
+        drum = []
+        for kit, pad, mod in cases:
+            for build in (new, old):
                 build.setsym('kit_mode', kit)
                 if mod:
                     build.set_pad(kit, pad, tweak(kit, pad, build.pad_bytes(kit, pad)))
-                file, log, _ = build.rec(pad, 3 * 16 + pad, units)
-                res.append((file['header'], file['writes'], log))
-                del build.files[3 * 16 + pad]
-            build.setsym('kit_mode', 0)                           # melodic REC: Saw, A4
-            build.uc.mem_write(V0 + 0x70, bytes([6, 6]))
-            build.put(V0 + 0x5C, 33)
-            build.put(V0 + 0x74, 10000)
-            build.put(V0 + 0x198, 10000)
-            for units in (1, -1):
-                file, log, _ = build.rec(0, 3 * 16, units)
+            file, _, _, _ = new.rec(pad, 3 * 16 + pad, 1)
+            frames_ = pcm(file)
+            length = len(frames_)
+            old.clear_export_voice()                              # v9.45 starts every export voice cleared
+            ofile, _, _, _ = old.rec(pad, 3 * 16 + pad, (length + 2 * FADE + 23999) // 24000)
+            oframes = pcm(ofile)
+            tail, fade = fade_model(oframes, length)
+            if not np.array_equal(frames_[:length - fade], oframes[:length - fade]) or not np.array_equal(frames_[length - fade:], tail):
+                raise AssertionError(('drum REC audio differs from v9.44', kit, pad, mod))
+            drum.append(length)
+            del new.files[3 * 16 + pad], old.files[3 * 16 + pad]
+        mel = []
+        for build in (new, old):
+            melodic(build)
+            res = []
+            for units in (1, 4, -1, -8):
+                file, log, _, _ = build.rec(0, 3 * 16, units)
                 res.append((file['header'], file['writes'], log))
                 del build.files[3 * 16]
-            results.append(res)
-        if results[0] != results[1]:
-            bad = next(i for i in range(len(results[0])) if results[0][i] != results[1][i])
-            raise AssertionError(('REC differs from the baseline build', bad))
-        frames = [r[0][1] // (2 * r[0][0]) for r in results[0]]
+            mel.append(res)
+        if mel[0] != mel[1]:
+            raise AssertionError('melodic REC differs from v9.44')
         report['baseline'] = dict(build=json.loads((baseline / 'manifest.json').read_text())['revision'],
-                                  identical_recs=len(results[0]), drum=len(cases), melodic=2,
-                                  pad_length_seconds_and_periods=True, frames=frames)
+                                  drum_recs_same_audio=len(drum), drum_frames=drum,
+                                  melodic_recs_identical=len(mel[0]), melodic_pad_lengths=[1, 4, -1, -8])
 
     report.update(passed=True, app1_sha256=m.man['sha256'], revision=m.man['revision'],
                   seconds=round(time.time() - t0))
-    (out / 'bounce_check.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+    report_path.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(report))
 
 
