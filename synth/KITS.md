@@ -1,20 +1,24 @@
-# Synthesized machine kits v9.45 (test candidate)
+# Synthesized machine kits v9.46 (test candidate)
 
-This branch carries the v9.45-test1 kit candidate: v9.44-test1 (external MIDI)
-plus BOUNC, which writes the current kit's sixteen pads, with their settings,
-into the sixteen pads of a sample bank ([Bounce a kit into a
-bank](#bounce-a-kit-into-a-bank)). It also fixes the drum REC length: a drum
-recording now always ends where its drums have rung out, never at the melodic
-Pad Length ([Drum REC length](#drum-rec-length)). And every hit of the UDS,
-MP-7, TR-707 and TR-727 kits now starts clean, whatever its voice played before
-([Clean starts](#clean-starts)). test1 has emulator verification only and is not
-in the patcher. The patcher's published option is still v9.43 (build
-v9.43-test3, APP1 SHA-256 `f6b83372…a515`); its experimental option is the
-v9.44-test1 MIDI build.
+This branch carries the v9.46-test1 kit candidate, one test build that combines
+the open test branches:
 
-v9.44-test1 added external MIDI sequencing, for the kits and the melodic Sound
-Generator: a MIDI channel item (M.CH), drum notes 36–51 on pads 1–16 and CCs for
-every parameter ([MIDI](#midi)). It too has emulator verification only.
+- v9.45-test1: BOUNC writes the current kit's sixteen pads, with their settings,
+  into the sixteen pads of a sample bank ([Bounce a kit into a
+  bank](#bounce-a-kit-into-a-bank)); drum REC ends where its drums have rung out,
+  never at the melodic Pad Length ([Drum REC length](#drum-rec-length)); every
+  hit of the UDS, MP-7, TR-707 and TR-727 kits starts clean ([Clean
+  starts](#clean-starts)).
+- v9.44-test1: external MIDI sequencing for the kits and the melodic Sound
+  Generator, with a channel item (M.CH), drum notes 36–51 on pads 1–16 and CCs
+  for every parameter ([MIDI](#midi)).
+- v9.43-test4: hot resample with the kits ([Hot resample](#hot-resample)).
+- The RESAMPLE start fix: a resampled take's START lands on its first sound
+  ([RESAMPLE start fix](#resample-start-fix)).
+
+test1 has emulator verification only and is not in the patcher. The patcher's
+published option is still v9.43 (build v9.43-test3, APP1 SHA-256
+`f6b83372…a515`); its experimental option is the v9.44-test1 MIDI build.
 
 v9.43 has thirteen kits, every voice re-measured against references. Its test1
 and test2 were played on hardware. test2 answered the first report (kick level,
@@ -54,6 +58,29 @@ local in your browser. The patcher produces APP1 only; APP0 remains stock.
 - KIT stays between TR808 and TR727. Turning beyond either end keeps that kit.
   OFF is an internal melodic state, not a selectable drum-menu choice.
 
+### Hot resample
+
+Stock 5.52 lets the Sound Generator play into a resample: press RESAMPLE, pick
+an empty pad ("press pad to start"), then SHIFT + RECORD SETTING opens the Sound
+Generator. The first note you play starts the take. test4 adds the kits:
+
+- With the take armed or running, SHIFT + PATTERN EDIT on the RESAMPLE screen
+  opens the Sound Generator in drum mode with the last kit, the kit twin of
+  SHIFT + RECORD SETTING. The take stays armed; the first kit hit starts it.
+- SHIFT + RECORD SETTING from the RESAMPLE screen opens the Sound Generator as
+  you left it, kits or melodic. On the Sound Generator page the two shortcuts
+  switch between kits and melodic as usual.
+- During a hot resample the two shortcuts never start or stop the take.
+  (Before test4 their press started an armed take or stopped a running one: the
+  stock page starts and stops a resample on PATTERN EDIT and RECORD SETTING
+  without looking at SHIFT.) Switching stops the voices that are sounding, as it
+  always has.
+- Stock behaviour stays: without SHIFT, PATTERN SELECT, PATTERN EDIT, RECORD
+  SETTING, PITCH/SPEED and RESAMPLE start an armed take or stop a running one.
+  A take with a length in bars ends that many bars after it starts. REC does
+  nothing on the Sound Generator page during a resample; EXIT goes back to the
+  RESAMPLE screen with the take still armed or running.
+
 | Main display page | CTRL1 | CTRL2 | CTRL3 |
 | --- | --- | --- | --- |
 | First | Tune ±12 semitones | Decay 0–100% | Tone 0–100% |
@@ -72,6 +99,20 @@ every pad: a pad at 50 plays the modelled machine voice unchanged. TONE is the
 broadband tilt everywhere else. SWEEP below 50 lowers or removes a voice's own
 pitch envelope (or makes the pitch rise into the note); above 50 deepens it.
 NOISE above 50 mixes noise into metallic sources; below 50 thins noisy voices.
+
+### RESAMPLE start fix
+
+A RESAMPLE take's START now lands on its first sound. Stock keeps the few
+milliseconds the sound needs to come back through the effects chip as silence at
+the start of a pad-triggered take. The fix applies when the first sound arrives
+within 50 ms of the recording starting. For a resample take, the first sound is
+anything above about −72 dBFS, so soft attacks aren't cut. It applies to takes
+from the RESAMPLE page, including a hot resample into the Sound Generator.
+
+Only START moves: the audio is unchanged, and you can pull START back in sample
+edit. REC sampling, the pattern-select resample screen, pattern export and takes
+whose first sound comes more than 50 ms after recording starts keep stock
+behaviour. Mono takes aren't covered; the SP's own buttons always record stereo.
 
 ## Bounce a kit into a bank
 
@@ -370,18 +411,20 @@ Use Python 3.12, the pinned dependencies and Zig 0.13.0. Supply your own officia
 python -m pip install -r synth/requirements.txt
 python synth/build_v9.py /path/to/stock/SP404MKII_APP1.bin --zig /path/to/zig --out out/v9.5-parent
 python synth/build_scales.py out/v9.5-parent/SP404MKII_APP1.bin --zig /path/to/zig --out out/v9.6 --fixes
-python synth/build_kits.py out/v9.6/SP404MKII_APP1.bin --zig /path/to/zig --out out/kits-v945
+python synth/build_kits.py out/v9.6/SP404MKII_APP1.bin --zig /path/to/zig --out out/kits-v946
+python synth/build_start_fix.py out/kits-v946/SP404MKII_APP1.bin out/kits-v946-final
 ```
 
-A clean rebuild from stock 5.52 with these commands reproduces the v9.45-test1
-APP1 (`43558f05…90f4`, 3,092,992 bytes) and its manifest byte for byte. The
-v9.44-test1 APP1 (`d47f46d4…a51d`, 3,088,608 bytes) is rebuilt the same way from
-commit `6caf6af`, and the published v9.43 APP1 (`f6b83372…a515`, 3,085,968
-bytes) from commit `b1c1b26`. The kit builder requires only the files in this
-repository. Patch sites retain exact-byte guards. Zero-filled module sections are
-packed into guarded scatter rows and reconstructed to verify the complete runtime
-image before writing APP1.
-Module: 155,712 bytes at run time (limit 319,488), 121,028 stored.
+A clean rebuild from stock 5.52 with these commands, followed by the RESAMPLE
+start fix stage, reproduces the v9.46-test1 APP1 (`e762c495…bcae`, 3,093,840
+bytes). The kit stage alone gives `cebc905c…734f` (3,093,248 bytes). Earlier
+candidates rebuild the same way from their branches: v9.45-test1 (`claude/kits-
+bounce`), v9.44-test1 (`claude/kits-midi`), v9.43-test4 (`claude/kits-hot-
+resample`) and the published v9.43 (`b1c1b26`). The kit builder requires only
+the files in this repository. Patch sites retain exact-byte guards. Zero-filled
+module sections are packed into guarded scatter rows and reconstructed to verify
+the complete runtime image before writing APP1.
+Module: 155,968 bytes at run time (limit 319,488), 121,284 stored.
 
 MIDI reaches the module through four guarded jumps in the stock MIDI handlers,
 which both MIDI ports share through the table at 0x802091ec:
@@ -397,6 +440,20 @@ Sixteen more spans the gates rely on or return into are checked against their
 exact v9.6 instructions without being changed (listed in the manifest as
 `kit_midi_guards`).
 
+The hot-resample rules add no patch site: they run in the existing shortcut gate
+at 0x800a80a8. The builder checks the stock code they mirror or call against
+exact instructions: the RESAMPLE key handler's SHIFT + RECORD SETTING jump, the
+Sound Generator key handler's resample start/stop, the Sound Generator pad's
+start of the take, and the page request.
+
+The RESAMPLE start fix is a separate stage after the kit builder
+(`synth/build_start_fix.py`). It changes two 12-byte stock sites, each checked
+against its exact instructions: the recorder engine's init at standby
+(0x800e9efe) and the REC_STOP branch that sets START (0x8017f0ac). Its 182 bytes
+of code go in a new boot copy row at 0x83FEF000, at the top of the free SDRAM gap
+below 0x83FF0000; the builder checks that nothing in the input refers to that
+area and that no row overlaps it.
+
 The kit builder also restores one stock instruction block outside the module.
 Every Sound Generator pad event ends in a shared UI redraw request at
 0x8015c01c. The original polyphony patch moved that request into its
@@ -404,7 +461,7 @@ all-notes-off wrapper and left NOPs in its place, so choosing an imprint
 destination stopped redrawing the pads. The 14 stock bytes are written back
 behind an exact-byte guard.
 
-## Checks (v9.45-test1, emulator)
+## Checks (v9.46-test1, emulator)
 
 Drum REC length and BOUNC (`test_kit_bounce.py`). The built image is booted as
 for the MIDI checks below. The stock exporter runs for real: the v4 export
@@ -502,7 +559,7 @@ Generator code running for real:
   byte for byte. CC 123 releases MIDI notes, keeps pad notes and stops the arp
   in both modes. CC 120 fades out every voice.
 
-The kit checks below were run again on v9.45-test1:
+The kit checks below were run again on v9.46-test1:
 
 - 208 factory pad renders (13 kits × 16) match host/ARM sample for sample for
   3000 samples each, plus 108 control endpoint cases (TUNE, DECAY, TONE, SWEEP,
@@ -522,6 +579,25 @@ The kit checks below were run again on v9.45-test1:
 - Kit shortcuts switch machines with the keyboard flag on. With an imprint
   armed they change nothing: no machine switch, all-stop or cursor step.
 - Every sound renders finite, without DC offset or audible cut-off clicks.
+- Hot resample (test4, `test_kit_hot_resample.py`, 138 cases): key events go
+  through the stock dispatcher into the real RESAMPLE and Sound Generator key
+  handlers on the booted image. SHIFT + PATTERN EDIT on RESAMPLE opens the Sound
+  Generator in drum mode exactly when stock SHIFT + RECORD SETTING opens it
+  (recorder states 0–3, with and without a pad chosen), in every release order,
+  posting no recorder command. With settings 0x36 = 1 and the recorder armed or
+  recording, both shortcuts switch machines without a start or stop; unshifted
+  keys keep the stock start/stop. The stock chord from RESAMPLE keeps the
+  machine. A whole session (enter kits, switch, first kit hit posts the start,
+  switch while recording, RESAMPLE stops) passes. With `--baseline` the same
+  harness reproduces the three v9.43 faults on the v9.43 build.
+- RESAMPLE start fix (`test_start_fix.py`, on the final image): only the header,
+  the two 12-byte sites and the appended tail differ from the kit stage, and the
+  scatter table is the kit stage's rows plus one. In Unicorn, unmarked takes get
+  exactly the stock START, END and REC BPM over 390 combinations of mode, mark,
+  channels and first-sound frame; marked takes get the exact onset whatever mode
+  0x36 reads at stop; and at standby only RESAMPLE gets the −72 dBFS threshold
+  (4 modes × 12 settings). A real take through the recorder and the SD card can
+  only be checked on the unit.
 
 Hardware timing, output, CPU headroom and writes to the SP's storage are not yet
 verified on a device.
@@ -530,13 +606,15 @@ To replay host/ARM audio checks, build the portable engine as a host library:
 
 ```sh
 zig cc -O2 -ffp-contract=off -fno-fast-math -shared -DKIT_HOST synth/kits/kit_engine.c -o out/kit_engine_host.dll
-python synth/test_kits.py out/kits-v945 out/kit_engine_host.dll
-python synth/test_kit_capture.py out/kits-v945
-python synth/test_kit_chord.py out/kits-v945
-python synth/test_kit_shortcut.py out/kits-v945
-python synth/test_kit_midi.py out/kits-v945 out/kits-v944
-python synth/test_kit_bounce.py out/kits-v945 out/kits-v944
-python synth/test_kit_restart.py out/kits-v945 out/kits-v944
+python synth/test_kits.py out/kits-v946 out/kit_engine_host.dll
+python synth/test_kit_capture.py out/kits-v946
+python synth/test_kit_chord.py out/kits-v946
+python synth/test_kit_shortcut.py out/kits-v946
+python synth/test_kit_midi.py out/kits-v946 out/kits-v944
+python synth/test_kit_bounce.py out/kits-v946 out/kits-v944
+python synth/test_kit_restart.py out/kits-v946 out/kits-v944
+python synth/test_kit_hot_resample.py out/kits-v946
+python synth/test_start_fix.py out/kits-v946-final
 ```
 
 The second argument of `test_kit_midi.py` is optional: an earlier kits build to

@@ -23,6 +23,28 @@ published test3 build adds two VALUE-menu changes checked in the emulator. CPU
 headroom under heavy use is not yet measured on a device. APP0 is unchanged.
 See [KITS.md](synth/KITS.md).
 
+**Known issue, drum REC:** a drum recording takes its length from the melodic
+Sound Generator's Pad Length, which drum mode doesn't show. If Pad Length is set
+to a waveform-cycle value instead of a time, REC in drum mode saves only a tiny
+blip. Workaround: switch to melodic mode (SHIFT + RECORD SETTING), tap SHIFT for
+the Pad Length / Balance page, set Pad Length to a time such as 2 seconds, then
+go back to drums (SHIFT + PATTERN EDIT) and REC as usual. A fix that records each
+drum at its own length is coming with the next kit build. This also applies to
+the v9.44-test1 MIDI test build.
+
+## Experimental: Kits MIDI test build (v9.44-test1)
+
+The patcher also offers **Test build: Sound Generator + Kits v9.44-test1
+(MIDI)**. It is v9.43 plus external MIDI, so the kits and the melodic Sound
+Generator can be sequenced from a DAW or hardware sequencer: notes 36–51 play
+pads 1–16, a new M.CH menu item sets the Sound Generator's channel (default
+16), CCs control every kit and synth parameter, and CC 120/123 stop hung notes.
+It works while the Sound Generator is open, in drum (kits) or melodic mode,
+and stops when you leave that screen. It has passed the
+emulator checks but has not been played on hardware yet. Note map, CC chart and
+status: [KITS_MIDI.md](synth/KITS_MIDI.md). Source: branch
+[`claude/kits-midi`](https://github.com/tracelistener/doom-os-etc./tree/claude/kits-midi).
+
 ## What this mod adds
 
 - Four live Sound Generator voices with shared controls and held-pad LEDs.

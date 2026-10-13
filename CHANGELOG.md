@@ -1,5 +1,22 @@
 # Changelog
 
+## Synthesized kits v9.46 (test candidate, not yet in the patcher)
+
+test1 combines the open test branches into one build:
+
+- v9.45-test1: BOUNC (the kit into a sample bank), drum REC at each drum's own
+  length instead of the melodic Pad Length, and clean starts for the UDS, MP-7,
+  TR-707 and TR-727 kits.
+- v9.44-test1: external MIDI (M.CH, drum notes 36–51, CCs for every parameter).
+- v9.43-test4: hot resample with the kits.
+- RESAMPLE start fix: a resampled take's START lands on its first sound instead
+  of keeping the effects chip's few milliseconds of round trip as silence. It
+  applies when the first sound arrives within 50 ms; only START moves. Built as a
+  stage after the kits (`synth/build_start_fix.py`), with
+  `synth/test_start_fix.py`.
+
+Emulator-checked only; hardware test pending. Try it in a scratch project.
+
 ## Synthesized kits v9.45 (test candidate, not yet in the patcher)
 
 test1, built on v9.44-test1, so a kit dialled in on the synth can become a
@@ -49,6 +66,25 @@ test1, for sequencing the Sound Generator from outside instead of resampling:
   release MIDI notes and stop the arp; 120 also fades out every voice. RAM only.
 - New emulator test `synth/test_kit_midi.py` drives the stock MIDI dispatcher on
   the built image. Hardware test pending.
+
+## Synthesized kits v9.43-test4 (test candidate, not yet in the patcher)
+
+Hot resample with the kits (stock: RESAMPLE, pick a pad, SHIFT + RECORD SETTING
+opens the Sound Generator, and the first note starts the take):
+
+- On the RESAMPLE screen with the take armed or running, SHIFT + PATTERN EDIT
+  opens the Sound Generator in drum mode with the last kit. Before, it did
+  nothing there.
+- During a hot resample, SHIFT + PATTERN EDIT and SHIFT + RECORD SETTING on the
+  Sound Generator page switch machines without starting or stopping the take.
+  Before, their press started an armed take before any hit, or stopped a running
+  one: the stock page starts and stops a resample on those keys without checking
+  SHIFT. Unshifted presses still start and stop it.
+- SHIFT + RECORD SETTING from the RESAMPLE screen opens the Sound Generator as
+  you left it (kits or melodic) instead of always switching to melodic.
+- New synth/test_kit_hot_resample.py drives the real stock key handlers on the
+  booted image; with `--baseline` it reproduces the three faults on v9.43.
+  Emulator-checked only.
 
 ## Synthesized kits v9.43 (2026-10-12)
 
