@@ -17,8 +17,9 @@ hardware yet. Back up first and keep your known-good update for rollback.
   (`synth/build_kits.py`, then `synth/publish_kits_midi.py`). Its `synth/KITS.md`
   has the full technical notes. This main branch keeps the v9.43 sources.
 
-Everything below acts only while the Sound Generator page is open, as stock
-MIDI to the Sound Generator always has. Drums and melodic mode still share the
+Everything below works while the Sound Generator is open, in drum (kits) or
+melodic mode; the kits run on the Sound Generator screen. Leaving that screen,
+for example with EXIT, stops it, as with stock MIDI to the Sound Generator. Drums and melodic mode still share the
 same four voices, so only one of them plays at a time.
 
 ## Channel: M.CH
@@ -33,7 +34,7 @@ arp's held notes, so a note held on the old channel cannot hang.
   keeps its usual sample-pad routing elsewhere. Channel 16 is then the control
   channel on every page. For sequencing, a channel your sample banks don't use
   (11–15 with the default bank channels) avoids triggering SP functions when you
-  leave the page.
+  leave the Sound Generator.
 
 ## Notes
 
@@ -48,7 +49,7 @@ Melodic mode plays MIDI notes as before.
 
 ## CCs
 
-CCs on M.CH change parameters while the page is open, and every CC still goes on
+CCs on M.CH change parameters while the Sound Generator is open, and every CC still goes on
 to the SP's own CC handling unchanged. Stock 5.52 uses CCs only on channels 1–5:
 7, 8 and 85–91 on channel 1, 7 on channels 2–3, and the effect controls 16–19
 and 80–83 on channels 1–5. The chart avoids all of them, and the CCs that DAWs

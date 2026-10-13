@@ -30,7 +30,8 @@ The patcher also offers **Test build: Sound Generator + Kits v9.44-test1
 Generator can be sequenced from a DAW or hardware sequencer: notes 36–51 play
 pads 1–16, a new M.CH menu item sets the Sound Generator's channel (default
 16), CCs control every kit and synth parameter, and CC 120/123 stop hung notes.
-It works only while the Sound Generator page is open. It has passed the
+It works while the Sound Generator is open, in drum (kits) or melodic mode,
+and stops when you leave that screen. It has passed the
 emulator checks but has not been played on hardware yet. Note map, CC chart and
 status: [KITS_MIDI.md](synth/KITS_MIDI.md). Source: branch
 [`claude/kits-midi`](https://github.com/tracelistener/doom-os-etc./tree/claude/kits-midi).

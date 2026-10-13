@@ -249,9 +249,9 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
         </details>
         <details class="env-guide">
           <summary>MIDI test guide (v9.44-test1, experimental)</summary>
-          <p class="t">Only in the test build, and only while the Sound Generator page is open. It has passed the emulator checks but has not been played on hardware yet, so keep your known-good update at hand.</p>
+          <p class="t">Only in the test build. It works while the Sound Generator is open, in drum (kits) or melodic mode, and stops when you leave that screen. It has passed the emulator checks but has not been played on hardware yet, so keep your known-good update at hand.</p>
           <ul>
-            <li><strong>Channel:</strong> M.CH, the last VALUE item in both modes (1&ndash;16, default 16), is the channel the Sound Generator plays. Channel 16 is also the SP's control channel, so for sequencing a free channel such as 11&ndash;15 avoids triggering SP functions when you leave the page. M.CH returns to 16 at power-on.</li>
+            <li><strong>Channel:</strong> M.CH, the last VALUE item in both modes (1&ndash;16, default 16), is the channel the Sound Generator plays. Channel 16 is also the SP's control channel, so for sequencing a free channel such as 11&ndash;15 avoids triggering SP functions when you leave the Sound Generator. M.CH returns to 16 at power-on.</li>
             <li><strong>Drum notes:</strong> 36&ndash;51 play pads 1&ndash;16 (36 = pad 1, the kick in most kits); other notes are ignored. A MIDI hit acts like a pad strike, so PAD, REC and the arp treat it as one.</li>
             <li><strong>Drum CCs:</strong> three per pad, in the order Tune, Decay, Level. Pads 1&ndash;4 use CC 20&ndash;31, pads 5&ndash;12 use 40&ndash;63 and pads 13&ndash;16 use 102&ndash;113 (pad 1 = 20, 21, 22; pad 2 = 23, 24, 25, and so on). The last pad heard takes Tone 114, Sweep 115, Noise 116 and Attack 117. CC 64 is the knob centre: Tune 0, the others 50%.</li>
             <li><strong>Synth CCs:</strong> TYPE 70, FREQ 71, LEVEL 72, DUTY 73, BALANCE 74, ENV 75, TUNE 76. Keyboards whose knobs send CC 71&ndash;74 will move these; put such a keyboard on another channel.</li>
