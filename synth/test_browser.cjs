@@ -130,7 +130,7 @@ async function download(page) {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
   assert.match(html, /kits-data\.js\?v=kits-v9-46-7b5fbcb4/);
-  assert.match(html, /doomos-patcher\.js\?v=kits-v9-46-only/);
+  assert.match(html, /doomos-patcher\.js\?v=kits-v9-46-doom-os/);
   assert.doesNotMatch(html, /synth-data\.js|waves-data\.js|kits-midi-data|MIDI test guide|v9\.43|v9\.44/);
   assert.doesNotMatch(html, /[Tt]ick one|unticked|Pick one of/);
   assert.match(html, /What's new in Kits v9\.46/);
