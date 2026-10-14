@@ -5,9 +5,12 @@
 The patcher builds **Sound Generator + Kits v9.46** for the SP-404MKII:
 Sound Generator **v9.9.3** (four live voices, 17 new waveforms, nine
 volume/filter-envelope presets, 34 scale choices and an arpeggiator) plus
-thirteen synthesized machine kits. Drop in the stock firmware and press Patch;
-there is nothing to choose. Firmware processing happens locally in your browser;
-nothing is uploaded. [Kit controls, reproduction and validation](synth/KITS.md).
+thirteen synthesized machine kits. It is built on, and includes, **DOOM OS 0.6.1**
+(build ED5E), Klangfeld Labs' pattern sequencer for the SP: hold REMAIN and
+press SUB PAD to open it ([DOOM OS quickstart](https://tracelistener.github.io/doom-os-etc./manual/)).
+Drop in the stock firmware and press Patch; there is nothing to choose. Firmware
+processing happens locally in your browser; nothing is uploaded. [Kit controls,
+reproduction and validation](synth/KITS.md).
 
 ## Synthesized kits v9.46
 

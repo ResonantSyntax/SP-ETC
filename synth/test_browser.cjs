@@ -87,13 +87,13 @@ async function download(page) {
   // One build, no selector: drop in stock, press Patch, get Kits v9.46.
   const panel = page.get('doomos-patcher').innerHTML;
   assert.equal((panel.match(/type="checkbox"/g) || []).length, 0, 'no build selector');
-  assert.match(panel, /Builds Sound Generator \+ Kits v9\.46/);
+  assert.match(panel, /Builds Sound Generator \+ Kits v9\.46 on DOOM OS 0\.6\.1 \(ED5E\)/);
   await choose(page, stock);
   assert.equal(page.get('patch').disabled, false);
   await page.get('patch').listeners.click();
   assert.equal(page.get('download').hidden, false);
   assert.equal(await download(page), KITS_SHA);
-  assert.match(page.get('status').textContent, /Sound Generator \+ Kits v9\.46 has been patched into firmware/);
+  assert.match(page.get('status').textContent, /Sound Generator \+ Kits v9\.46 with DOOM OS 0\.6\.1 has been patched into firmware/);
 
   page.get('reset').listeners.click();
   assert.equal(page.get('download').hidden, true);
@@ -144,7 +144,14 @@ async function download(page) {
   assert.match(readme, /## Arpeggiator \(v9\.9\.3\)/);
   assert.match(readme, /### Using the kits \(v9\.46\)/);
   assert.doesNotMatch(readme, /Pattern sequencer with a graphical interface|## Main controls|## Upstream plans|## Improvements/);
-  assert.doesNotMatch(html, /DOOM OS base|Base released|data-doomos="version"|data-doomos="build"/);
+  assert.doesNotMatch(html, /Base released|data-doomos="version"|data-doomos="build"/);
+  // The page says the build includes DOOM OS and links its quickstart.
+  assert.match(html, /builds Sound Generator \+ Kits v9\.46 on DOOM OS 0\.6\.1, so your firmware includes DOOM OS/);
+  assert.match(html, /<h2>DOOM OS<span class="v">0\.6\.1<\/span><\/h2>/);
+  assert.match(html, /<dt>DOOM OS<\/dt><dd>0\.6\.1<\/dd>/);
+  assert.match(html, /href="manual\/">DOOM OS quickstart/);
+  assert.ok(fs.existsSync(path.join(root, 'manual', 'index.html')), 'DOOM OS quickstart is in the repository');
+  assert.match(readme, /built on, and includes, \*\*DOOM OS 0\.6\.1\*\*/);
   for (const name of ['OFF', 'Pluck', 'Perc', 'Keys', 'Pad', 'Swell', 'Bass', 'Acid', 'Sweep', 'FPad']) {
     assert.ok(html.includes(name), 'page documents ENV preset ' + name);
     assert.ok(readme.includes('| ' + name + ' |'), 'README documents ENV preset ' + name);

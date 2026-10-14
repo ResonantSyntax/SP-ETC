@@ -7,6 +7,9 @@ Kits v9.46, which contains Sound Generator v9.9.3. The v9.9.3-only output and th
 base build without synth additions are no longer offered, and the page no
 longer loads `synth-data.js` or `waves-data.js` (both stay in the repository for
 reproduction). `synth/test_browser.cjs` now checks the single build.
+The page, the patcher panel and the done message say the build includes DOOM
+OS 0.6.1 (build ED5E), with a DOOM OS card next to the Sound Generator and Kits
+and a link to the DOOM OS quickstart.
 
 Published as **Sound Generator + Kits v9.46**: build v9.46-test3 plus the
 RESAMPLE start fix, APP1 SHA-256 `7b5fbcb4…684a` (3,094,624 bytes), one guarded

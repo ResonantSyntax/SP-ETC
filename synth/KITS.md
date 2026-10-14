@@ -48,8 +48,8 @@ first report (kick level, FM kick and bells, recording struck drums together,
 the REC destination pad blink) and test3 trimmed the drum VALUE menu.
 
 The patcher builds only this firmware: drop in the stock APP1 and press Patch.
-It includes the melodic generator and shared arpeggiator. Firmware processing
-stays local in your browser. The patcher produces APP1 only; APP0 remains stock.
+It includes DOOM OS 0.6.1 (build ED5E), the melodic generator and the shared
+arpeggiator. Firmware processing stays local in your browser. The patcher produces APP1 only; APP0 remains stock.
 
 ## Open and play
 

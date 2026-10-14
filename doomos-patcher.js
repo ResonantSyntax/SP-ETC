@@ -200,7 +200,8 @@ if (typeof module === 'object' && module.exports) {
       '</div>' +
       '<p class="status" id="status" role="status">Ready. No file loaded yet.</p>' +
       (window.DOOMOS_KITS ?
-        '<p class="synth-choice" id="build">Builds Sound Generator + Kits v9.46: Sound Generator v9.9.3 plus 13 synthesized kits.</p>' : '') +
+        '<p class="synth-choice" id="build">Builds Sound Generator + Kits v9.46 on DOOM OS ' + release.version + ' (' + release.build +
+        '): Sound Generator v9.9.3, 13 synthesized kits and DOOM OS in one firmware.</p>' : '') +
       '<div class="actions">' +
       '<button type="button" class="btn" id="patch" disabled>Patch firmware</button>' +
       '<a class="btn" id="download" download="SP404MKII_APP1.bin" hidden>Download patched firmware ↓</a>' +
@@ -295,7 +296,7 @@ if (typeof module === 'object' && module.exports) {
         download.hidden = false;
         reset.hidden = false;
         patchBtn.hidden = true;
-        say('Done. ' + (addKits ? 'Sound Generator + Kits v9.46' : 'Base build without synth additions') +
+        say('Done. ' + (addKits ? 'Sound Generator + Kits v9.46 with DOOM OS ' + release.version : 'Base build without synth additions') +
             ' has been patched into firmware ' + result.label + '. '
             + 'Download it and keep the name SP404MKII_APP1.bin.', 'ok');
         state.textContent = 'Complete';
