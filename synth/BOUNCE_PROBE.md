@@ -68,6 +68,27 @@ Numbers are clamped to ±99999, so the text always fits the stock popup buffer.
   L = Lphys + 128 + (φtx − φrx) + 64·(k0 − m0); D and P give the last two terms.)
 - **L varies within one boot:** align bounces on the onset.
 
+## T1 on the unit (2026-10-14, the probe on the published v9.46)
+
+- **Within one boot L is exact:** 20 of 20 hits gave the same L on DRY, BUS 1 and BUS 3/4.
+- **Across boots L moved,** with the eDMA phase:
+  - one boot read `L=77`, P61 D0;
+  - another read `L=73`, P66 D−1, on every routing.
+- **The chip's delay is constant:** L − 64·D + (P mod 64) came out 138 and 139, the same within
+  P's one-frame read jitter. What changes at power-up is the i.MX TX/RX DMA phase.
+- **BUS 3/4:** one unnamed BUS 3/4 setup added a frame (`L=78`); SX delay with overdrive added
+  none.
+- **Words 2/3** (W) always came back 4 frames before words 0/1, so they tap the mix before
+  BUS 3/4.
+- **The first hit of a take showed no popup,** though it was counted: the stock screen redraws
+  when the recorder goes from standby to recording.
+
+Stage 2 ([BOUNCE.md](BOUNCE.md)) uses these results:
+
+- it takes L from each bounce's own onset;
+- it remembers the boot's L for soft starts;
+- otherwise it estimates L as 138.5 − (P mod 64), averaging P over the silence wait.
+
 ## What changes
 
 | Site | Stock code | Now |
