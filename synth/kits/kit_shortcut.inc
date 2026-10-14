@@ -5,7 +5,8 @@
 static void stop(void);
 static u8 kit_last_mode=1;
 EXPORT u8 kit_ui_shift;
-/* Counters: [4] stock SHIFT + RECORD SETTING from RESAMPLE, [5] SG presses
+/* Counters: [2] SHIFT + RECORD SETTING from LOOPER, [3] SHIFT + PATTERN EDIT
+ * from LOOPER, [4] stock SHIFT + RECORD SETTING from RESAMPLE, [5] SG presses
  * swallowed during a hot resample, [6] SHIFT + PATTERN EDIT from RESAMPLE,
  * [7] machine switches on release. */
 EXPORT u32 kit_shortcut_trace[8];
@@ -73,12 +74,26 @@ static void kit_shortcut_observe(void){
 /* Key presses (event type 5). RESAMPLE page, take armed or recording: SHIFT +
  * PATTERN EDIT opens the SG page with the last kit, the kit twin of the stock
  * SHIFT + RECORD SETTING jump; that stock chord keeps the current machine
- * instead of selecting melodic on arrival. SG page during a hot resample: the
- * native press of a SHIFT chord is swallowed so it neither starts nor stops
- * the take; its release switches machines as usual. 1 = handled. */
+ * instead of selecting melodic on arrival. LOOPER page (0x27, MARK with MARK
+ * Function = Looper): the stock SHIFT + RECORD SETTING jump (0x800819d8)
+ * opens the SG page melodic, and SHIFT + PATTERN EDIT, which stock ignores
+ * there, opens it with the last kit; both choose the machine at the press and
+ * swallow the release, so the release order doesn't matter. SG page during a
+ * hot resample: the native press of a SHIFT chord is swallowed so it neither
+ * starts nor stops the take; its release switches machines as usual. 1 = handled. */
+#define KIT_LOOPER_PAGE 0x27
 static int kit_shortcut_press(int current,int intent){
     u8 bit=(u8)intent;
     kit_shortcut_swallow&=(u8)~bit;
+    if(current==KIT_LOOPER_PAGE){
+        if(!kit_key_down(42))return 0;
+        kit_shortcut_swallow|=bit;kit_shortcut_pending=0;kit_shortcut_chord=(u8)intent;
+        kit_shortcut_select(intent==1);
+        ++kit_shortcut_trace[intent==1?3:2];
+        if(intent==2)return 0;                       /* the stock jump to the SG page */
+        KIT_PAGE_REQUEST(0x1e);
+        return 1;
+    }
     if(current==0xe){
         if(!kit_key_down(42)||!kit_resample_armed())return 0;
         kit_shortcut_swallow|=bit;kit_shortcut_pending=0;kit_shortcut_chord=(u8)intent;

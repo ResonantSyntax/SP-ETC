@@ -1,7 +1,11 @@
 # Synthesized machine kits v9.46 (test candidate)
 
-This branch carries the v9.46-test2 kit candidate. test2 answers the first
-hardware report on test1:
+This branch carries the v9.46-test3 kit candidate. test3 adds the kits to the
+looper: on the LOOPER screen, SHIFT + PATTERN EDIT now opens the kits, as
+SHIFT + RECORD SETTING opens the melodic Sound Generator there
+([Looper](#looper)).
+
+test2 answered the first hardware report on test1:
 
 - Every recording loads. The SP's pad loader leaves a pad empty when its sample
   is shorter than 1,000 frames (21 ms). In melodic mode a Pad Length of a few
@@ -29,7 +33,7 @@ test1 combined the open test branches:
 - The RESAMPLE start fix: a resampled take's START lands on its first sound
   ([RESAMPLE start fix](#resample-start-fix)).
 
-test2 has emulator verification only and is not in the patcher. The patcher's
+test3 has emulator verification only and is not in the patcher. The patcher's
 published option is still v9.43 (build v9.43-test3, APP1 SHA-256
 `f6b83372…a515`); its experimental option is the v9.44-test1 MIDI build.
 
@@ -94,6 +98,21 @@ Generator. The first note you play starts the take. test4 adds the kits:
   A take with a length in bars ends that many bars after it starts. REC does
   nothing on the Sound Generator page during a resample; EXIT goes back to the
   RESAMPLE screen with the take still armed or running.
+
+### Looper
+
+With MARK Function set to Looper, MARK opens the LOOPER screen. From there,
+stock SHIFT + RECORD SETTING opens the melodic Sound Generator, and REC on the
+Sound Generator screen records the loop (REC on, REC off). test3 adds the kits:
+
+- On the LOOPER screen, SHIFT + PATTERN EDIT opens the Sound Generator in drum
+  mode with the last kit. Stock does nothing with that chord there.
+- SHIFT + RECORD SETTING from the LOOPER screen still opens it melodic. Both
+  chords choose the machine when pressed, so the release order doesn't matter.
+- On the Sound Generator screen with the looper on, REC records the loop and
+  MARK goes back to the LOOPER screen, in kits as in melodic. That is stock
+  behaviour: REC goes to the looper before the Sound Generator's own REC, so no
+  imprint is armed.
 
 | Main display page | CTRL1 | CTRL2 | CTRL3 |
 | --- | --- | --- | --- |
@@ -464,16 +483,17 @@ python synth/build_start_fix.py out/kits-v946/SP404MKII_APP1.bin out/kits-v946-f
 ```
 
 A clean rebuild from stock 5.52 with these commands, followed by the RESAMPLE
-start fix stage, reproduces the v9.46-test2 APP1 (`e94b36f8…295b`, 3,094,544
-bytes). The kit stage alone gives `cf7f50ab…8131` (3,093,952 bytes). v9.46-test1
-(`e762c495…bcae`) rebuilds from commit `c8d584a`. Earlier
+start fix stage, reproduces the v9.46-test3 APP1 (`7b5fbcb4…684a`, 3,094,624
+bytes). The kit stage alone gives `88384c3c…92ba` (3,094,032 bytes). v9.46-test2
+(`e94b36f8…295b`) rebuilds from commit `17d3ca5` and v9.46-test1 (`e762c495…bcae`)
+from `c8d584a`. Earlier
 candidates rebuild the same way from their branches: v9.45-test1 (`claude/kits-
 bounce`), v9.44-test1 (`claude/kits-midi`), v9.43-test4 (`claude/kits-hot-
 resample`) and the published v9.43 (`b1c1b26`). The kit builder requires only
 the files in this repository. Patch sites retain exact-byte guards. Zero-filled
 module sections are packed into guarded scatter rows and reconstructed to verify
 the complete runtime image before writing APP1.
-Module: 156,672 bytes at run time (limit 319,488), 121,988 stored.
+Module: 156,752 bytes at run time (limit 319,488), 122,068 stored.
 
 MIDI reaches the module through four guarded jumps in the stock MIDI handlers,
 which both MIDI ports share through the table at 0x802091ec:
@@ -510,7 +530,7 @@ all-notes-off wrapper and left NOPs in its place, so choosing an imprint
 destination stopped redrawing the pads. The 14 stock bytes are written back
 behind an exact-byte guard.
 
-## Checks (v9.46-test2, emulator)
+## Checks (v9.46-test3, emulator)
 
 Drum REC length and BOUNC (`test_kit_bounce.py`). The built image is booted as
 for the MIDI checks below. The stock exporter runs for real: the v4 export
@@ -618,7 +638,7 @@ Generator code running for real:
   byte for byte. CC 123 releases MIDI notes, keeps pad notes and stops the arp
   in both modes. CC 120 fades out every voice.
 
-The kit checks below were run again on v9.46-test2:
+The kit checks below were run again on v9.46-test3:
 
 - 208 factory pad renders (13 kits × 16) match host/ARM sample for sample for
   3000 samples each, plus 108 control endpoint cases (TUNE, DECAY, TONE, SWEEP,
@@ -639,9 +659,16 @@ The kit checks below were run again on v9.46-test2:
 - Kit shortcuts switch machines with the keyboard flag on. With an imprint
   armed they change nothing: no machine switch, all-stop or cursor step.
 - Every sound renders finite, without DC offset or audible cut-off clicks.
-- Hot resample (test4, `test_kit_hot_resample.py`, 138 cases): key events go
-  through the stock dispatcher into the real RESAMPLE and Sound Generator key
-  handlers on the booted image. SHIFT + PATTERN EDIT on RESAMPLE opens the Sound
+- Hot resample and looper (`test_kit_hot_resample.py`, 165 cases): key events go
+  through the stock dispatcher into the real RESAMPLE, LOOPER and Sound Generator key
+  handlers on the booted image. On the LOOPER screen (test3), SHIFT + PATTERN
+  EDIT opens the Sound Generator in kits (the last kit) and SHIFT + RECORD
+  SETTING in melodic, from melodic or a kit and in every release order, each with
+  one machine switch; unshifted PATTERN EDIT and RECORD SETTING stay stock. On the
+  Sound Generator screen with the looper on, REC calls the looper's record toggle
+  and arms no imprint, and MARK requests the LOOPER screen, in kits and melodic.
+  On v9.43 the same harness shows SHIFT + PATTERN EDIT doing nothing on the
+  LOOPER screen. SHIFT + PATTERN EDIT on RESAMPLE opens the Sound
   Generator in drum mode exactly when stock SHIFT + RECORD SETTING opens it
   (recorder states 0–3, with and without a pad chosen), in every release order,
   posting no recorder command. With settings 0x36 = 1 and the recorder armed or

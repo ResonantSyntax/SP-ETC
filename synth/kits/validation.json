@@ -1,9 +1,9 @@
 {
-  "candidate": "v9.46-test2",
-  "app1_sha256": "e94b36f8cf29ffd9ccc9b5feb4ad880dc5b335931a0025c9ad10f99b331b295b",
-  "app1_bytes": 3094544,
-  "kit_stage_app1_sha256": "cf7f50ab9a073c565eec7161e03f7e85758af99b827082ca99acb9addaca8131",
-  "kit_stage_app1_bytes": 3093952,
+  "candidate": "v9.46-test3",
+  "app1_sha256": "7b5fbcb4c3ce1e8782fef4b5803be74c7d14eddf25a1b53682abe00c9ed3684a",
+  "app1_bytes": 3094624,
+  "kit_stage_app1_sha256": "88384c3c9760559e721c1a14973ef3a2ced6abf016572b0a73c5dfb0cef492ba",
+  "kit_stage_app1_bytes": 3094032,
   "start_fix_stage": {
     "revision": "resample-startfix-2",
     "blob_base": 2214522880,
@@ -20,9 +20,10 @@
     "claude/kits-hot-resample 856cc37 (v9.43-test4: hot resample with the kits)",
     "RESAMPLE start fix (synth/build_start_fix.py, resample-startfix-2)",
     "test2: the 1000-frame minimum (stock pad loader 0x800cfb20 refuses shorter samples): melodic REC in periods under it becomes the fewest whole periods that reach it; drum REC and BOUNC never shorter",
-    "test2: BOUNC asks once per bank with samples, FILL (default) or OVER, then SURE? (NO default)"
+    "test2: BOUNC asks once per bank with samples, FILL (default) or OVER, then SURE? (NO default)",
+    "test3: LOOPER page (0x27) SHIFT + PATTERN EDIT opens the SG in kits, SHIFT + RECORD SETTING in melodic (machine chosen at the press, release swallowed); SG REC with the looper on stays the looper toggle"
   ],
-  "notes": "Emulator checks only, run on the kit stage (APP1 cf7f50ab) except test_start_fix.py, which runs on the final image and checks that only the start-fix layer differs from the kit stage. The kit stage was built from the v9.6 parent rebuilt from stock with the documented commands. test_kit_bounce.py models the pad loader's 1000-frame minimum.",
+  "notes": "Emulator checks only, run on the kit stage (APP1 88384c3c) except test_start_fix.py, which runs on the final image and checks that only the start-fix layer differs from the kit stage. The kit stage was built from the v9.6 parent rebuilt from stock with the documented commands. test_kit_bounce.py models the pad loader's 1000-frame minimum.",
   "host_arm": {
     "schema": "kit-unicorn-check-v2",
     "passed": true,
@@ -95,9 +96,9 @@
     ],
     "pcm_bank_sha256": null,
     "pcm_flash_readonly": false,
-    "module_runtime_bytes": 156672,
-    "module_stored_bytes": 121988,
-    "module_reconstructed_sha256": "3b61c1e0a63d626c610e2d0061d0040070acab8d5d8cfc673f9398293a5d3d4b"
+    "module_runtime_bytes": 156752,
+    "module_stored_bytes": 122068,
+    "module_reconstructed_sha256": "666e86b2e139224bb9dfc3f8f343088ccc059a8c2b5a6d3588fb38430ef5b16a"
   },
   "capture": {
     "passed": true,
@@ -110,7 +111,7 @@
     "velocity_snapshot": true,
     "ui_selection_does_not_replace_last_strike": true,
     "melodic_capture_delegated": true,
-    "app1_sha256": "cf7f50ab9a073c565eec7161e03f7e85758af99b827082ca99acb9addaca8131"
+    "app1_sha256": "88384c3c9760559e721c1a14973ef3a2ced6abf016572b0a73c5dfb0cef492ba"
   },
   "chord_capture": {
     "passed": true,
@@ -144,7 +145,7 @@
       }
     },
     "outside_window_single": true,
-    "app1_sha256": "cf7f50ab9a073c565eec7161e03f7e85758af99b827082ca99acb9addaca8131"
+    "app1_sha256": "88384c3c9760559e721c1a14973ef3a2ced6abf016572b0a73c5dfb0cef492ba"
   },
   "shortcut_guard": {
     "keyboard_on": {
@@ -160,7 +161,7 @@
       "pattern_edit_to": 5
     },
     "passed": true,
-    "app1_sha256": "cf7f50ab9a073c565eec7161e03f7e85758af99b827082ca99acb9addaca8131"
+    "app1_sha256": "88384c3c9760559e721c1a14973ef3a2ced6abf016572b0a73c5dfb0cef492ba"
   },
   "midi": {
     "passed": true,
@@ -198,11 +199,11 @@
         "0x22"
       ]
     },
-    "app1_sha256": "cf7f50ab9a073c565eec7161e03f7e85758af99b827082ca99acb9addaca8131"
+    "app1_sha256": "88384c3c9760559e721c1a14973ef3a2ced6abf016572b0a73c5dfb0cef492ba"
   },
   "hot_resample": {
     "passed": true,
-    "cases": 138,
+    "cases": 165,
     "session": [
       "RESAMPLE armed; SHIFT+PATTERN EDIT: SG page, kit 6, take armed",
       "SHIFT+RECORD SETTING / SHIFT+PATTERN EDIT while armed: melodic, kits, nothing posted",
@@ -210,7 +211,24 @@
       "while recording: melodic and back to kits, nothing posted, still recording",
       "RESAMPLE: stock stop (0x18), TOP page"
     ],
-    "app1_sha256": "cf7f50ab9a073c565eec7161e03f7e85758af99b827082ca99acb9addaca8131"
+    "app1_sha256": "88384c3c9760559e721c1a14973ef3a2ced6abf016572b0a73c5dfb0cef492ba",
+    "looper": [
+      {
+        "start_mode": 0,
+        "rec": "looper record toggle (0x800c23c8)",
+        "mark": "LOOPER page"
+      },
+      {
+        "start_mode": 3,
+        "rec": "looper record toggle (0x800c23c8)",
+        "mark": "LOOPER page"
+      },
+      {
+        "start_mode": 6,
+        "rec": "looper record toggle (0x800c23c8)",
+        "mark": "LOOPER page"
+      }
+    ]
   },
   "clean_starts": {
     "passed": true,
@@ -223,7 +241,7 @@
     "pads": 64,
     "frames": 1024,
     "history_ms": 43,
-    "app1_sha256": "cf7f50ab9a073c565eec7161e03f7e85758af99b827082ca99acb9addaca8131",
+    "app1_sha256": "88384c3c9760559e721c1a14973ef3a2ced6abf016572b0a73c5dfb0cef492ba",
     "baseline": {
       "build": "v9.44-test1",
       "pads_that_differed": {
@@ -420,7 +438,7 @@
         "frames": 1090
       }
     },
-    "app1_sha256": "cf7f50ab9a073c565eec7161e03f7e85758af99b827082ca99acb9addaca8131"
+    "app1_sha256": "88384c3c9760559e721c1a14973ef3a2ced6abf016572b0a73c5dfb0cef492ba"
   },
   "start_fix": {
     "passed": true,

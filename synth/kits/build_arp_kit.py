@@ -10,7 +10,7 @@ import hashlib, importlib, json, os, re, shutil, struct, sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REVISION = "v9.46-test2"
+REVISION = "v9.46-test3"
 PCM_BANK_ADDRESS = 0x60376000
 PCM_FLASH_PLANNING_LIMIT = 0x60400000
 FLASH_BASE = 0x60080000
@@ -59,11 +59,24 @@ HOT_RESAMPLE_GUARDS = [
     # Page request (called by the RESAMPLE twin, as the stock jump does).
     (0x800DA598, 24, ["push {r4, lr}", "mov r4, r0", "cmp r0, #1", "bne #0x800da5b0", "bl #0x800d4a60", "cmp r0, #0",
                       "it ne", "popne {r4, pc}", "adr r0, #0x6c", "bl #0x800d31c6"]),
+    # LOOPER page (0x27) key handler: SHIFT + RECORD SETTING requests the SG page ...
+    (0x800819C0, 36, ["push.w {r4, r5, r6, r7, r8, lr}", "cmp r1, #0x18", "mov r4, r0", "beq #0x80081a0c",
+                      "mov r5, r1", "cmp r1, #0x16", "bne #0x800819e4", "movs r0, #0x2a", "bl #0x800d9f20",
+                      "cbz r0, #0x800819e4", "movs r0, #0x1e", "bl #0x800da598", "movs r0, #1",
+                      "pop.w {r4, r5, r6, r7, r8, pc}"]),
+    # ... and PATTERN EDIT does nothing there (its table case returns 1), so SHIFT + PATTERN EDIT is free.
+    (0x80081A94, 2, ["b #0x80081a04"]),
+    (0x80081A04, 6, ["movs r0, #1", "pop.w {r4, r5, r6, r7, r8, pc}"]),
+    # SG page REC with the looper on: the looper's record toggle (0x800c23c8), before the imprint path.
+    (0x8015C6B0, 22, ["movw r0, #0xb71c", "movt r0, #0x82e0", "ldrb.w r0, [r0, #0x210]", "cmp r0, #0",
+                      "beq.w #0x8015ca48", "movs r0, #0", "b #0x8015ca3a"]),
+    (0x8015CA3A, 8, ["movs r1, #0", "movs r2, #0", "bl #0x800c23c8"]),
 ]
 # Jump-table halfwords: RESAMPLE PATTERN EDIT -> default, RECORD SETTING -> 0x8012d6e0;
-# SG PATTERN SELECT, PATTERN EDIT, RECORD SETTING, PITCH/SPEED -> 0x8015c738.
+# SG PATTERN SELECT, PATTERN EDIT, RECORD SETTING, PITCH/SPEED -> 0x8015c738; SG REC -> 0x8015c6b0;
+# LOOPER PATTERN EDIT -> 0x80081a94.
 HOT_RESAMPLE_TABLE_GUARDS = [(0x8012D624, 0x58), (0x8012D626, 0x62), (0x8015C570, 0xE8), (0x8015C572, 0xE8),
-                             (0x8015C574, 0xE8), (0x8015C578, 0xE8)]
+                             (0x8015C574, 0xE8), (0x8015C578, 0xE8), (0x8015C57E, 0xA4), (0x80081A58, 0x23)]
 
 def sha(b): return hashlib.sha256(b).hexdigest()
 
@@ -448,7 +461,11 @@ def main():
         'resample_page':'Take armed or recording (the stock SHIFT + RECORD SETTING condition): SHIFT + PATTERN EDIT selects the last kit and requests the SG page (0x800da598), handled on press; its release is swallowed.',
         'stock_entry':'SHIFT + RECORD SETTING from the RESAMPLE page keeps the current machine (kit or melodic); its release is swallowed.',
         'sg_page':'Settings 0x36 = 1 and recorder state 1 or 2: the native press of SHIFT + PATTERN EDIT or SHIFT + RECORD SETTING is swallowed (no start or stop); the release switches machines. Unshifted presses keep the stock start/stop.',
-        'first_hit':'Unchanged stock: the first SG pad note in state 1 posts the start (0x8015c11c), in drum or melodic mode.'}
+        'first_hit':'Unchanged stock: the first SG pad note in state 1 posts the start (0x8015c11c), in drum or melodic mode.',
+        'looper_page':'LOOPER page (0x27): SHIFT + PATTERN EDIT (stock: nothing) selects the last kit and requests the SG page; '
+                      'SHIFT + RECORD SETTING selects melodic at the press, then the stock jump (0x800819d8) opens the SG page. '
+                      'Both releases are swallowed. On the SG page REC with the looper on stays the stock looper record '
+                      'toggle (0x800c23c8), ahead of the imprint path, in drum and melodic mode.'}
     # Override SHIFT only for the three stock SG knob-query callers.
     site=0x800d9f20;off=builder.file_offset(bytes(image),site,12)
     expected=bytes.fromhex('81b2542902d90020704700bf')

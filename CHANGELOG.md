@@ -2,6 +2,13 @@
 
 ## Synthesized kits v9.46 (test candidate, not yet in the patcher)
 
+test3 adds the kits to the looper. With MARK Function set to Looper, the
+LOOPER screen opened only the melodic Sound Generator (stock SHIFT + RECORD
+SETTING). SHIFT + PATTERN EDIT there now opens the kits with the last kit, and
+SHIFT + RECORD SETTING still opens melodic; both choose the machine at the press,
+whatever the release order. REC on the Sound Generator screen records the loop
+in kits mode as in melodic (stock behaviour, now checked in the emulator).
+
 test2 answers the first hardware report on test1:
 
 - Every recording loads. The SP's pad loader leaves a pad empty when its

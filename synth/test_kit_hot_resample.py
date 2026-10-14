@@ -35,10 +35,17 @@ Checks:
 4. A whole session: RESAMPLE, pick a pad, SHIFT + PATTERN EDIT, switch
    machines, the first kit hit posts the start, switch machines while
    recording, RESAMPLE stops.
+5. The looper (v9.46-test3). On the LOOPER page (0x27, the stock handler
+   0x800819c0): SHIFT + PATTERN EDIT opens the SG page in kits (the last kit)
+   and SHIFT + RECORD SETTING in melodic, in every release order, each with one
+   machine switch; unshifted PATTERN EDIT and RECORD SETTING stay stock. On the
+   SG page with the looper on, in kits and melodic: REC calls the looper's
+   record toggle (0x800c23c8) and arms no imprint, and MARK requests the
+   LOOPER page.
 
 With --baseline the same scenarios run on v9.43 and must show its faults:
-SHIFT + PATTERN EDIT does nothing on RESAMPLE, the SG chords start or stop
-the take at the press, and the stock chord forces melodic.
+SHIFT + PATTERN EDIT does nothing on RESAMPLE or LOOPER, the SG chords start
+or stop the take at the press, and the stock chord forces melodic.
 
 Usage: python synth/test_kit_hot_resample.py out/kits-v943-test4
        python synth/test_kit_hot_resample.py out/kits-v943 --baseline
@@ -56,15 +63,19 @@ from unicorn import arm_const as ar
 
 FLASH, COPY, DECOMPRESS, ZERO = 0x60080000, 0x600800E4, 0x60080088, 0x60080100
 RET, STACK, OBJ, VTABLE, EVENT = 0x3001F000, 0x30010000, 0x30004000, 0x30008000, 0x30009000
+NOP_FN, WIDGET_VTABLE = 0x3000A000, 0x3000B100   # the LOOPER page's widget, embedded at +0x1a6c
 PAGE, KEYS, KB, REC_STATE = 0x80245880, 0x80592448, 0x80591C48, 0x82E0E755
-TOP, RESAMPLE, SG = 0x01, 0x0E, 0x1E
+TOP, RESAMPLE, SG, LOOPER = 0x01, 0x0E, 0x1E, 0x27
 SHIFT, PATTERN_SELECT, PATTERN_EDIT, RECORD_SETTING, PITCH_SPEED, RESAMPLE_KEY = 42, 20, 21, 22, 24, 28
+MARK, REC = 25, 27
+LOOPER_OBJ = 0x82E0B71C                   # +0x39 looper running, +0x210 looper mode on (MARK Function = Looper)
 PRESS, RELEASE = 5, 6
 P_DEST, P_MODE, P_CURSOR = 0x1A, 0x36, 0x83
 DISPATCHER = 0x800A80A8                   # first 12 bytes jump to kit_shortcut_gate
 KEY_GETTER = 0x800D9F20                   # jumps to kit_ui_key_gate
 SG_PAD = 0x8015BF90
-HANDLERS = {RESAMPLE: (0x8012D5F0, 0x8012CF60), SG: (0x8015C550, 0x8015BF78)}   # key press, release
+HANDLERS = {RESAMPLE: (0x8012D5F0, 0x8012CF60), SG: (0x8015C550, 0x8015BF78),   # key press, release
+            LOOPER: (0x800819C0, 0x80081428)}
 # address: (name, value returned in r0)
 STUBS = {
     0x800E25C0: ('post', 0), 0x800DA598: ('page_request', 0), 0x6031C9A8: ('doom_page_request', 0),
@@ -74,6 +85,7 @@ STUBS = {
     0x800CE420: ('modal', 0), 0x800C3E68: ('pad_mode', 0), 0x800BD8D0: ('stock', 0), 0x800E11D0: ('stock', 0),
     0x800DD030: ('stock', 0), 0x800BB128: ('stock', -1), 0x800BB110: ('stock', -1), 0x800DED18: ('stock', 0),
     0x800DDA38: ('stock', 0), 0x800E1180: ('stock', 0), 0x800D8C88: ('stock', 0), 0x800D31EE: ('stock', 0),
+    0x800C23C8: ('looper_rec', 0),        # the looper's record toggle (SG page REC with the looper on)
 }
 LAST_KIT = 6                              # TR909, chosen before each scenario
 
@@ -120,6 +132,8 @@ class Machine:
         uc.reg_write(ar.UC_ARM_REG_C1_C0_2, uc.reg_read(ar.UC_ARM_REG_C1_C0_2) | (0xF << 20))
         uc.reg_write(ar.UC_ARM_REG_FPEXC, 0x40000000)
         uc.mem_write(RET, b'\x00\xbf\x00\xbf')
+        uc.mem_write(NOP_FN, b'\x70\x47')                              # bx lr: the widget's methods do nothing
+        uc.mem_write(WIDGET_VTABLE, struct.pack('<64I', *([NOP_FN | 1] * 64)))
         self.log, self.queue, self.requested = [], [], None
         self.settings = {P_DEST: -1, P_MODE: 0, P_CURSOR: 0}
         for address, (name, value) in STUBS.items():
@@ -149,6 +163,8 @@ class Machine:
             self.settings[r[1]] = self.settings.get(r[1], 0) + signed[2]
         elif name in ('release_all', 'note'):
             self.log.append((name,))
+        elif name == 'looper_rec':
+            self.log.append((name, r[0], r[1], r[2]))
         uc.reg_write(ar.UC_ARM_REG_R0, value & 0xFFFFFFFF)
         uc.reg_write(ar.UC_ARM_REG_PC, uc.reg_read(ar.UC_ARM_REG_LR))
 
@@ -189,6 +205,7 @@ class Machine:
         self.put(OBJ, VTABLE, '<I')
         self.put(VTABLE + 0x18, press | 1, '<I')
         self.put(VTABLE + 0x1C, release | 1, '<I')
+        self.put(OBJ + 0x1A6C, WIDGET_VTABLE if value == LOOPER else 0, '<I')
 
     @property
     def current(self):
@@ -469,6 +486,74 @@ class Suite:
         return steps
 
 
+    # 5. The looper (MARK with MARK Function = Looper)
+    def looper(self):
+        """LOOPER page: SHIFT + PATTERN EDIT opens the SG page in kits, SHIFT + RECORD SETTING in melodic,
+        whatever the release order; unshifted keys stay stock. SG page with the looper on: REC is the
+        looper's record toggle and MARK goes back to the LOOPER page, in kits as in melodic."""
+        out = dict(chords=[], unshifted=[], sg_page=[])
+        for start in (0, 3, LAST_KIT):
+            for key in (PATTERN_EDIT, RECORD_SETTING):
+                for order in ('key_first', 'shift_first', 'release_after_switch'):
+                    m = self.machine(LOOPER, start)
+                    m.put(LOOPER_OBJ + 0x210, 1, '<B')
+                    m.put(LOOPER_OBJ + 0x39, 1, '<B')
+                    m.press(SHIFT)
+                    m.press(key)
+                    pressed = dict(requests=m.requests(), mode=m.mode)
+                    if order == 'release_after_switch':
+                        m.settle(); m.poll()
+                    if order == 'shift_first':
+                        m.release(SHIFT); m.release(key)
+                    else:
+                        m.release(key); m.release(SHIFT)
+                    m.settle(); m.poll()
+                    if key == PATTERN_EDIT and self.baseline:
+                        check(pressed['requests'] == [] and m.requests() == [] and m.mode == start and
+                              m.current == LOOPER, ('baseline LOOPER: SHIFT+PATTERN EDIT should do nothing',
+                                                    start, order, m.log))
+                        mode = 'nothing'
+                    elif not self.baseline:
+                        want = (start if start else LAST_KIT) if key == PATTERN_EDIT else 0
+                        check(pressed['requests'] == [SG] and pressed['mode'] == want and m.requests() == [SG] and
+                              m.current == SG and m.mode == want and m.count('release_all') == 1 and
+                              not m.posts() and m.count('looper_rec') == 0,
+                              ('LOOPER chord', start, key, order, pressed, m.mode, m.log))
+                        mode = 'kits' if want else 'melodic'
+                    else:
+                        continue                         # baseline SHIFT + RECORD SETTING: release-order dependent
+                    out['chords'].append(dict(start_mode=start, key=key, order=order, sg_mode=mode))
+                    self.cases += 1
+            for key in (PATTERN_EDIT, RECORD_SETTING):
+                m = self.machine(LOOPER, start)
+                m.put(LOOPER_OBJ + 0x210, 1, '<B')
+                m.press(key); m.release(key)
+                m.settle(); m.poll()
+                check(m.requests() == [] and m.mode == start and m.current == LOOPER and m.count('release_all') == 0,
+                      ('unshifted key on LOOPER must stay stock', start, key, m.log))
+                out['unshifted'].append(dict(start_mode=start, key=key, result='nothing'))
+                self.cases += 1
+            # SG page with the looper on: REC toggles the looper's recording (no imprint), MARK opens LOOPER.
+            m = self.machine(SG, start)
+            m.put(LOOPER_OBJ + 0x210, 1, '<B')
+            m.put(LOOPER_OBJ + 0x39, 1, '<B')
+            captures = m.get(self.S('kit_capture_count'), '<I') if not self.baseline else 0
+            m.press(REC); m.release(REC)
+            rec = [x[1:] for x in m.log if x[0] == 'looper_rec']
+            check(rec == [(0, 0, 0)] and m.get(KB, '<B') == 1 and m.mode == start and
+                  (self.baseline or m.get(self.S('kit_capture_count'), '<I') == captures),
+                  ('SG REC with the looper on must be the looper toggle', start, m.log))
+            m.mark()
+            m.press(MARK); m.release(MARK)
+            check(m.requests() == [LOOPER] and m.mode == start, ('SG MARK with the looper on', start, m.log))
+            out['sg_page'].append(dict(start_mode=start, rec='looper record toggle (0x800c23c8)', mark='LOOPER page'))
+            self.cases += 1
+        return out
+
+    def S(self, name):
+        return self.man['arp_symbols'][name]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('build', type=Path)
@@ -476,7 +561,7 @@ def main():
     args = parser.parse_args()
     suite = Suite(args.build.resolve(), args.baseline)
     report = dict(resample_page=suite.resample_twin(), sg_page_chords=suite.sg_chords(),
-                  stock_entry_chord=suite.stock_entry())
+                  stock_entry_chord=suite.stock_entry(), looper=suite.looper())
     if not args.baseline:
         report.update(sg_stock_keys=suite.sg_stock_keys(), session=suite.session())
     report.update(cases=suite.cases, passed=True, baseline=args.baseline, app1_sha256=suite.man['sha256'],
