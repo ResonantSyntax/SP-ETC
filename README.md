@@ -47,12 +47,47 @@ New in v9.46:
 - **Clean starts:** UDS, MP-7, TR-707 and TR-727 hits start their noise filters
   at rest, so the same pad sounds the same every time.
 
-v9.46 is build v9.46-test3 plus the RESAMPLE start fix. Its test builds were
-partly played on hardware (drum REC, BOUNC and the looper), and those reports
-shaped the release. MIDI, hot resample and the start fix have no hardware report
-yet, and the last changes (the 21 ms minimum, the BOUNC questions, the looper
-shortcut) are checked in the emulator only. CPU headroom under heavy use is not
-yet measured on a device.
+### Using the kits (v9.46)
+
+| Control | In drum mode |
+|---|---|
+| SHIFT + PATTERN EDIT | Open the kits with the last kit used |
+| SHIFT + RECORD SETTING | Back to the melodic Sound Generator |
+| CTRL1 / CTRL2 / CTRL3 | Tune (±12 semitones) / Decay / Tone |
+| Tap SHIFT, then CTRL1–3 | Sweep / Noise / Attack; tap SHIFT again to go back |
+| Hold a pad, turn VALUE | Step through that machine's sounds |
+| VALUE menu | ARP, RATE, HOLD, BPM (a readout), KIT, PAD, SOUND, LEVEL, M.CH, BOUNC |
+
+Tune at 0 and the other knobs at 50 play the machine's own sound. Kit edits
+reset at power-on.
+
+- **Record a drum:** play, press REC, pick an empty pad (it blinks), press REC
+  again. It records the last pad you hit plus up to three others hit within
+  100 ms before it, each with its own timing and velocity, until the last one
+  has rung out (21 ms to 10 s). You don't need to hold the pads.
+- **Bounce a kit into a bank:** turn VALUE to BOUNC, press VALUE, turn to a bank
+  (A–J), press VALUE. An empty bank fills at once. A bank with samples asks FILL
+  (keep them, fill the empty pads) or OVER (replace them all), then SURE?: NO
+  writes nothing, YES starts. The value counts the pads and shows DONE. EXIT
+  stops a bounce; the pads already written stay.
+- **Resample the kits:** press RESAMPLE, pick an empty pad, then SHIFT + PATTERN
+  EDIT. The kits open with the take armed, and the first hit starts it. RESAMPLE
+  stops it. SHIFT + RECORD SETTING on the RESAMPLE screen opens the Sound
+  Generator as you left it.
+- **Loop the kits:** set MARK Function to Looper, press MARK, then SHIFT +
+  PATTERN EDIT on the LOOPER screen. REC starts and stops the loop recording,
+  and MARK goes back to the LOOPER screen. SHIFT + RECORD SETTING there opens the
+  melodic Sound Generator.
+- **Sequence over MIDI:** set M.CH in the VALUE menu to a free channel, such as
+  11. Notes 36–51 play pads 1–16. Each pad has Tune, Decay and Level CCs (pads
+  1–4: 20–31, pads 5–12: 40–63, pads 13–16: 102–113); the last pad heard takes
+  Tone 114, Sweep 115, Noise 116 and Attack 117. Melodic mode: TYPE 70, FREQ 71,
+  LEVEL 72, DUTY 73, BALANCE 74, ENV 75, TUNE 76. Arp: ARP 33, RATE 34, A.OCT
+  35, HOLD 36. CC 123 lets go of MIDI notes and stops the arp; CC 120 also fades
+  every voice. [Full note map and CC chart](synth/KITS_MIDI.md).
+- **Resampled takes start on time:** in this build a take made on the RESAMPLE
+  screen starts on its first sound. Only START moves, so you can pull it back
+  in sample edit.
 
 ## What this mod adds
 
@@ -164,6 +199,15 @@ You can also download this repository as a ZIP file (under the Code button), unz
 To go back to the original firmware, just run the updater with the original Roland firmware.
 
 ## Status
+
+**Kits v9.46** (2026-10-13) is build v9.46-test3 plus the RESAMPLE start fix
+(APP1 SHA-256 `7b5fbcb4…684a`). Its test builds were partly played on hardware
+(drum REC, BOUNC and the looper), and those reports shaped the release. MIDI,
+resampling with the kits and the start fix have no hardware report yet, and the
+last changes (the 21 ms minimum, the BOUNC questions, the looper shortcut) are
+checked in the emulator only, where every kit suite, the start-fix test and the
+patcher test pass. CPU headroom under heavy use is not yet measured on a device.
+[Kit test status](synth/KITS.md).
 
 **v9.9.3** (2026-10-07) fixes the reproduced BANK-tempo mismatch: the arp
 now uses the active sample bank, matching the normal TEMPO SEL screen. v9.9.2

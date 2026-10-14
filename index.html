@@ -203,6 +203,19 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
         <p class="t">Works with stock firmware <strong data-doomos="firmware-list"></strong>. Tick one build: Sound Generator (v9.9.3) or Sound Generator + Kits (v9.46). Both start unticked.</p>
         <div id="doomos-patcher"></div>
         <p class="t">Our <a class="inline" href="https://github.com/tracelistener/doom-os-etc./blob/main/synth/ARP.md">arpeggiator notes and test instructions</a> · <a class="inline" href="https://github.com/tracelistener/doom-os-etc./blob/main/synth/KITS.md">kit controls and test status</a> · <a class="inline" href="https://github.com/tracelistener/doom-os-etc./blob/main/synth/SCALES.md">v9.6 scales and fixes</a> · <a class="inline" href="https://github.com/tracelistener/doom-os-etc./blob/main/synth/WAVES.md">wave list</a> · <a class="inline" href="https://github.com/tracelistener/doom-os-etc.">source code</a> · <a class="inline" href="https://tracelistener.github.io/sp404mk2-sound-generator/">Wave Lab preview</a></p>
+        <details class="env-guide" open>
+          <summary>What's new in Kits v9.46</summary>
+          <ul>
+            <li><strong>MIDI:</strong> sequence the kits and the melodic Sound Generator from a DAW or a hardware sequencer. Notes 36&ndash;51 play pads 1&ndash;16, the M.CH menu item sets the channel, CCs reach every kit and synth parameter, and CC 123/120 stop hung notes. See the MIDI guide below.</li>
+            <li><strong>BOUNC:</strong> write the current kit, with each pad's own Tune, Decay, Tone, Sweep, Noise, Attack and Level, into the 16 pads of a sample bank. A bank that has samples asks FILL (keep them, fill the empty pads) or OVER (replace them all), then SURE?.</li>
+            <li><strong>Drum REC length:</strong> a drum recording runs until its drums have rung out, up to 10 s. The melodic Pad Length no longer cuts it to a blip.</li>
+            <li><strong>Every recording loads:</strong> the SP leaves a pad empty when its sample is shorter than 21 ms. Drum recordings are never shorter now, and a melodic Pad Length of a few cycles of a high note records the fewest whole cycles that reach 21 ms instead of nothing.</li>
+            <li><strong>Resample and looper:</strong> SHIFT + PATTERN EDIT opens the kits from the RESAMPLE screen while a take is armed, and from the LOOPER screen. With the looper on, REC on the Sound Generator screen records the loop in kits mode as in melodic.</li>
+            <li><strong>RESAMPLE start fix:</strong> a resampled take starts on its first sound instead of a few milliseconds of silence from the trip through the effects. Only START moves; the audio is untouched.</li>
+            <li><strong>Clean starts:</strong> UDS, MP-7, TR-707 and TR-727 hits start their noise filters at rest, so a pad sounds the same every time.</li>
+          </ul>
+          <p class="t">Its test builds were partly played on hardware (drum REC, BOUNC and the looper). MIDI, resampling with the kits and the start fix have no hardware report yet, and the newest changes are checked in the emulator only. Keep your known-good update at hand.</p>
+        </details>
         <details class="env-guide">
           <summary>Envelope preset guide (ENV)</summary>
           <p class="t">In Sound Generator, choose ENV, then play a new note to hear the selected preset. Each voice takes its envelope when the note starts. Presets work on stock and added waves, four-voice playback and held-chord REC.</p>
