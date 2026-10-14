@@ -21,16 +21,17 @@ now emits v9.9.3, with 71 emulator checks passing on the exact build; v9.9.3
 hardware testing and real-time CPU headroom remain pending. The v9.6 and v9.5
 builders remain for reproduction.
 
-## Optional synthesized kits v9.46
+## Synthesized kits v9.46
 
-The patcher now also offers Sound Generator + Kits v9.46, including thirteen
+The patcher builds Sound Generator + Kits v9.46, with nothing to choose. It
+includes thirteen
 modeled/original machines, direct kit entry, tap-SHIFT pages and separate mode
 menus, external MIDI ([KITS_MIDI.md](KITS_MIDI.md)), BOUNC (a kit into a sample
 bank), drum REC at each drum's own length, the kits on the RESAMPLE and LOOPER
 screens and the RESAMPLE start fix. KIT cannot select OFF; use SHIFT+RECORD
 SETTING for melodic entry. [Controls, exact digest, standalone build and
-limits](KITS.md). The existing v9.9.3 option and unchecked base build remain
-available.
+limits](KITS.md). The v9.9.3 option and the base build without synth additions
+are no longer offered; v9.9.3 is the Sound Generator inside v9.46.
 
 ## What is included
 
@@ -65,10 +66,9 @@ stability still need device testing.
    this fork's additions.
 3. Supply the **unmodified stock 5.52 `SP404MKII_APP1.bin`**, not our v4 binary
    or an existing DOOM image.
-4. Select “Sound Generator v9.9.3” for the combined build.
-   The v9.9.3 and v9.46 kit options are OFF by default. It includes both polyphony and all
-   17 new waves with v8's raw-grit sound, envelopes and voice stealing. Unselected, it
-   produces the exact original ED5E image instead.
+4. Press Patch firmware. The patcher builds Sound Generator + Kits v9.46: polyphony,
+   all 17 new waves with v8's raw-grit sound, envelopes, voice stealing, scales, the
+   arpeggiator and the kits.
 5. Patch and download. Stock, DOOM and combined SHA-256 checks are performed
    locally; the browser does not upload your firmware.
 

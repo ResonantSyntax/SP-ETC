@@ -1,6 +1,6 @@
 # Synthesized machine kits v9.46
 
-The patcher's **Sound Generator + Kits** option produces v9.46: build
+The patcher builds **Sound Generator + Kits** v9.46, with nothing to choose: build
 v9.46-test3 plus the RESAMPLE start fix, APP1 SHA-256 `7b5fbcb4…684a`
 (3,094,624 bytes). It replaces v9.43 (build v9.43-test3, `f6b83372…a515`) and
 the experimental v9.44-test1 MIDI build, whose MIDI it includes.
@@ -47,10 +47,9 @@ references. v9.43's test1 and test2 were played on hardware; test2 answered the
 first report (kick level, FM kick and bells, recording struck drums together,
 the REC destination pad blink) and test3 trimmed the drum VALUE menu.
 
-Select **Sound Generator + Kits** in the patcher. This separate option
-includes the melodic generator and shared arpeggiator. Both browser choices
-start unchecked; choosing one deselects the other. Firmware processing stays
-local in your browser. The patcher produces APP1 only; APP0 remains stock.
+The patcher builds only this firmware: drop in the stock APP1 and press Patch.
+It includes the melodic generator and shared arpeggiator. Firmware processing
+stays local in your browser. The patcher produces APP1 only; APP0 remains stock.
 
 ## Open and play
 

@@ -2,11 +2,12 @@
 
 **[Open the patcher](https://tracelistener.github.io/doom-os-etc./)**
 
-Sound Generator **v9.9.3** adds four live voices, 17 new waveforms, nine
-volume/filter-envelope presets, 34 scale choices and an arpeggiator to the SP-404MKII. Firmware processing happens
-locally in your browser; nothing is uploaded. Choose the existing Sound Generator option or **Sound Generator + Kits v9.46**
-for thirteen synthesized machine kits. Both start unchecked; no selection produces
-the base build. [Kit controls, reproduction and validation](synth/KITS.md).
+The patcher builds **Sound Generator + Kits v9.46** for the SP-404MKII:
+Sound Generator **v9.9.3** (four live voices, 17 new waveforms, nine
+volume/filter-envelope presets, 34 scale choices and an arpeggiator) plus
+thirteen synthesized machine kits. Drop in the stock firmware and press Patch;
+there is nothing to choose. Firmware processing happens locally in your browser;
+nothing is uploaded. [Kit controls, reproduction and validation](synth/KITS.md).
 
 ## Synthesized kits v9.46
 
@@ -191,7 +192,7 @@ You can also download this repository as a ZIP file (under the Code button), unz
 ### Manual installation
 
 1. Download the 5.52 system update from [Roland's support page](https://www.roland.com/global/support/by_product/sp-404mk2/updates_drivers/) and unzip it.
-2. Open [our patcher](https://tracelistener.github.io/doom-os-etc./) and load the stock `SP404MKII_APP1.bin`. Select Sound Generator for v9.9.3, or Sound Generator + Kits for v9.46 with the thirteen machine kits and mode/UI fixes. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
+2. Open [our patcher](https://tracelistener.github.io/doom-os-etc./), load the stock `SP404MKII_APP1.bin` and press Patch firmware. It builds Sound Generator + Kits v9.46. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
 3. Download the patched `SP404MKII_APP1.bin` and use it with the unchanged official 5.52 `SP404MKII_APP0.bin` for your test update. Back up first and keep your known-good update for rollback.
 4. Insert the card, hold **SHIFT** while you turn the SP on, and press the **VALUE** knob when the update menu appears.
 5. When the update is done, turn the SP off and on again.
@@ -220,8 +221,9 @@ all 100 active/dialog bank combinations. The build reproduces byte-for-byte;
 with ARP OFF it plays bit-identically to v9.6 in the emulator. Earlier builds
 had hardware reports confirming menu layout, step timing and PROJECT tempo.
 The exact v9.9.3 build is not yet hardware-tested; CPU headroom remains
-unmeasured. This remains experimental; four loud voices can clip. Browser
-output is checked against the exact tested APP1 hash; APP0 stays unchanged stock.
+unmeasured. This remains experimental; four loud voices can clip. The patcher
+no longer offers v9.9.3 on its own: it is the Sound Generator inside Kits v9.46.
+APP0 stays unchanged stock.
 
 See [the arpeggiator notes](synth/ARP.md), [the v9.6 scale changes](synth/SCALES.md),
 [the wave list](synth/WAVES.md) and [integration notes](synth/README.md).
