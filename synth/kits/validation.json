@@ -1,9 +1,9 @@
 {
-  "candidate": "v9.46-test1",
-  "app1_sha256": "e762c495fbbd4d933008ae207e67890238f67070a8a0008402a284e77a0ebcae",
-  "app1_bytes": 3093840,
-  "kit_stage_app1_sha256": "cebc905c1b4969f0367b400c7a9e40f2ff0a9a330657243377090b5d3617734f",
-  "kit_stage_app1_bytes": 3093248,
+  "candidate": "v9.46-test2",
+  "app1_sha256": "e94b36f8cf29ffd9ccc9b5feb4ad880dc5b335931a0025c9ad10f99b331b295b",
+  "app1_bytes": 3094544,
+  "kit_stage_app1_sha256": "cf7f50ab9a073c565eec7161e03f7e85758af99b827082ca99acb9addaca8131",
+  "kit_stage_app1_bytes": 3093952,
   "start_fix_stage": {
     "revision": "resample-startfix-2",
     "blob_base": 2214522880,
@@ -18,9 +18,11 @@
   "combines": [
     "claude/kits-bounce d62d34f (v9.45-test1: BOUNC, drum REC length, clean starts; on v9.44-test1 MIDI)",
     "claude/kits-hot-resample 856cc37 (v9.43-test4: hot resample with the kits)",
-    "RESAMPLE start fix (synth/build_start_fix.py, resample-startfix-2)"
+    "RESAMPLE start fix (synth/build_start_fix.py, resample-startfix-2)",
+    "test2: the 1000-frame minimum (stock pad loader 0x800cfb20 refuses shorter samples): melodic REC in periods under it becomes the fewest whole periods that reach it; drum REC and BOUNC never shorter",
+    "test2: BOUNC asks once per bank with samples, FILL (default) or OVER, then SURE? (NO default)"
   ],
-  "notes": "Emulator checks only, run on the kit stage (APP1 cebc905c) except test_start_fix.py, which runs on the final image and checks that only the start-fix layer differs from the kit stage. The kit stage was built from the v9.6 parent rebuilt from stock with the documented commands.",
+  "notes": "Emulator checks only, run on the kit stage (APP1 cf7f50ab) except test_start_fix.py, which runs on the final image and checks that only the start-fix layer differs from the kit stage. The kit stage was built from the v9.6 parent rebuilt from stock with the documented commands. test_kit_bounce.py models the pad loader's 1000-frame minimum.",
   "host_arm": {
     "schema": "kit-unicorn-check-v2",
     "passed": true,
@@ -93,22 +95,22 @@
     ],
     "pcm_bank_sha256": null,
     "pcm_flash_readonly": false,
-    "module_runtime_bytes": 155968,
-    "module_stored_bytes": 121284,
-    "module_reconstructed_sha256": "c29cbd243b06f7db629044317e3881f73b88fb023321d449b69abd7a2e374925"
+    "module_runtime_bytes": 156672,
+    "module_stored_bytes": 121988,
+    "module_reconstructed_sha256": "3b61c1e0a63d626c610e2d0061d0040070acab8d5d8cfc673f9398293a5d3d4b"
   },
   "capture": {
     "passed": true,
     "released_pad_cases": 208,
     "ring_out_frames": [
-      756,
+      1000,
       417016
     ],
     "melodic_keeps_pad_length": true,
     "velocity_snapshot": true,
     "ui_selection_does_not_replace_last_strike": true,
     "melodic_capture_delegated": true,
-    "app1_sha256": "cebc905c1b4969f0367b400c7a9e40f2ff0a9a330657243377090b5d3617734f"
+    "app1_sha256": "cf7f50ab9a073c565eec7161e03f7e85758af99b827082ca99acb9addaca8131"
   },
   "chord_capture": {
     "passed": true,
@@ -142,7 +144,7 @@
       }
     },
     "outside_window_single": true,
-    "app1_sha256": "cebc905c1b4969f0367b400c7a9e40f2ff0a9a330657243377090b5d3617734f"
+    "app1_sha256": "cf7f50ab9a073c565eec7161e03f7e85758af99b827082ca99acb9addaca8131"
   },
   "shortcut_guard": {
     "keyboard_on": {
@@ -158,7 +160,7 @@
       "pattern_edit_to": 5
     },
     "passed": true,
-    "app1_sha256": "cebc905c1b4969f0367b400c7a9e40f2ff0a9a330657243377090b5d3617734f"
+    "app1_sha256": "cf7f50ab9a073c565eec7161e03f7e85758af99b827082ca99acb9addaca8131"
   },
   "midi": {
     "passed": true,
@@ -196,7 +198,7 @@
         "0x22"
       ]
     },
-    "app1_sha256": "cebc905c1b4969f0367b400c7a9e40f2ff0a9a330657243377090b5d3617734f"
+    "app1_sha256": "cf7f50ab9a073c565eec7161e03f7e85758af99b827082ca99acb9addaca8131"
   },
   "hot_resample": {
     "passed": true,
@@ -208,7 +210,7 @@
       "while recording: melodic and back to kits, nothing posted, still recording",
       "RESAMPLE: stock stop (0x18), TOP page"
     ],
-    "app1_sha256": "cebc905c1b4969f0367b400c7a9e40f2ff0a9a330657243377090b5d3617734f"
+    "app1_sha256": "cf7f50ab9a073c565eec7161e03f7e85758af99b827082ca99acb9addaca8131"
   },
   "clean_starts": {
     "passed": true,
@@ -221,7 +223,7 @@
     "pads": 64,
     "frames": 1024,
     "history_ms": 43,
-    "app1_sha256": "cebc905c1b4969f0367b400c7a9e40f2ff0a9a330657243377090b5d3617734f",
+    "app1_sha256": "cf7f50ab9a073c565eec7161e03f7e85758af99b827082ca99acb9addaca8131",
     "baseline": {
       "build": "v9.44-test1",
       "pads_that_differed": {
@@ -302,10 +304,11 @@
     "passed": true,
     "factory_pads": 208,
     "tweaked_pads": 64,
-    "ring_out_frames": [
-      756,
+    "frames": [
+      1000,
       417016
     ],
+    "minimum_frames": 1000,
     "flow_checks": [
       "audio",
       "bank_value",
@@ -323,7 +326,101 @@
       "rec_melodic",
       "baseline"
     ],
-    "app1_sha256": "cebc905c1b4969f0367b400c7a9e40f2ff0a9a330657243377090b5d3617734f"
+    "questions": {
+      "question": "BNK-C FILL (default) or OVER, then SURE? NO (default) or YES",
+      "fill_written": 13,
+      "fill_kept_untouched": [
+        4,
+        8,
+        13
+      ],
+      "no_writes_nothing": true,
+      "over_written": 16,
+      "over_old_file_deleted_first": true
+    },
+    "rec_keys": {
+      "pad_lengths": [
+        -8,
+        -1,
+        0,
+        4
+      ],
+      "identical": true,
+      "frames": 47141,
+      "seconds": 0.982,
+      "whole_kick": "ring-out, as the longer REC shows",
+      "v9.44_at_-8": {
+        "frames": 462,
+        "refused_by_the_loader": true
+      }
+    },
+    "rec_silent": {
+      "frames": 1000,
+      "all_zero": true
+    },
+    "rec_melodic_lengthened": {
+      "33/-5": {
+        "stock": 872,
+        "frames": 1090,
+        "periods": 9.992
+      },
+      "33/-6": {
+        "stock": 436,
+        "frames": 1090,
+        "periods": 9.992
+      },
+      "33/-7": {
+        "stock": 218,
+        "frames": 1090,
+        "periods": 9.992
+      },
+      "33/-8": {
+        "stock": 109,
+        "frames": 1090,
+        "periods": 9.992
+      },
+      "9/-7": {
+        "stock": 872,
+        "frames": 1309,
+        "periods": 3.0
+      },
+      "9/-8": {
+        "stock": 436,
+        "frames": 1309,
+        "periods": 3.0
+      },
+      "57/-3": {
+        "stock": 872,
+        "frames": 1009,
+        "periods": 36.997
+      },
+      "57/-8": {
+        "stock": 27,
+        "frames": 1009,
+        "periods": 36.997
+      },
+      "69/-2": {
+        "stock": 872,
+        "frames": 1009,
+        "periods": 73.993
+      }
+    },
+    "baseline": {
+      "build": "v9.44-test1",
+      "drum_recs_same_audio": 28,
+      "melodic_recs_identical": 4,
+      "melodic_pad_lengths": [
+        1,
+        4,
+        -1,
+        -4
+      ],
+      "one_cycle_a4": {
+        "v9_44": "refused by the loader",
+        "frames": 1090
+      }
+    },
+    "app1_sha256": "cf7f50ab9a073c565eec7161e03f7e85758af99b827082ca99acb9addaca8131"
   },
   "start_fix": {
     "passed": true,

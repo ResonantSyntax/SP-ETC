@@ -1,7 +1,20 @@
 # Synthesized machine kits v9.46 (test candidate)
 
-This branch carries the v9.46-test1 kit candidate, one test build that combines
-the open test branches:
+This branch carries the v9.46-test2 kit candidate. test2 answers the first
+hardware report on test1:
+
+- Every recording loads. The SP's pad loader leaves a pad empty when its sample
+  is shorter than 1,000 frames (21 ms). In melodic mode a Pad Length of a few
+  waveform cycles of a high enough note fell under that, so REC saved nothing.
+  Such a recording now becomes the fewest whole cycles that reach 1,000 frames
+  ([Shortest sample](#shortest-sample)). A drum recording is never shorter
+  either.
+- BOUNC into a bank that has samples asks once for the whole bank: FILL keeps
+  them and fills the empty pads, OVER replaces them all. SURE? then confirms
+  ([Bounce a kit into a bank](#bounce-a-kit-into-a-bank)). test1 asked about
+  each used pad.
+
+test1 combined the open test branches:
 
 - v9.45-test1: BOUNC writes the current kit's sixteen pads, with their settings,
   into the sixteen pads of a sample bank ([Bounce a kit into a
@@ -16,7 +29,7 @@ the open test branches:
 - The RESAMPLE start fix: a resampled take's START lands on its first sound
   ([RESAMPLE start fix](#resample-start-fix)).
 
-test1 has emulator verification only and is not in the patcher. The patcher's
+test2 has emulator verification only and is not in the patcher. The patcher's
 published option is still v9.43 (build v9.43-test3, APP1 SHA-256
 `f6b83372…a515`); its experimental option is the v9.44-test1 MIDI build.
 
@@ -49,10 +62,11 @@ local in your browser. The patcher produces APP1 only; APP0 remains stock.
   second REC press imprints it, as in the stock firmware (melodic and drum mode).
   The two kit shortcuts do nothing between those presses.
 - A drum recording ends where the last of its drums has rung out (60 dB below
-  its own peak, at most 10 s). The melodic Pad Length no longer applies in
-  drum mode; melodic REC uses it as before. In v9.43 and v9.44-test1 a drum
-  REC took the melodic Pad Length, which drum mode doesn't show, so a
-  waveform-cycle value there saved only a few milliseconds.
+  its own peak, at least 21 ms, at most 10 s). The melodic Pad Length no longer
+  applies in drum mode; melodic REC uses it as before. In v9.43 and v9.44-test1
+  a drum REC took the melodic Pad Length, which drum mode doesn't show, so a
+  waveform-cycle value there saved only a few milliseconds, which the SP then
+  refused to load: the pad stayed empty.
 - Strike a pad to select it. Hold a pad and turn VALUE outside menu edit mode
   to choose a sound from that machine's inventory.
 - KIT stays between TR808 and TR727. Turning beyond either end keeps that kit.
@@ -122,12 +136,15 @@ Tone, Sweep, Noise, Attack and Level, so a kit dialled in on the synth becomes a
 normal sample kit. BOUNC is not in the melodic menu.
 
 1. Turn VALUE to BOUNC (it shows --) and press VALUE.
-2. Turn to a bank, A–J, and press VALUE again.
-3. Pads of that bank that are empty are filled. A pad that already holds a
-   sample is asked about first, one pad at a time. The item shows the pad (B-3
-   is bank B, pad 3) and KEEP. Turn VALUE right for OVER (replace it) or left
-   for KEEP, then press VALUE for the next pad. After the last answer the
-   bounce starts.
+2. Turn to a bank, A–J, and press VALUE again. An empty bank is filled at once.
+3. If pads of that bank already hold samples, the item asks once for the whole
+   bank. It shows the bank (BNK-C is bank C) and FILL:
+   - FILL keeps every sample in the bank and writes only the empty pads.
+   - OVER (turn VALUE right) replaces every sample with the kit's pad.
+
+   Press VALUE. The item asks SURE? and shows NO. Turn VALUE right for YES and
+   press VALUE to start. Press VALUE on NO to write nothing; BOUNC shows --
+   again.
 4. The value counts the pads as they are written (3/16) and shows DONE at the
    end. Each pad is written like a REC, so the screen pauses briefly for each
    one.
@@ -144,9 +161,10 @@ normal sample kit. BOUNC is not in the melodic menu.
 - Leaving the Sound Generator page or switching machines cancels too.
 - The pads' settings are taken when you press VALUE on the bank. Changes made
   during the questions or the bounce are not in it.
-- Pads whose LEVEL is 0 are left out and not asked about.
+- Pads whose LEVEL is 0 are left out, even with OVER: a sample in that bank pad
+  stays. A bank whose samples sit only on such pads doesn't ask.
 - Just before each pad is written the bank is checked again. A pad that got a
-  sample in the meantime is replaced only if you chose OVER for it.
+  sample in the meantime is replaced only with OVER.
 - If a file cannot be written (for example, storage full) the value shows ERROR
   and nothing more is written.
 
@@ -164,7 +182,8 @@ What differs from REC:
 On the factory TR808 the rim shot comes out 22 ms long, the closed hat 0.12 s,
 the kick 1.0 s and the cymbal 2.1 s; a kick with a long decay keeps its whole
 tail, and reverse playback starts at once. Across all factory and tested pads
-the lengths run from 13 ms to 8.7 s.
+the lengths run from 21 ms (the shortest sample the SP loads; a few hits ring
+out sooner and run on quietly to it) to 8.7 s.
 
 The emulator tests model the storage calls; writing to the SP's real storage is
 verified only on hardware. Try the first bounce in a scratch project.
@@ -186,15 +205,17 @@ How it works:
 A drum recording, from REC or BOUNC, ends where the last of its drums has fallen
 60 dB below its own peak, at most 10 s; the exporter's own 10 ms fade then ends
 the file. Drums struck together are each measured from their own offset, and
-the latest to ring out sets the length. A capture that is silent (LEVEL 0)
-writes 10 ms of silence. Pad Length plays no part in drum mode; melodic REC uses
-it as before, as a time (0.5 s steps) or as a number of waveform cycles. The
-length is measured at the first REC press, so with long drums or a chord the
-screen may pause briefly there.
+the latest to ring out sets the length. It is never shorter than 21 ms (1,000
+frames, [Shortest sample](#shortest-sample)): a drum that rings out sooner runs
+on to it, quietly or in silence, and a silent capture (LEVEL 0) writes 21 ms of
+silence. Pad Length plays no part in drum mode; melodic REC uses it as before,
+as a time (0.5 s steps) or as a number of waveform cycles. The length is
+measured at the first REC press, so with long drums or a chord the screen may
+pause briefly there.
 
 Before v9.45 a drum REC took its length from the melodic Pad Length, which drum
 mode doesn't show. Set to a waveform-cycle value, it saved only a few
-milliseconds of the drum.
+milliseconds of the drum, and the SP refused to load a sample that short.
 
 How it works: the capture (first REC press) pre-renders each captured drum on
 its own export voice, exactly as the export will render it, and keeps the length
@@ -204,15 +225,42 @@ length code takes the length, once:
 
 | Site | Stock code | Now |
 | --- | --- | --- |
-| 0x80132ac8 | `mov r4, r8; cmp.w fp, #1; mov.w r0, #0` after the frame count (fp) and loop limit (`[sp, #4]`) are set from Pad Length | `kit_export_length_gate`: when a drum length is waiting, both become it and it is used up; then the same three instructions |
+| 0x80132ac8 | `mov r4, r8; cmp.w fp, #1; mov.w r0, #0` after the frame count (fp) and loop limit (`[sp, #4]`) are set from Pad Length | `kit_export_length_gate`: when a drum length is waiting, both become it and it is used up. Otherwise `kit_export_min_frames` raises a melodic length under 1,000 frames to whole cycles. Then the same three instructions |
 
-Nine more spans it relies on are checked against their exact v9.6 instructions
-without being changed: the gate's return, both limit stores, the loop's limit
-test, the oscillator call, v9's export-mix entry, the exporter's jump to the v4
-engine, its count test and the stock body's destination test. They are listed in
-the manifest as `kit_export_length_guards`. The REC exporter is not otherwise
-changed. For a melodic recording no length is waiting, and the gate runs only
-the three displaced instructions.
+Fourteen more spans it relies on are checked against their exact v9.6
+instructions without being changed: the gate's return, both limit stores, the
+loop's limit test, the oscillator call, v9's export-mix entry, the exporter's
+jump to the v4 engine, its count test, the stock body's destination test, the
+cycle sum (and its 48000.0 and exp2f), the exporter's call of the pad loader
+and the loader's minimum. They are listed in the manifest as
+`kit_export_length_guards`. The REC exporter is not otherwise changed. A melodic
+recording of 1,000 frames or more passes through the gate unchanged.
+
+### Shortest sample
+
+Stock 5.52 loads no pad sample shorter than 1,000 frames (21 ms at 48 kHz).
+After REC writes the file, the pad loader (0x800cfb20) checks its length: under
+4,000 bytes stereo or 2,000 mono (the check at 0x800cfc4a), it clears the pad
+and REC ends as if it had worked. This is stock behaviour: stock melodic REC
+with a Pad Length of n cycles saves nothing for a note above 48 × n Hz (1 cycle
+above 48 Hz, 2 above 96 Hz, 4 above 192 Hz, up to 256 cycles above 12 kHz).
+
+test2 keeps every recording at 1,000 frames or more:
+
+- Melodic REC: when Pad Length in cycles comes to fewer than 1,000 frames, the
+  recording becomes the fewest whole cycles that reach 1,000. At A2 (110 Hz),
+  1 and 2 cycles become 3 cycles (1,309 frames); at A4, 1 to 8 cycles become 10
+  (1,090 frames); at A6 (1,760 Hz), 1 cycle becomes 37 (1,009 frames). Any Pad
+  Length that already reaches 1,000 frames is unchanged, and so is every time
+  setting.
+- The cycle is the exporter's own: 48,000 frames divided by TUNE times
+  2^((note − 33) / 12), with the same exp2f and the same truncation as stock.
+- Drum REC and BOUNC: at least 1,000 frames, as above.
+
+A recording with a Pad Length in cycles still ends with v9's fade, as in every
+v9 build: its last 10 ms, or its last quarter when it is shorter than 40 ms. It
+doesn't loop seamlessly. Only a time setting with ENV OFF (and START/END on, the
+default) skips that fade.
 
 ## Clean starts
 
@@ -416,15 +464,16 @@ python synth/build_start_fix.py out/kits-v946/SP404MKII_APP1.bin out/kits-v946-f
 ```
 
 A clean rebuild from stock 5.52 with these commands, followed by the RESAMPLE
-start fix stage, reproduces the v9.46-test1 APP1 (`e762c495…bcae`, 3,093,840
-bytes). The kit stage alone gives `cebc905c…734f` (3,093,248 bytes). Earlier
+start fix stage, reproduces the v9.46-test2 APP1 (`e94b36f8…295b`, 3,094,544
+bytes). The kit stage alone gives `cf7f50ab…8131` (3,093,952 bytes). v9.46-test1
+(`e762c495…bcae`) rebuilds from commit `c8d584a`. Earlier
 candidates rebuild the same way from their branches: v9.45-test1 (`claude/kits-
 bounce`), v9.44-test1 (`claude/kits-midi`), v9.43-test4 (`claude/kits-hot-
 resample`) and the published v9.43 (`b1c1b26`). The kit builder requires only
 the files in this repository. Patch sites retain exact-byte guards. Zero-filled
 module sections are packed into guarded scatter rows and reconstructed to verify
 the complete runtime image before writing APP1.
-Module: 155,968 bytes at run time (limit 319,488), 121,284 stored.
+Module: 156,672 bytes at run time (limit 319,488), 121,988 stored.
 
 MIDI reaches the module through four guarded jumps in the stock MIDI handlers,
 which both MIDI ports share through the table at 0x802091ec:
@@ -461,33 +510,40 @@ all-notes-off wrapper and left NOPs in its place, so choosing an imprint
 destination stopped redrawing the pads. The 14 stock bytes are written back
 behind an exact-byte guard.
 
-## Checks (v9.46-test1, emulator)
+## Checks (v9.46-test2, emulator)
 
 Drum REC length and BOUNC (`test_kit_bounce.py`). The built image is booted as
 for the MIDI checks below. The stock exporter runs for real: the v4 export
 engine, Roland's renderer and file writer, the oscillator gate, the kit engine
 and v9's export mix. Only the storage and project calls it makes are modelled:
-path, open, write, close, delete, header, stream cache and pad registration. A
-pad holds a sample exactly when the model has its file. Keys go through the
-stock page dispatcher to the Sound Generator page's own handlers; REC is pressed
-through the stock SG key handler, with its two dialog calls stubbed. One screen
-update is one `arp_poll` call.
+path, open, write, close, delete, header, stream cache and pad registration.
+The pad loader's model refuses a sample under 1,000 frames, as the SP does, and
+the pad then stays empty. A pad holds a sample exactly when the model has its
+file. Keys go through the stock page dispatcher to the Sound Generator page's
+own handlers; REC is pressed through the stock SG key handler, with its two
+dialog calls stubbed. One screen update is one `arp_poll` call.
 
 - Drum REC length:
   - a struck 808 kick, recorded with the two real REC presses at Pad Length −8,
     −1, 0 and 4, writes one identical file: the whole kick, 47,141 frames
     (0.98 s), which a longer render of the same capture shows is its ring-out.
-    With the same presses at −8, v9.44-test1 saves 462 frames;
+    With the same presses at −8, v9.44-test1 writes 462 frames, which the
+    loader refuses: the reported "REC doesn't save";
   - a kick and a snare struck 64 frames apart (MIDI through the stock
     dispatcher and the real render loop) record together, and the file ends
     where the later of the two rings out (the kick, at 47,141 frames; the snare
     ends at 9,078), at Pad Length −1 and 4 alike;
   - each of the 272 pads below, recorded at a Pad Length from −8 to 20, writes
     exactly the file BOUNC writes for it;
-  - a silent capture (LEVEL 0) writes 480 frames of silence;
-  - melodic REC keeps Pad Length: 24,000, 96,000, 13,963 and 109 frames at 1,
-    4, −1 and −8 (A4), with files, headers and registrations byte-identical to
-    v9.44-test1;
+  - a silent capture (LEVEL 0) writes 1,000 frames of silence;
+  - melodic REC keeps Pad Length on 16 cases (A2, A4, A6 and A7; 0.5 s steps
+    and 1 to 128 cycles). The 9 cases stock makes shorter than 1,000 frames
+    become the fewest whole cycles that reach 1,000, computed independently:
+    1,090 frames at A4 for 1 to 8 cycles, 1,309 at A2 for 1 and 2, 1,009 at A6
+    and A7. The other 7 are stock's length, and none is refused;
+  - at 1, 4, −1 and −4 (A4) melodic files, headers and registrations are
+    byte-identical to v9.44-test1. At −8 (1 cycle, 109 frames) v9.44-test1's
+    file is refused and this build writes 1,090 frames;
   - 28 drum RECs (factory and tweaked pads) have the same audio as on
     v9.44-test1 up to their own end, with v9.44 made longer through Pad Length.
 - BOUNC audio, on every factory pad of all 13 kits (208), and on all 64 pads of
@@ -503,23 +559,26 @@ update is one `arp_poll` call.
     10 ms end fade, and the fade frames are exactly v9's fade of the longer
     render's frames;
   - the length is the frame after the last sample at or above −60 dB of the
-    pad's own peak, and the header and the registered size match it.
+    pad's own peak, or 1,000 frames if that comes sooner, and the header and the
+    registered size match it.
 - The flow:
   - the bank value runs from -- through A–J and stops at both ends; VALUE on --
     only leaves edit mode;
   - an empty bank fills at once;
-  - with samples on pads 4, 8 and 13 the questions come in pad order with KEEP
-    by default and edit mode kept on. Answering OVER, KEEP, KEEP writes 14
-    pads, deletes and replaces pad 4, and never opens pads 8 and 13. The value
-    counts 1/14 … 13/14, then DONE;
-  - EXIT while asking writes nothing and does not leave the page; EXIT during
-    the run keeps the three pads written and writes no more;
+  - with samples on pads 4, 8 and 13 the item asks BNK-C with FILL by default,
+    then SURE? with NO by default, edit mode kept on, and turning past either
+    answer stays on it. FILL then YES writes the other 13 pads and never opens
+    pads 4, 8 and 13; the value counts 1/13 … 12/13, then DONE. On the full
+    bank, OVER then NO writes nothing and shows -- again; OVER then YES deletes
+    and rewrites all 16 pads, and the 13 pads written twice are the same files;
+  - EXIT while asking (either question) writes nothing and does not leave the
+    page; EXIT during the run keeps the three pads written and writes no more;
   - REC is ignored while asking and while writing; with an imprint armed,
     VALUE does not start a bounce;
   - a pad that gets a sample during the run is left alone, and a knob edit
     made during the run is not in the bounce;
-  - leaving the page cancels (STOP when running, -- when asking), and so does
-    switching machines;
+  - leaving the page cancels (STOP when running, -- when asking either
+    question), and so does switching machines;
   - pads with LEVEL 0 or the sound off are not asked about and not written;
   - a file that cannot be created stops the bounce with ERROR and clears REC's
     destination;
@@ -559,7 +618,7 @@ Generator code running for real:
   byte for byte. CC 123 releases MIDI notes, keeps pad notes and stops the arp
   in both modes. CC 120 fades out every voice.
 
-The kit checks below were run again on v9.46-test1:
+The kit checks below were run again on v9.46-test2:
 
 - 208 factory pad renders (13 kits × 16) match host/ARM sample for sample for
   3000 samples each, plus 108 control endpoint cases (TUNE, DECAY, TONE, SWEEP,
@@ -570,8 +629,9 @@ The kit checks below were run again on v9.46-test1:
 - VALUE pressed on BPM leaves the stock edit flag off; on every other item it
   sets it. The gate returns through the stock handler's own epilogue.
 - 208 compiled capture cases check released-pad selection and velocity, and that
-  every drum capture sets its ring-out length (756 to 417,016 frames); a melodic
-  capture sets none and is delegated to the original path.
+  every drum capture sets its length: its ring-out, at least 1,000 frames
+  (1,000 to 417,016; the shortest ring-out is 756); a melodic capture sets none
+  and is delegated to the original path.
 - Chord capture (TR707, TR808, CR78): two pads struck 64 frames apart export
   as two voices, anchor first, each with its own velocity. The export renders
   match the live voices sample for sample, the later hit after 64 silent frames.

@@ -2,6 +2,25 @@
 
 ## Synthesized kits v9.46 (test candidate, not yet in the patcher)
 
+test2 answers the first hardware report on test1:
+
+- Every recording loads. The SP's pad loader leaves a pad empty when its
+  sample is shorter than 1,000 frames (21 ms), and REC gives no sign of it. In
+  melodic mode a Pad Length of a few waveform cycles of a high enough note came
+  under that (reported as "under 4 cycles doesn't record"). Such a recording
+  now becomes the fewest whole cycles that reach 1,000 frames; Pad Lengths that
+  already reach 1,000 frames and every time setting are unchanged. Drum REC and
+  BOUNC never write under 1,000 frames either: a drum
+  that rings out sooner runs on to it, and a silent capture writes 21 ms of
+  silence.
+- BOUNC into a bank that has samples asks once for the whole bank instead of
+  once per used pad: FILL (the default) keeps the samples and fills the empty
+  pads, OVER replaces them all. SURE? (NO by default) then confirms; NO writes
+  nothing. An empty bank still fills at once.
+- The emulator's storage model now refuses short samples as the SP does, so
+  this can't slip through again. It reproduces the drum REC report on v9.44:
+  that build's 462-frame drum recording at a Pad Length of −8 is refused.
+
 test1 combines the open test branches into one build:
 
 - v9.45-test1: BOUNC (the kit into a sample bank), drum REC at each drum's own

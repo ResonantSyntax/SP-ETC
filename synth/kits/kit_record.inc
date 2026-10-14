@@ -5,10 +5,16 @@
  * peak, at most 10 s. kit_export_frames holds that length for the next export:
  * the stock exporter's length code takes it once (kit_export_length_gate at
  * 0x80132ac8) instead of PAD LENGTH. A melodic capture sets it to 0, so melodic
- * REC keeps PAD LENGTH as stock. */
+ * REC keeps PAD LENGTH as stock.
+ * The SP loads no sample shorter than KIT_EXPORT_MIN: its pad loader
+ * (0x800cfb20, the check at 0x800cfc4a) empties the pad when the data is under
+ * 4000 bytes stereo or 2000 mono. A drum export is never shorter (a drum that
+ * rings out sooner runs on to it, below -60 dB or silent), and a melodic one in
+ * periods that would be is made whole periods long enough
+ * (kit_export_min_frames). */
 #define KIT_EXPORT_CAP 480000u                       /* frames: 10 s */
 #define KIT_EXPORT_FLOOR 1e-3f                       /* -60 dB of the drum's own peak */
-#define KIT_EXPORT_SILENT 480u                       /* frames written for a silent capture */
+#define KIT_EXPORT_MIN 1000u                         /* frames: 21 ms, the shortest sample the SP loads */
 EXPORT volatile u32 kit_export_frames;               /* nonzero: the next export's frame count */
 
 /* An export voice cleared. kit_start leaves some filter state from the voice's
@@ -41,17 +47,41 @@ static u32 kit_export_measure(int j, int pad, u32 cap) {
     return end;
 }
 
+/* Melodic REC, `frames` from PAD LENGTH: under KIT_EXPORT_MIN (a few periods of
+ * a high enough note), the fewest whole periods that reach it instead, so the
+ * sample loads and is still whole periods long. The period is the stock
+ * exporter's own (0x80132a6e..0x80132ab0, its exp2f included): 48 kHz over
+ * TUNE (+0x60, in 0.1 Hz) times 2^((note (+0x5c) - 33) / 12), and the frame
+ * count is truncated as stock truncates whole periods times that. Anything
+ * else is left alone. */
+#define KIT_STOCK_EXP2F ((float (*)(float))0x800D309Bu)
+EXPORT u32 kit_export_min_frames(u32 frames, const volatile u8 *voice) {
+    if ((int)frames < 1 || frames >= KIT_EXPORT_MIN) return frames;
+    int note = *(const volatile int *)(voice + 0x5c), tune = *(const volatile int *)(voice + 0x60);
+    double hz = (double)tune / 10.0 * (double)KIT_STOCK_EXP2F((float)((double)(note - 33) / 12.0));
+    double period = 48000.0 / hz;
+    if (!(period > 1e-3 && period < (double)KIT_EXPORT_MIN)) return KIT_EXPORT_MIN;
+    u32 k = (u32)((double)KIT_EXPORT_MIN / period);
+    while ((u32)(period * (double)k) < KIT_EXPORT_MIN) ++k;
+    return (u32)(period * (double)k);
+}
+
 /* Stock exporter, 0x80132ac8 (mov r4, r8; cmp.w fp, #1; mov.w r0, #0): fp
  * holds the frame count and [sp, #4] the loop's frame limit, both just
- * computed from PAD LENGTH. When kit_export_frames is set, both become it and
- * it is cleared (one export). r0 is free here: the displaced mov.w writes it.
- * The displaced instructions follow; the flags of their cmp reach the stock
- * blt.w at 0x80132ad6 after its str (which leaves them alone). */
+ * computed from PAD LENGTH. When kit_export_frames is set (a drum export), both
+ * become it and it is cleared (one export). Otherwise kit_export_min_frames
+ * may lengthen a melodic export; r8 is the export voice. r0-r3, r12, lr and
+ * d0-d7 are free here (the stock code writes them before reading them on both
+ * paths on), r4-r11 and d8-d15 survive the call, and sp is 8-byte aligned. The
+ * displaced instructions follow; the flags of their cmp reach the stock blt.w
+ * at 0x80132ad6 after its str (which leaves them alone). */
 __attribute__((naked, used)) EXPORT void kit_export_length_gate(void) {
     __asm__ volatile(
         "movw r12, #:lower16:kit_export_frames\n\tmovt r12, #:upper16:kit_export_frames\n\t"
-        "ldr r0, [r12]\n\tcmp r0, #0\n\tbeq 1f\n\t"
-        "mov r11, r0\n\tstr r0, [sp, #4]\n\tmovs r0, #0\n\tstr r0, [r12]\n"
+        "ldr r0, [r12]\n\tcmp r0, #0\n\tbeq 2f\n\t"
+        "mov r11, r0\n\tstr r0, [sp, #4]\n\tmovs r0, #0\n\tstr r0, [r12]\n\tb 1f\n"
+        "2:\n\tmov r0, r11\n\tmov r1, r8\n\tbl kit_export_min_frames\n\t"
+        "cmp r0, r11\n\tbeq 1f\n\tmov r11, r0\n\tstr r0, [sp, #4]\n"
         "1:\n\tmov r4, r8\n\tcmp.w r11, #1\n\tmov.w r0, #0\n\t"
         "movw r12, #0x2ad3\n\tmovt r12, #0x8013\n\tbx r12\n");                 /* 0x80132ad2 */
 }
@@ -117,14 +147,15 @@ EXPORT int kit_capture_selected(void){
     kit_export_count=(u8)n;kit_export_active=1;++kit_capture_count;
     *(volatile u32*)0x8353c700u=(u32)n;
     DISPATCH_ON();
-    /* Each drum's own ring-out from its offset; the last one ends the recording. */
+    /* Each drum's own ring-out from its offset; the last one ends the recording,
+     * at least KIT_EXPORT_MIN frames (all of it silence when the drums are). */
     u32 frames=0;
     for(int j=0;j<n;++j){
         u32 d=kit_export_delay[j];
         u32 e=d<KIT_EXPORT_CAP?kit_export_measure(j,pads[j],KIT_EXPORT_CAP-d):0;
         if(e&&d+e>frames)frames=d+e;
     }
-    kit_export_frames=frames?frames:KIT_EXPORT_SILENT;
+    kit_export_frames=frames>KIT_EXPORT_MIN?frames:KIT_EXPORT_MIN;
     return n;
 }
 __attribute__((naked,used)) EXPORT void kit_capture_gate(void){

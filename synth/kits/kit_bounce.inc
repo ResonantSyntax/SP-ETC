@@ -3,11 +3,14 @@
  * pads of one sample bank. Included last under KIT_IN_ARP.
  *
  *   Cursor on BOUNC (it shows --), press VALUE, turn to a bank A..J, press
- *   VALUE. Empty pads are filled. Pads that already hold a sample are asked
- *   about first, one at a time: the item shows the pad ("B-3") and KEEP or
- *   OVER (KEEP until VALUE is turned right); press VALUE for the next. EXIT
- *   cancels: during the questions nothing has been written, during the run
- *   the pads already written stay. REC does nothing until the bounce ends.
+ *   VALUE. An empty bank fills at once. A bank with samples asks once for the
+ *   whole bank: the item shows the bank ("BNK-C") and FILL (keep its samples,
+ *   fill only the empty pads) or OVER (replace them all); FILL until VALUE is
+ *   turned right. Press VALUE, then confirm: SURE? NO or YES (NO until VALUE
+ *   is turned right). VALUE on YES starts; on NO nothing is written and BOUNC
+ *   shows -- again. EXIT cancels: during the questions nothing has been
+ *   written, during the run the pads already written stay. REC does nothing
+ *   until the bounce ends.
  *
  * The pad settings are copied when the bank is chosen, so edits during the
  * bounce do not reach it. One pad is written per Sound Generator screen
@@ -21,8 +24,8 @@
  * finds that frame and the exporter's length hook at 0x80132ac8 takes it).
  * v9's export mix fades the last 10 ms, as on every REC. Pads whose sound is
  * off, or whose LEVEL is 0, are left out. Just before each write the bank is
- * checked again: a pad that holds a sample by then is only replaced if OVER
- * was chosen for it. */
+ * checked again: a pad that holds a sample by then is only replaced with
+ * OVER. */
 #define KIT_BOUNCE_ITEM 22
 #define KIT_BOUNCE_PAGE (*(volatile signed short *)0x80245880u)
 #define KIT_BOUNCE_KB ((volatile u8 *)0x80591C48u)   /* stock keyboard: [0] on (no imprint armed) */
@@ -32,14 +35,15 @@ typedef int (*kit_pad_used_fn)(int abs_pad);
 typedef void (*kit_export_fn)(volatile u8 *state);
 #define KIT_PAD_USED ((kit_pad_used_fn)0x800D8B01u)  /* nonzero: that pad holds a sample */
 #define KIT_EXPORT ((kit_export_fn)0x801327B9u)       /* stock REC exporter */
-enum { KIT_BOUNCE_IDLE, KIT_BOUNCE_ASK, KIT_BOUNCE_RUN, KIT_BOUNCE_DONE, KIT_BOUNCE_STOP, KIT_BOUNCE_FAIL };
+enum { KIT_BOUNCE_IDLE, KIT_BOUNCE_ASK, KIT_BOUNCE_RUN, KIT_BOUNCE_DONE, KIT_BOUNCE_STOP, KIT_BOUNCE_FAIL,
+       KIT_BOUNCE_SURE };                           /* ASK: FILL or OVER; SURE: NO or YES */
 
 EXPORT volatile u8 kit_bounce_state;
 EXPORT volatile signed char kit_bounce_bank = -1;    /* -1 = --, 0..9 = A..J */
-EXPORT volatile u8 kit_bounce_mode, kit_bounce_ask, kit_bounce_next, kit_bounce_done, kit_bounce_total;
+EXPORT volatile u8 kit_bounce_mode, kit_bounce_sure, kit_bounce_next, kit_bounce_done, kit_bounce_total;
 EXPORT volatile u16 kit_bounce_want;                 /* pads that sound */
 EXPORT volatile u16 kit_bounce_used;                 /* of those, pads whose bank pad held a sample */
-EXPORT volatile u16 kit_bounce_over;                 /* used pads to replace (OVER) */
+EXPORT volatile u16 kit_bounce_over;                 /* pads to replace: none (FILL) or all (OVER) */
 EXPORT volatile u16 kit_bounce_write, kit_bounce_wrote;
 EXPORT volatile u32 kit_bounce_length[16];           /* frames per pad, 0 = not written */
 static kit_pad kit_bounce_recipe[16];
@@ -52,16 +56,18 @@ static int kit_bounce_cursor(void) { return KIT_SETTING_GET(KIT_SETTINGS, 0x83, 
 
 static void kit_bounce_set(int state) { kit_bounce_state = (u8)state; kit_edit_changed = 1; }
 
-/* Item name: BOUNC, or the pad being asked about (B-3). */
+/* Item name: BOUNC, the bank being asked about (BNK-C), or SURE?. */
 static void kit_bounce_name(char *out) {
+    if (kit_bounce_state == KIT_BOUNCE_SURE) { kit_copy(out, "SURE?"); return; }
     if (kit_bounce_state != KIT_BOUNCE_ASK) { kit_copy(out, "BOUNC"); return; }
-    out[0] = (char)('A' + kit_bounce_bank); out[1] = '-';
-    kit_num(out + 2, kit_bounce_ask + 1, 0);
+    kit_copy(out, "BNK-A");
+    out[4] = (char)('A' + kit_bounce_bank);
 }
 
 static void kit_bounce_text(char *out) {
     switch (kit_bounce_state) {
-    case KIT_BOUNCE_ASK: kit_copy(out, kit_bounce_over & (1u << kit_bounce_ask) ? "OVER" : "KEEP"); return;
+    case KIT_BOUNCE_ASK: kit_copy(out, kit_bounce_over ? "OVER" : "FILL"); return;
+    case KIT_BOUNCE_SURE: kit_copy(out, kit_bounce_sure ? "YES" : "NO"); return;
     case KIT_BOUNCE_RUN: { char *e = kit_num(out, kit_bounce_done, 0); *e++ = '/'; kit_num(e, kit_bounce_total, 0); return; }
     case KIT_BOUNCE_DONE: kit_copy(out, "DONE"); return;
     case KIT_BOUNCE_STOP: kit_copy(out, "STOP"); return;
@@ -71,13 +77,11 @@ static void kit_bounce_text(char *out) {
     else { out[0] = (char)('A' + kit_bounce_bank); out[1] = 0; }
 }
 
-/* VALUE turned in edit mode: the bank, or KEEP (left) / OVER (right). */
+/* VALUE turned in edit mode: the bank, FILL (left) / OVER (right), or NO (left) /
+ * YES (right). */
 static void kit_bounce_turn(int dir) {
-    if (kit_bounce_state == KIT_BOUNCE_ASK) {
-        u16 bit = (u16)(1u << kit_bounce_ask);
-        kit_bounce_over = (u16)(dir > 0 ? kit_bounce_over | bit : kit_bounce_over & ~bit);
-        return;
-    }
+    if (kit_bounce_state == KIT_BOUNCE_ASK) { kit_bounce_over = (u16)(dir > 0 ? 0xFFFFu : 0u); return; }
+    if (kit_bounce_state == KIT_BOUNCE_SURE) { kit_bounce_sure = (u8)(dir > 0); return; }
     if (kit_bounce_state == KIT_BOUNCE_RUN) return;
     kit_bounce_state = KIT_BOUNCE_IDLE;
     int b = kit_bounce_bank + (dir < 0 ? -1 : 1);
@@ -108,20 +112,22 @@ static void kit_bounce_begin(void) {
         if (KIT_PAD_USED(kit_bounce_bank * 16 + p)) used = (u16)(used | (1u << p));
     }
     kit_bounce_mode = (u8)mode; kit_bounce_want = want; kit_bounce_used = used;
-    kit_bounce_over = 0; kit_bounce_wrote = 0; kit_bounce_next = 0; kit_bounce_done = 0;
-    if (used) { kit_bounce_ask = (u8)kit_bounce_first(used); kit_bounce_set(KIT_BOUNCE_ASK); }
+    kit_bounce_over = 0; kit_bounce_sure = 0; kit_bounce_wrote = 0; kit_bounce_next = 0; kit_bounce_done = 0;
+    if (used) kit_bounce_set(KIT_BOUNCE_ASK);
     else kit_bounce_run();
 }
 
+static int kit_bounce_asking(void) { return kit_bounce_state == KIT_BOUNCE_ASK || kit_bounce_state == KIT_BOUNCE_SURE; }
+
 /* A machine switch, leaving the page or EXIT: no more questions or writes. */
 static void kit_bounce_cancel(void) {
-    if (kit_bounce_state == KIT_BOUNCE_ASK) { KIT_BOUNCE_EDIT = 0; kit_bounce_bank = -1; kit_bounce_set(KIT_BOUNCE_IDLE); }
+    if (kit_bounce_asking()) { KIT_BOUNCE_EDIT = 0; kit_bounce_bank = -1; kit_bounce_set(KIT_BOUNCE_IDLE); }
     else if (kit_bounce_state == KIT_BOUNCE_RUN) kit_bounce_set(KIT_BOUNCE_STOP);
 }
 
 /* Every page event (kit_shortcut_event, before the page sees it); 1 = consumed. */
 static int kit_bounce_event(int type, int key) {
-    int s = kit_bounce_state, open = s == KIT_BOUNCE_ASK || s == KIT_BOUNCE_RUN;
+    int s = kit_bounce_state, open = kit_bounce_asking() || s == KIT_BOUNCE_RUN;
     if (KIT_BOUNCE_PAGE != 0x1E || !kit_mode) {
         if (open) kit_bounce_cancel();
         if (kit_bounce_state == KIT_BOUNCE_IDLE) kit_bounce_bank = -1;
@@ -138,15 +144,19 @@ static int kit_bounce_event(int type, int key) {
         if (!open) { kit_bounce_bank = -1; kit_bounce_set(KIT_BOUNCE_IDLE); }   /* so a bank must be turned to */
         return 0;
     }
-    if (s == KIT_BOUNCE_ASK) {                        /* answered: the next used pad, or go */
-        int next = kit_bounce_first(kit_bounce_used & ~((2u << kit_bounce_ask) - 1u));
-        if (next >= 0) { kit_bounce_ask = (u8)next; kit_edit_changed = 1; return 1; }
-        kit_bounce_run();
+    if (s == KIT_BOUNCE_ASK) {                        /* FILL or OVER chosen: confirm it */
+        kit_bounce_sure = 0;
+        kit_bounce_set(KIT_BOUNCE_SURE);
+        return 1;                                     /* edit mode stays on */
+    }
+    if (s == KIT_BOUNCE_SURE) {                       /* YES: go; NO: nothing written, back to -- */
+        if (kit_bounce_sure) kit_bounce_run();
+        else { kit_bounce_bank = -1; kit_bounce_set(KIT_BOUNCE_IDLE); }
         return 0;                                     /* the stock press leaves edit mode */
     }
     if (s == KIT_BOUNCE_IDLE && kit_bounce_bank >= 0 && KIT_BOUNCE_KB[0]) {
         kit_bounce_begin();
-        return kit_bounce_state == KIT_BOUNCE_ASK;    /* questions keep edit mode on */
+        return kit_bounce_state == KIT_BOUNCE_ASK;    /* the question keeps edit mode on */
     }
     return 0;
 }
@@ -174,6 +184,7 @@ static int kit_bounce_pad(int p) {
     KIT_BOUNCE_COUNT = 1;                             /* the engine renders this voice, no capture */
     DISPATCH_ON();
     u32 frames = kit_export_measure(0, p, KIT_EXPORT_CAP);
+    if (frames && frames < KIT_EXPORT_MIN) frames = KIT_EXPORT_MIN;   /* the SP loads nothing shorter */
     kit_bounce_length[p] = frames;
     if (!frames) { KIT_BOUNCE_COUNT = 0; return 0; }
     v0[0x17c/4] = (u32)abs;                           /* REC's destination: bank * 16 + pad */
@@ -195,10 +206,10 @@ static int kit_bounce_pad(int p) {
 static u8 kit_bounce_busy;
 static void kit_bounce_step(void) {
     int s = kit_bounce_state;
-    if (s != KIT_BOUNCE_ASK && s != KIT_BOUNCE_RUN) return;
+    if (!kit_bounce_asking() && s != KIT_BOUNCE_RUN) return;
     if (kit_bounce_busy) return;
     if (KIT_BOUNCE_PAGE != 0x1E || kit_mode != kit_bounce_mode) { kit_bounce_cancel(); return; }
-    if (s == KIT_BOUNCE_ASK) {                        /* edit mode left some other way */
+    if (s != KIT_BOUNCE_RUN) {                        /* asking: edit mode left some other way */
         if (kit_bounce_cursor() != KIT_BOUNCE_ITEM || !KIT_BOUNCE_EDIT) kit_bounce_cancel();
         return;
     }

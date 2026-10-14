@@ -1,5 +1,5 @@
 """Compiled capture contracts: all pads, released selection, the drum ring-out length
-(v9.45: every drum capture sets one; melodic sets none and keeps PAD LENGTH) and
+(v9.45: every drum capture sets one, v9.46 at least 1000 frames; melodic sets none) and
 melodic delegation."""
 import hashlib,json,struct,sys
 from pathlib import Path
@@ -36,7 +36,7 @@ for kit in range(1,14):
   assert u.mem_read(0x8353c004,1)==b'\0'
   assert u.mem_read(S['kit_pads_down'],2)==b'\0\0'
   frames=struct.unpack('<I',u.mem_read(S['kit_export_frames'],4))[0]
-  assert 0<frames<=480000,(kit,pad,frames)
+  assert 1000<=frames<=480000,(kit,pad,frames)   # at least the 1000 frames the SP loads
   lengths.append(frames)
   cases+=1
 u.mem_write(S['kit_mode'],b'\0');assert call('kit_capture_selected')==0

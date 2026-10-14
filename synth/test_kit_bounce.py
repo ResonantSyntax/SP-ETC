@@ -1,11 +1,14 @@
-"""Drum REC length and BOUNC (kits v9.45), through the real stock REC exporter.
+"""Drum REC length and BOUNC (kits v9.46), through the real stock REC exporter.
 
 The built APP1 is booted as test_kit_midi.py does it (its Machine). The stock
 exporter runs for real: 0x801327b8, the v4 export engine, Roland's renderer and
 file writer, the oscillator gate, the kit engine and v9's export mix. Only the
 file and project calls the exporter makes are modelled: path, open, write,
 close, delete, the header, the stream cache and the pad registration (size,
-name, load, save). A pad holds a sample exactly when the model holds its file,
+name, load, save). The pad loader the exporter registers the file with
+(0x800cfb20) is modelled with its minimum: a sample under 4000 bytes stereo or
+2000 mono (1000 frames, the check at 0x800cfc4a) is refused and the pad stays
+empty, as on the SP. A pad holds a sample exactly when the model holds its file,
 which is also what 0x800d8b00 answers. Keys reach the SG page through the stock
 page dispatcher 0x800a80a8 (the kits' event hook included) and the SG page's own
 handlers (vtable 0x80229668); the two dialog calls of the stock REC press
@@ -23,11 +26,12 @@ covered.
    same float for float, its PCM the same sample for sample up to v9's 10 ms
    end fade, the fade frames are exactly v9's fade of those frames, and the
    length is the ring-out: the frame after the last sample at or above -60 dB
-   of the pad's own peak, at most 10 s.
-2. The flow. An empty bank fills at once. A bank with samples asks about each
-   used pad (KEEP/OVER, KEEP by default), keeps edit mode on while asking,
-   replaces only OVER pads (old file deleted first) and never touches a KEEP
-   pad. EXIT during the questions writes nothing and stays on the page; EXIT
+   of the pad's own peak, at least 1000 frames and at most 10 s.
+2. The flow. An empty bank fills at once. A bank with samples asks once for
+   the whole bank, FILL (the default) or OVER, then SURE? (NO by default), with
+   edit mode kept on while asking. FILL writes only the empty pads and never
+   touches a sample; OVER replaces every one (old file deleted first); NO
+   writes nothing and BOUNC shows -- again. EXIT during the questions writes nothing and stays on the page; EXIT
    during the run keeps what was written and writes nothing more. REC is
    ignored while a bounce is open, and a bounce does not start while an imprint
    is armed. A pad that gets a sample during the run is left alone. Knob edits
@@ -38,15 +42,18 @@ covered.
 3. Drum REC never uses PAD LENGTH. A struck 808 kick recorded with the two real
    REC presses (the stock SG key handler) at PAD LENGTH -8, -1, 0 and 4 writes
    one and the same file, the whole kick to its ring-out (with a v9.44 build as
-   the second argument, the same presses at -8 give that build's tiny blip). Two
-   pads struck 64 frames apart (MIDI through the stock dispatcher and the real
-   render loop) record together and end where the later drum rings out,
-   whatever PAD LENGTH says. A silent capture writes 10 ms of silence. Melodic
-   REC keeps PAD LENGTH: 0.5 s, 2 s, 128 cycles and 1 cycle of A4 for 1, 4, -1
-   and -8.
-4. With a v9.44 build as the second argument: melodic REC (seconds and periods)
-   writes byte-identical files on both builds, and drum REC gives the same audio
-   as v9.44 up to its own end (v9.44 made longer through PAD LENGTH).
+   the second argument, the same presses at -8 give that build's tiny blip,
+   which the loader refuses: the "REC doesn't save" report). Two pads struck 64
+   frames apart (MIDI through the stock dispatcher and the real render loop)
+   record together and end where the later drum rings out, whatever PAD LENGTH
+   says. A silent capture writes 1000 frames of silence. Melodic REC keeps PAD
+   LENGTH (0.5 s steps, or 2^(n+8) periods of the exporter's own period) on four
+   octaves of A; where that is under 1000 frames it writes the fewest whole
+   periods that reach 1000 instead.
+4. With a v9.44 build as the second argument: melodic REC (seconds, and periods
+   of 1000 frames or more) writes byte-identical files on both builds, 1 cycle
+   of A4 is refused on v9.44 and 10 cycles here, and drum REC gives the same
+   audio as v9.44 up to its own end (v9.44 made longer through PAD LENGTH).
 
 Usage: python synth/test_kit_bounce.py out/kits-v945 [out/kits-v944] [--quick | --flow]
 (--quick: three kits for part 1; --flow: no part 1. The full run takes about an hour.)
@@ -75,9 +82,9 @@ DISPATCHER, SG_VTABLE, FAKE_PAGE, EVENT = 0x800A80A8, 0x80229668, 0x83D00000, 0x
 DIALOG, PAD_SELECT = 0x800D8C88, 0x800DA720   # stock REC press: dialog manager, destination pad UI
 PAGE_REQUEST = 0x8024587C                 # 0x800da598(n) stores the page it requests here
 EDIT = KB + 0x14
-CAP, FLOOR, FADE, SILENT = 480000, np.float32(1e-3), 480, 480
+CAP, FLOOR, FADE, MIN = 480000, np.float32(1e-3), 480, 1000
 VALUE, EXIT, REC_KEY = 0x31, 0x22, 0x1B
-IDLE, ASK, RUN, DONE, STOP, FAIL = range(6)
+IDLE, ASK, RUN, DONE, STOP, FAIL, SURE = range(7)
 SCRATCH_BANK = 9                          # references are recorded into bank J
 PAD_LENGTHS = (-8, -4, -1, 0, 1, 2, 4, 20)  # setting 0x7e range: periods (<= 0) and 0.5 s steps
 # Stock file and project calls the exporter makes (all modelled, see Bouncer._fs).
@@ -225,8 +232,13 @@ class Bouncer(Machine):
                     self.log.append(('cache_pad', r1))
                 elif name == 'pad_info':
                     self.log.append(('pad_info', r0))
-                elif name == 'registered':
-                    value = 1
+                elif name == 'registered':                        # the pad loader, with its minimum
+                    file = self.files.get(r0)
+                    channels, size = file['header'] if file else (2, 0)
+                    value = int(size >= 2000 * channels)          # 0x800cfc34: 4000 bytes, 2000 mono
+                    if not value:
+                        self.files.pop(r0, None)
+                        self.log.append(('refused', r0, size // (2 * channels)))
                 elif name == 'size':
                     self.log.append(('size', r1, r3))
                 elif name == 'name':
@@ -332,12 +344,13 @@ class Bouncer(Machine):
         stride = self.get(self.S['kit_voice_stride'], '<I')
         self.uc.mem_write(self.S['kit_slot'] + 4 * stride, bytes(4 * stride))
 
-    def rec(self, pad, abs_pad, units, velocity=127, frames=None):
+    def rec(self, pad, abs_pad, units, velocity=127, frames=None, refused_ok=False):
         """A drum REC of `pad` as the two REC presses run it: the first-press capture
         (0x8353b500: capture, then every voice released), then the export to abs_pad
         with PAD LENGTH `units`. frames: replace the length the capture chose (the
-        exporter's length setting), to render past it. Returns the file, the file calls,
-        every export voice's kit output and the length the capture chose."""
+        exporter's length setting), to render past it. Returns the file (None if the
+        loader refused it, which is an error unless refused_ok), the file calls, every
+        export voice's kit output and the length the capture chose."""
         self.setsym('kit_record_pad', pad)
         self.setsym('kit_record_velocity', velocity)
         self.call(CAPTURE_INIT)
@@ -356,11 +369,14 @@ class Bouncer(Machine):
         y = self.stop_y()
         if self.get(V0 + 0x17C) != -1:
             raise AssertionError(('REC did not finish', abs_pad))
-        return self.files[abs_pad], self.log[mark:], y, chosen
+        if abs_pad not in self.files and not refused_ok:
+            raise AssertionError(('the SP refuses this sample: the pad stays empty', abs_pad, self.log[mark:]))
+        return self.files.get(abs_pad), self.log[mark:], y, chosen
 
-    def rec_keys(self, abs_pad, units):
+    def rec_keys(self, abs_pad, units, refused_ok=False):
         """REC exactly as on the unit: REC pressed (the stock SG key handler arms the imprint
-        and captures), the destination chosen (+0x17c, as a pad press sets it), REC again."""
+        and captures), the destination chosen (+0x17c, as a pad press sets it), REC again.
+        The file is None if the loader refused it (an error unless refused_ok)."""
         self.put(V0 + 0x180, units)
         if self.press(REC_KEY) != 1 or self.get(KB, '<B') != 0:
             raise AssertionError('first REC press did not arm the imprint')
@@ -369,9 +385,9 @@ class Bouncer(Machine):
         self.start_y()
         self.press(REC_KEY)
         y = self.stop_y()
-        if self.get(KB, '<B') != 1 or self.get(V0 + 0x17C) != -1 or abs_pad not in self.files:
-            raise AssertionError(('second REC press did not imprint', self.get(KB, '<B')))
-        return self.files[abs_pad], self.log[mark:], y
+        if self.get(KB, '<B') != 1 or self.get(V0 + 0x17C) != -1 or (abs_pad not in self.files and not refused_ok):
+            raise AssertionError(('second REC press did not imprint', self.get(KB, '<B'), self.log[mark:]))
+        return self.files.get(abs_pad), self.log[mark:], y
 
     def strike(self, pad, vel=100, blocks=1):
         """A pad struck by MIDI (channel 16, note 36 + pad) and the real render loop after it."""
@@ -444,8 +460,8 @@ def against_long(m, pad, frames_, y_short, label, velocity=127):
     if len(y_long[0]) != length + 2 * FADE or y_short != y_long[0][:length]:
         bad = next((i for i in range(length) if y_short[i] != y_long[0][i]), None)
         raise AssertionError((label, 'kit engine output differs', bad))
-    if ring_out(y_long[0]) != length and length != CAP:
-        raise AssertionError((label, 'not the ring-out', length, ring_out(y_long[0])))
+    if length != max(ring_out(y_long[0]), MIN) and length != CAP:
+        raise AssertionError((label, 'not the ring-out (or 1000 frames)', length, ring_out(y_long[0])))
     tail, fade = fade_model(long_frames, length)
     if not np.array_equal(frames_[:length - fade], long_frames[:length - fade]):
         bad = int(np.argmax(np.any(frames_[:length - fade] != long_frames[:length - fade], axis=1)))
@@ -463,7 +479,7 @@ def check_pad(m, kit, pad, bank, steps_entry, label, units):
     file = m.files[target]
     frames_ = pcm(file)
     length, channels = len(frames_), frames_.shape[1]
-    if not 0 < length <= CAP or m.get(m.S['kit_bounce_length'] + 4 * pad, '<I') != length:
+    if not MIN <= length <= CAP or m.get(m.S['kit_bounce_length'] + 4 * pad, '<I') != length:
         raise AssertionError((label, 'length', length))
     touched = {e[1] for e in log if len(e) > 1 and e[0] != 'save'}
     want_log = [('path', target), ('open', target, False), ('cache_close', target), ('cache_pad', target),
@@ -512,13 +528,40 @@ def tweak(seed, pad, raw):
     return bytes([sound, tune & 0xFF, decay, tone, level, sweep, noise, attack])
 
 
-def melodic(build):
-    """The melodic Sound Generator on a Saw at A4."""
+def melodic(build, note=33):
+    """The melodic Sound Generator on a Saw at A4 (note 33; 12 per octave)."""
     build.setsym('kit_mode', 0)
     build.uc.mem_write(V0 + 0x70, bytes([6, 6]))
-    build.put(V0 + 0x5C, 33)
+    build.put(V0 + 0x5C, note)
     build.put(V0 + 0x74, 10000)
     build.put(V0 + 0x198, 10000)
+
+
+def stock_period(note, tune=4400):
+    """The exporter's period in frames (0x80132a6e..0x80132ab0): 48 kHz / (TUNE / 10 *
+    2^((note - 33) / 12)). Whole octaves of A only, where the stock exp2f is exact."""
+    if (note - 33) % 12:
+        raise ValueError('whole octaves of A only')
+    return 48000.0 / (tune / 10.0 * 2.0 ** ((note - 33) // 12))
+
+
+def stock_frames(note, units):
+    """Stock REC length for PAD LENGTH `units`: 0.5 s steps (>= 1), or 2^(units + 8) periods,
+    truncated (0x80132a64)."""
+    return units * 24000 if units >= 1 else int(stock_period(note) * 2 ** (units + 8))
+
+
+def melodic_frames(note, units):
+    """This build's melodic REC length: stock, except that an export under MIN frames is the
+    fewest whole periods that reach MIN (truncated as stock truncates)."""
+    frames = stock_frames(note, units)
+    if frames >= MIN:
+        return frames
+    period = stock_period(note)
+    k = int(MIN / period)
+    while int(period * k) < MIN:
+        k += 1
+    return int(period * k)
 
 
 def option(name):
@@ -595,53 +638,101 @@ def main():
         raise AssertionError('VALUE on -- must just leave edit mode')
     report['bank_value'] = dict(values=['--'] + list('ABCDEFGHIJ'), clamped=True)
 
-    # A bank with samples on pads 4, 8 and 13: KEEP/OVER for each, KEEP by default.
+    # A bank with samples on pads 4, 8 and 13: one question for the bank, FILL (the default: keep the
+    # samples, write the empty pads) or OVER (replace them all), then SURE? (NO by default).
     bank = 2
     old = {p: dict(pad=bank * 16 + p, mode='write', writes=[(HEADER_BUF, b'old')], header=(2, 0)) for p in (3, 7, 12)}
     m.files.update({bank * 16 + p: f for p, f in old.items()})
     m.choose(bank)
     m.log.clear()
-    if m.press(VALUE) != 1 or m.bstate() != ASK or m.get(EDIT) != 1 or m.item() != ('C-4', 'KEEP'):
-        raise AssertionError(('first question', m.bstate(), m.get(EDIT), m.item()))
+    if m.press(VALUE) != 1 or m.bstate() != ASK or m.get(EDIT) != 1 or m.item() != ('BNK-C', 'FILL'):
+        raise AssertionError(('bank question', m.bstate(), m.get(EDIT), m.item()))
     if m.press(REC_KEY) != 1 or m.get(KB, '<B') != 1:
         raise AssertionError('REC during the questions must do nothing')
-    m.turn(1)
-    if m.item() != ('C-4', 'OVER'):
-        raise AssertionError(('OVER', m.item()))
-    m.press(VALUE)
-    if m.item() != ('C-8', 'KEEP') or m.get(EDIT) != 1:
-        raise AssertionError(('second question', m.item()))
-    m.press(VALUE)
-    m.turn(1)
-    m.turn(-1)
-    if m.item() != ('C-13', 'KEEP'):
-        raise AssertionError(('third question', m.item()))
+    seen = []
+    for d in (1, 1, -1, -1):
+        m.turn(d)
+        seen.append(m.item())
+    if seen != [('BNK-C', 'OVER')] * 2 + [('BNK-C', 'FILL')] * 2 or m.cursor() != 22:
+        raise AssertionError(('FILL/OVER', seen))
+    if m.press(VALUE) != 1 or m.bstate() != SURE or m.get(EDIT) != 1 or m.item() != ('SURE?', 'NO'):
+        raise AssertionError(('confirmation', m.bstate(), m.get(EDIT), m.item()))
+    seen = []
+    for d in (1, 1, -1, 1):
+        m.turn(d)
+        seen.append(m.item()[1])
+    if seen != ['YES', 'YES', 'NO', 'YES'] or m.cursor() != 22:
+        raise AssertionError(('NO/YES', seen))
+    if m.press(REC_KEY) != 1 or m.get(KB, '<B') != 1:
+        raise AssertionError('REC during the confirmation must do nothing')
     m.poll()                                                      # a screen update while asking: nothing
-    if m.log or m.bstate() != ASK:
+    if m.log or m.bstate() != SURE:
         raise AssertionError(('wrote while asking', m.log))
-    m.press(VALUE)
-    if m.bstate() != RUN or m.get(EDIT) != 0 or m.item() != ('BOUNC', '0/14'):
-        raise AssertionError(('run after the questions', m.bstate(), m.get(EDIT), m.item()))
+    m.press(VALUE)                                                # YES, with FILL
+    if m.bstate() != RUN or m.get(EDIT) != 0 or m.item() != ('BOUNC', '0/13'):
+        raise AssertionError(('FILL run', m.bstate(), m.get(EDIT), m.item()))
     if m.press(REC_KEY) != 1 or m.get(KB, '<B') != 1:
         raise AssertionError('REC during the run must do nothing')
     m.run()
     progress = m.progress
     written = sorted(e[1] - bank * 16 for e in m.log if e[0] == 'create')
-    deleted = sorted(e[1] - bank * 16 for e in m.log if e[0] == 'delete')
     touched = {e[1] - bank * 16 for e in m.log if len(e) > 1 and e[0] not in ('save',)}
-    if written != [p for p in range(16) if p not in (7, 12)] or deleted != [3] or touched & {7, 12}:
-        raise AssertionError(('KEEP/OVER result', written, deleted, touched))
-    if m.files[bank * 16 + 7] is not old[7] or m.files[bank * 16 + 12] is not old[12] or m.files[bank * 16 + 3] is old[3]:
-        raise AssertionError('kept files must stay untouched, the OVER pad replaced')
-    if progress[-1] != 'DONE' or progress[:3] != ['1/14', '2/14', '3/14']:
+    if written != [p for p in range(16) if p not in old] or touched & set(old):
+        raise AssertionError(('FILL result', written, touched))
+    if any(m.files[bank * 16 + p] is not f for p, f in old.items()):
+        raise AssertionError('FILL must leave the samples untouched')
+    if progress[-1] != 'DONE' or progress[:3] != ['1/13', '2/13', '3/13']:
         raise AssertionError(('progress', progress))
     m.press(VALUE)                                                # edit mode again: back to --
     if m.item() != ('BOUNC', '--') or m.bstate() != IDLE:
         raise AssertionError(('after DONE', m.item()))
     m.turn(-1)
     m.press(VALUE)
-    report['questions'] = dict(used_pads=[4, 8, 13], answers=['OVER', 'KEEP', 'KEEP'], written=14,
-                               replaced=[4], kept_untouched=[8, 13], old_file_deleted_first=True,
+    filled = {p: m.files[bank * 16 + p] for p in range(16)}
+
+    # NO: nothing written, BOUNC back to -- with edit mode off. The bank is full now.
+    m.choose(bank)
+    m.log.clear()
+    m.press(VALUE)
+    m.turn(1)                                                     # OVER ...
+    m.press(VALUE)
+    if m.bstate() != SURE or m.item() != ('SURE?', 'NO'):
+        raise AssertionError(('confirmation after OVER', m.item()))
+    m.press(VALUE)                                                # ... not confirmed
+    for _ in range(3):
+        m.poll()
+    if m.bstate() != IDLE or m.get(EDIT) != 0 or m.item() != ('BOUNC', '--') or m.log:
+        raise AssertionError(('NO', m.bstate(), m.get(EDIT), m.item(), m.log))
+    if any(m.files[bank * 16 + p] is not f for p, f in filled.items()):
+        raise AssertionError('NO changed a pad')
+
+    # OVER, confirmed: all 16 pads written, each old file deleted before its new one.
+    m.choose(bank)
+    m.log.clear()
+    m.press(VALUE)
+    m.turn(1)
+    m.press(VALUE)
+    m.turn(1)
+    m.press(VALUE)
+    if m.bstate() != RUN or m.get(EDIT) != 0 or m.item() != ('BOUNC', '0/16'):
+        raise AssertionError(('OVER run', m.bstate(), m.get(EDIT), m.item()))
+    m.run()
+    written = sorted(e[1] - bank * 16 for e in m.log if e[0] == 'create')
+    deleted = sorted(e[1] - bank * 16 for e in m.log if e[0] == 'delete')
+    order = [[e[0] for e in m.log if e[0] in ('delete', 'create') and e[1] == bank * 16 + p] for p in range(16)]
+    if written != list(range(16)) or deleted != list(range(16)) or any(o != ['delete', 'create'] for o in order):
+        raise AssertionError(('OVER result', written, deleted, order))
+    if m.bstate() != DONE or any(m.files[bank * 16 + p] is f for p, f in filled.items()):
+        raise AssertionError('OVER left a sample in place')
+    for p in range(16):
+        if p not in old and not same_file(m.files[bank * 16 + p], filled[p]):
+            raise AssertionError(('the same kit bounced twice differs', p))
+    m.press(VALUE)
+    m.turn(-1)
+    m.press(VALUE)
+    report['questions'] = dict(used_pads=[4, 8, 13], question='BNK-C FILL (default) or OVER, then SURE? NO (default) or YES',
+                               fill_written=13, fill_kept_untouched=[4, 8, 13], no_writes_nothing=True,
+                               over_written=16, over_old_file_deleted_first=True, same_files_twice=True,
                                edit_mode_kept_while_asking=True, rec_ignored=True, progress=progress)
 
     # EXIT during the questions: nothing written, no page change, edit mode off.
@@ -657,6 +748,17 @@ def main():
         m.poll()
     if m.bstate() != IDLE or m.get(EDIT) != 0 or m.log or m.get(PAGE_REQUEST, '<H') != before or m.item() != ('BOUNC', '--'):
         raise AssertionError(('EXIT while asking', m.bstate(), m.get(EDIT), m.log, m.item()))
+    m.choose(bank)
+    m.press(VALUE)
+    m.turn(1)
+    m.press(VALUE)
+    m.turn(1)                                                     # SURE? YES, not yet pressed
+    if m.bstate() != SURE or m.press(EXIT) != 1:
+        raise AssertionError('EXIT while confirming')
+    for _ in range(3):
+        m.poll()
+    if m.bstate() != IDLE or m.get(EDIT) != 0 or m.log or m.get(PAGE_REQUEST, '<H') != before or m.item() != ('BOUNC', '--'):
+        raise AssertionError(('EXIT while confirming', m.bstate(), m.get(EDIT), m.log, m.item()))
     # EXIT during the run: the pads written so far stay, nothing more is written.
     bank = 4
     m.choose(bank)
@@ -672,7 +774,8 @@ def main():
         raise AssertionError(('EXIT during the run wrote more', sorted(m.files)))
     if m.get(PAGE_REQUEST, '<H') != before:
         raise AssertionError('EXIT during the run left the page')
-    report['exit'] = dict(while_asking='nothing written, stays on the page', during_run='3 pads written stay, no more')
+    report['exit'] = dict(while_asking='nothing written, stays on the page (FILL/OVER and SURE?)',
+                          during_run='3 pads written stay, no more')
 
     # An imprint armed: VALUE does not start a bounce.
     m.press(VALUE)                                                # edit mode on (from STOP: back to --)
@@ -737,6 +840,16 @@ def main():
     m.page(SG)
     if m.bstate() != IDLE or m.get(EDIT) != 0:
         raise AssertionError('page change while asking')
+    m.choose(7)
+    m.press(VALUE)
+    m.press(VALUE)
+    if m.bstate() != SURE:
+        raise AssertionError('bank H should confirm')
+    m.page(0x01)
+    m.event(0)
+    m.page(SG)
+    if m.bstate() != IDLE or m.get(EDIT) != 0 or len([p for p in m.files if 7 * 16 <= p < 8 * 16]) != 1:
+        raise AssertionError('page change while confirming')
     bank = 8
     m.choose(bank)
     m.press(VALUE)
@@ -809,30 +922,33 @@ def main():
     print(f'flow checks passed ({time.time() - t0:.0f} s)', flush=True)
 
     # 3. Drum REC never uses PAD LENGTH -------------------------------------------------------------
-    def keys_case(folder, syms, units_list):
+    def keys_case(folder, syms, units_list, refused_ok=False):
         """A struck 808 kick, REC pressed twice on the SG page at each PAD LENGTH."""
         b = Bouncer(folder, syms)
         b.setsym('kit_mode', 1)
         b.strike(0, 100)
         files = []
         for units in units_list:
-            file, log, y = b.rec_keys(SCRATCH_BANK * 16, units)
-            files.append((file, y))
-            del b.files[SCRATCH_BANK * 16]
+            file, log, y = b.rec_keys(SCRATCH_BANK * 16, units, refused_ok)
+            files.append((file, y, log))
+            b.files.pop(SCRATCH_BANK * 16, None)
         return b, files
     m, files = keys_case(out, parent, (-8, -1, 0, 4))
-    first, y_first = files[0]
-    if not all(same_file(f, first) for f, _ in files):
+    first, y_first, _ = files[0]
+    if not all(same_file(f, first) for f, _, _ in files):
         raise AssertionError('drum REC depends on PAD LENGTH')
     kick = pcm(first)
     against_long(m, 0, kick, y_first[0], 'struck kick REC', velocity=m.sym('kit_record_velocity'))
     keys_report = dict(pad_lengths=[-8, -1, 0, 4], identical=True, frames=len(kick),
                        seconds=round(len(kick) / 48000, 3), whole_kick='ring-out, as the longer REC shows')
     if baseline:
-        _, old_files = keys_case(baseline, base_parent, (-8,))
-        keys_report['v9.44_frames_at_-8'] = len(pcm(old_files[0][0]))
-        if keys_report['v9.44_frames_at_-8'] >= len(kick) // 10:
-            raise AssertionError(('v9.44 should show the short drum REC', keys_report['v9.44_frames_at_-8']))
+        # v9.44 at -8: a blip the SP's loader refuses, so the pad stays empty ("REC doesn't save").
+        _, old_files = keys_case(baseline, base_parent, (-8,), refused_ok=True)
+        old_file, _, old_log = old_files[0]
+        refused = [e for e in old_log if e[0] == 'refused']
+        if old_file is not None or len(refused) != 1 or not 0 < refused[0][2] < MIN:
+            raise AssertionError(('v9.44 drum REC at -8 should be refused', old_log))
+        keys_report['v9.44_at_-8'] = dict(frames=refused[0][2], refused_by_the_loader=True)
     report['rec_keys'] = keys_report
 
     # Two pads struck 64 frames apart record together and end where the later drum rings out.
@@ -854,28 +970,39 @@ def main():
     if len(y_long[1]) != length + 2 * FADE or any(y_long[0][:64]):
         raise AssertionError('the chord did not capture both drums at their offsets')
     ends = {j: delays[j] + ring_out(y_long[j][delays[j]:]) for j in (0, 1)}
-    if length != max(ends.values()):
+    if length != max(max(ends.values()), MIN):
         raise AssertionError(('chord length', ends, length))
     report['rec_chord'] = dict(pads=[2, 1], delays=[64, 0], ends=[ends[0], ends[1]], frames=length,
                                pad_lengths=[-1, 4], identical=True)
 
-    # A silent capture writes 10 ms of silence; melodic REC keeps PAD LENGTH.
+    # A silent capture writes 1000 frames of silence (the shortest sample the SP loads).
     level0 = bytearray(m.pad_bytes(1, 5)); level0[4] = 0
     m.set_pad(1, 5, level0)
     file, _, _, chosen = m.rec(5, SCRATCH_BANK * 16 + 5, -1)
-    if chosen != SILENT or len(pcm(file)) != SILENT or np.any(pcm(file)):
+    if chosen != MIN or len(pcm(file)) != MIN or np.any(pcm(file)):
         raise AssertionError(('silent capture', chosen, len(pcm(file))))
     del m.files[SCRATCH_BANK * 16 + 5]
-    melodic(m)
-    mel = {}
-    for units, want in ((1, 24000), (4, 96000), (-1, 13963), (-8, 109)):
-        file, _, _, chosen = m.rec(0, SCRATCH_BANK * 16, units)
-        mel[units] = len(pcm(file))
+    # Melodic REC keeps PAD LENGTH; in periods, under 1000 frames, the fewest whole periods that
+    # reach 1000. Notes A2 (9), A4 (33), A6 (57), A7 (69); -8 is 1 period, -1 is 128, 0 is 256.
+    mel, lengthened = {}, {}
+    for note, units in ((33, 1), (33, 4), (33, -1), (33, -4), (33, -5), (33, -6), (33, -7), (33, -8),
+                        (9, -6), (9, -7), (9, -8), (57, -2), (57, -3), (57, -8), (69, -1), (69, -2)):
+        melodic(m, note)
+        file, log, _, chosen = m.rec(0, SCRATCH_BANK * 16, units)
+        mel[f'{note}/{units}'] = got = len(pcm(file))
         del m.files[SCRATCH_BANK * 16]
-        if mel[units] != want or chosen != 0:
-            raise AssertionError(('melodic REC', units, mel[units], want, chosen))
-    report['rec_silent'] = dict(frames=SILENT, all_zero=True)
-    report['rec_melodic'] = dict(frames_by_pad_length={str(k): v for k, v in mel.items()}, uses_pad_length=True)
+        want = melodic_frames(note, units)
+        if got != want or chosen != 0 or any(e[0] == 'refused' for e in log):
+            raise AssertionError(('melodic REC', note, units, got, want, chosen))
+        if want != stock_frames(note, units):
+            lengthened[f'{note}/{units}'] = dict(stock=stock_frames(note, units), frames=got,
+                                                 periods=round(got / stock_period(note), 3))
+    if sorted(lengthened) != sorted(['33/-5', '33/-6', '33/-7', '33/-8', '9/-7', '9/-8', '57/-3', '57/-8', '69/-2']):
+        raise AssertionError(('lengthened cases', lengthened))
+    melodic(m)
+    report['rec_silent'] = dict(frames=MIN, all_zero=True)
+    report['rec_melodic'] = dict(frames_by_note_and_pad_length=mel, uses_pad_length=True,
+                                 lengthened_to_whole_periods=lengthened, minimum=MIN)
     print(f'REC length checks passed ({time.time() - t0:.0f} s)', flush=True)
 
     # 4. Against v9.44 ---------------------------------------------------------------------------
@@ -904,16 +1031,23 @@ def main():
         for build in (new, old):
             melodic(build)
             res = []
-            for units in (1, 4, -1, -8):
+            for units in (1, 4, -1, -4):
                 file, log, _, _ = build.rec(0, 3 * 16, units)
                 res.append((file['header'], file['writes'], log))
                 del build.files[3 * 16]
             mel.append(res)
         if mel[0] != mel[1]:
             raise AssertionError('melodic REC differs from v9.44')
+        # 1 cycle of A4 (109 frames): refused on v9.44 (the pad stays empty), 10 whole cycles here.
+        ofile, olog, _, _ = old.rec(0, 3 * 16, -8, refused_ok=True)
+        nfile, _, _, _ = new.rec(0, 3 * 16, -8)
+        if ofile is not None or ('refused', 3 * 16, stock_frames(33, -8)) not in olog or \
+                len(pcm(nfile)) != melodic_frames(33, -8):
+            raise AssertionError(('melodic REC of 1 cycle', olog, len(pcm(nfile))))
         report['baseline'] = dict(build=json.loads((baseline / 'manifest.json').read_text())['revision'],
                                   drum_recs_same_audio=len(drum), drum_frames=drum,
-                                  melodic_recs_identical=len(mel[0]), melodic_pad_lengths=[1, 4, -1, -8])
+                                  melodic_recs_identical=len(mel[0]), melodic_pad_lengths=[1, 4, -1, -4],
+                                  one_cycle_a4=dict(v9_44='refused by the loader', frames=len(pcm(nfile))))
 
     report.update(passed=True, app1_sha256=m.man['sha256'], revision=m.man['revision'],
                   seconds=round(time.time() - t0))
