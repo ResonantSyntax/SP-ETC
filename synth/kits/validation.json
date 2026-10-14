@@ -13,6 +13,7 @@
   },
   "source_files": 24,
   "hardware_verified": false,
+  "published_as": "Sound Generator + Kits v9.46 (patcher, kits-data.js from synth/publish_kits.py)",
   "public_source_rebuild_matches": true,
   "browser_checks_passed": true,
   "combines": [

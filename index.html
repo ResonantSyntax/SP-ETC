@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tracelistener · SP-404MKII synth patcher</title>
-<meta name="description" content="Tracelistener's SP-404MKII Sound Generator mod: Sound Generator v9.9.3 (four voices, 17 added waves, envelopes, 34 scales, an arpeggiator) or Sound Generator + Kits v9.43 (adds 13 synthesized drum kits). Local browser patching; no firmware uploads.">
+<meta name="description" content="Tracelistener's SP-404MKII Sound Generator mod: Sound Generator v9.9.3 (four voices, 17 added waves, envelopes, 34 scales, an arpeggiator) or Sound Generator + Kits v9.46 (adds 13 synthesized drum kits, MIDI, kit bounce and looper support). Local browser patching; no firmware uploads.">
 <style>
 
 :root {
@@ -180,7 +180,7 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
       <dl class="facts">
         <div><dt>Stock firmware</dt><dd>5.52</dd></div>
         <div><dt>Sound Generator</dt><dd>v9.9.3</dd></div>
-        <div><dt>Sound Generator + Kits</dt><dd>v9.43</dd></div>
+        <div><dt>Sound Generator + Kits</dt><dd>v9.46</dd></div>
         <div><dt>Drum kits</dt><dd>13</dd></div>
       </dl>
       <div class="builds">
@@ -189,18 +189,18 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
           <p>Four live voices, 17 added waves, nine envelope and filter presets, 34 scales and an arpeggiator.</p>
         </section>
         <section class="build">
-          <h2>Sound Generator + Kits<span class="v">v9.43</span></h2>
-          <p>The same Sound Generator plus 13 synthesized drum kits: <span class="nw">TR-808</span>, <span class="nw">DR-110</span>, <span class="nw">KPR-77</span>, <span class="nw">Lel' UDS</span>, <span class="nw">TR-909</span>, <span class="nw">TR-606</span>, <span class="nw">SDS-V</span>, <span class="nw">Mini Pops 7</span>, <span class="nw">CR-78</span>, <span class="nw">CR-8000</span>, <span class="nw">TR-707</span>, <span class="nw">TR-727</span> and a <span class="nw">DX-style</span> FM kit.</p>
+          <h2>Sound Generator + Kits<span class="v">v9.46</span></h2>
+          <p>The same Sound Generator plus 13 synthesized drum kits: <span class="nw">TR-808</span>, <span class="nw">DR-110</span>, <span class="nw">KPR-77</span>, <span class="nw">Lel' UDS</span>, <span class="nw">TR-909</span>, <span class="nw">TR-606</span>, <span class="nw">SDS-V</span>, <span class="nw">Mini Pops 7</span>, <span class="nw">CR-78</span>, <span class="nw">CR-8000</span>, <span class="nw">TR-707</span>, <span class="nw">TR-727</span> and a <span class="nw">DX-style</span> FM kit. Play them from a sequencer over MIDI, bounce a kit into a sample bank, resample them or loop them.</p>
         </section>
       </div>
-      <p class="versions-note">Sound Generator + Kits has its own version number: v9.43 is built on Sound Generator v9.9.3, not an older release of it. With neither build ticked, the patcher makes the base build without synth additions. An experimental MIDI test build (v9.44-test1) is also offered below; it has not been played on hardware yet.</p>
+      <p class="versions-note">Sound Generator + Kits has its own version number: v9.46 is built on Sound Generator v9.9.3, not an older release of it. With neither build ticked, the patcher makes the base build without synth additions.</p>
     </div>
   </section>
   <main>
     <article class="row">
       <span class="n">1</span>
       <div class="body">
-        <p class="t">Works with stock firmware <strong data-doomos="firmware-list"></strong>. Tick one build: Sound Generator (v9.9.3), Sound Generator + Kits (v9.43), or the experimental MIDI test build (v9.44-test1). All start unticked.</p>
+        <p class="t">Works with stock firmware <strong data-doomos="firmware-list"></strong>. Tick one build: Sound Generator (v9.9.3) or Sound Generator + Kits (v9.46). Both start unticked.</p>
         <div id="doomos-patcher"></div>
         <p class="t">Our <a class="inline" href="https://github.com/tracelistener/doom-os-etc./blob/main/synth/ARP.md">arpeggiator notes and test instructions</a> · <a class="inline" href="https://github.com/tracelistener/doom-os-etc./blob/main/synth/KITS.md">kit controls and test status</a> · <a class="inline" href="https://github.com/tracelistener/doom-os-etc./blob/main/synth/SCALES.md">v9.6 scales and fixes</a> · <a class="inline" href="https://github.com/tracelistener/doom-os-etc./blob/main/synth/WAVES.md">wave list</a> · <a class="inline" href="https://github.com/tracelistener/doom-os-etc.">source code</a> · <a class="inline" href="https://tracelistener.github.io/sp404mk2-sound-generator/">Wave Lab preview</a></p>
         <details class="env-guide">
@@ -236,23 +236,24 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
           <p class="t">With ARP on, pads and MIDI IN feed the arp instead of playing directly. Each step is released half a step later, so the ENV preset shapes every step and release tails overlap. The arp follows the tempo BPM-synced samples in the current bank follow: the PROJECT BPM, the bank's own BPM when the tempo is set to BANK, the MIDI clock when synced, or a playing pattern's tempo. It runs free from the first key, not locked to the pattern's beat grid. Turning ARP on stops notes played directly; leaving the Sound Generator page stops the arp. Settings reset at power-on.</p>
         </details>
         <details class="env-guide">
-          <summary>Drum kit guide (v9.43)</summary>
+          <summary>Drum kit guide (v9.46)</summary>
           <p class="t">For the Sound Generator + Kits build. SHIFT + PATTERN EDIT opens drum mode with the last kit you used; SHIFT + RECORD SETTING returns to the melodic Sound Generator. The 13 kits are TR808, DR110, KPR77, UDS, FM, TR909, TR606, SDS-V, MP-7, CR78, CR8K, TR707 and TR727. Every sound is synthesized on the SP; no samples are used.</p>
           <ul>
             <li><strong>Pads:</strong> each kit fills all 16 pads. Pads beyond a machine's own voices hold tuned or reshaped variants, shown with a + after the sound name. Strike a pad to select it for editing.</li>
             <li><strong>Knobs:</strong> CTRL1 Tune (&plusmn;12 semitones), CTRL2 Decay, CTRL3 Tone. Tap SHIFT for Sweep, Noise and Attack; tap again to go back. Tune at 0 and the others at 50 play the machine's own sound.</li>
             <li><strong>Change a pad's sound:</strong> hold the pad and turn VALUE to step through that machine's sounds.</li>
-            <li><strong>VALUE menu:</strong> ARP, RATE, HOLD and BPM (a readout), then KIT, PAD, SOUND and LEVEL (0&ndash;127). KIT steps through the 13 machines.</li>
-            <li><strong>REC:</strong> play, press REC, choose a pad (it blinks), then press REC again. It records the last pad you hit plus up to three others hit within 100 ms before it, each with its own timing and velocity. You don't need to hold the pads.</li>
-            <li><strong>Known issue:</strong> REC takes its length from the melodic Pad Length, which drum mode doesn't show. If Pad Length is set to a waveform-cycle value instead of a time, only a tiny blip is saved. Workaround: in melodic mode (SHIFT + RECORD SETTING), tap SHIFT for the Pad Length / Balance page and set Pad Length to a time such as 2 seconds, then return to drums. A fix is coming with the next kit build.</li>
+            <li><strong>VALUE menu:</strong> ARP, RATE, HOLD and BPM (a readout), then KIT, PAD, SOUND and LEVEL (0&ndash;127), then M.CH (the MIDI channel) and BOUNC. KIT steps through the 13 machines.</li>
+            <li><strong>REC:</strong> play, press REC, choose a pad (it blinks), then press REC again. It records the last pad you hit plus up to three others hit within 100 ms before it, each with its own timing and velocity. You don't need to hold the pads. The recording runs until the last drum has rung out (at least 21 ms, at most 10 s); Pad Length plays no part in drum mode.</li>
+            <li><strong>BOUNC (the kit into a sample bank):</strong> turn VALUE to BOUNC, press VALUE, turn to a bank (A&ndash;J), press VALUE. An empty bank fills at once with the kit's 16 pads, each with its own settings. A bank with samples asks once: FILL keeps them and fills the empty pads, OVER replaces them all; then SURE? (NO or YES). EXIT stops it.</li>
+            <li><strong>Resample and looper:</strong> on the RESAMPLE screen (take armed) or the LOOPER screen (MARK with MARK Function set to Looper), SHIFT + PATTERN EDIT opens the kits. SHIFT + RECORD SETTING opens the melodic Sound Generator from the LOOPER screen, and the Sound Generator as you left it from the RESAMPLE screen. With the looper on, REC on the Sound Generator screen records the loop. In this build a resampled take starts on its first sound instead of a few milliseconds of silence.</li>
           </ul>
           <p class="t">The arpeggiator also runs in drum mode and steps through the held pads; A.OCT applies only to melodic mode. Kit edits are not saved and reset at power-on.</p>
         </details>
         <details class="env-guide">
-          <summary>MIDI test guide (v9.44-test1, experimental)</summary>
-          <p class="t">Only in the test build. It works while the Sound Generator is open, in drum (kits) or melodic mode, and stops when you leave that screen. It has passed the emulator checks but has not been played on hardware yet, so keep your known-good update at hand.</p>
+          <summary>MIDI guide (Kits v9.46)</summary>
+          <p class="t">In the Sound Generator + Kits build. It works while the Sound Generator is open, in drum (kits) or melodic mode, and stops when you leave that screen.</p>
           <ul>
-            <li><strong>Channel:</strong> M.CH, the last VALUE item in both modes (1&ndash;16, default 16), is the channel the Sound Generator plays. Channel 16 is also the SP's control channel, so for sequencing a free channel such as 11&ndash;15 avoids triggering SP functions when you leave the Sound Generator. M.CH returns to 16 at power-on.</li>
+            <li><strong>Channel:</strong> M.CH, in the VALUE menu of both modes (the last item in melodic mode, just before BOUNC in drum mode; 1&ndash;16, default 16), is the channel the Sound Generator plays. Channel 16 is also the SP's control channel, so for sequencing a free channel such as 11&ndash;15 avoids triggering SP functions when you leave the Sound Generator. M.CH returns to 16 at power-on.</li>
             <li><strong>Drum notes:</strong> 36&ndash;51 play pads 1&ndash;16 (36 = pad 1, the kick in most kits); other notes are ignored. A MIDI hit acts like a pad strike, so PAD, REC and the arp treat it as one.</li>
             <li><strong>Drum CCs:</strong> three per pad, in the order Tune, Decay, Level. Pads 1&ndash;4 use CC 20&ndash;31, pads 5&ndash;12 use 40&ndash;63 and pads 13&ndash;16 use 102&ndash;113 (pad 1 = 20, 21, 22; pad 2 = 23, 24, 25, and so on). The last pad heard takes Tone 114, Sweep 115, Noise 116 and Attack 117. CC 64 is the knob centre: Tune 0, the others 50%.</li>
             <li><strong>Synth CCs:</strong> TYPE 70, FREQ 71, LEVEL 72, DUTY 73, BALANCE 74, ENV 75, TUNE 76. Keyboards whose knobs send CC 71&ndash;74 will move these; put such a keyboard on another channel.</li>
@@ -269,7 +270,7 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
         <h2>Prepare your test update</h2>
         <ol class="steps">
           <li>Back up your samples, projects and settings. Keep the original Roland 5.52 update and your working build.</li>
-          <li>Load the unmodified stock 5.52 <code>SP404MKII_APP1.bin</code> above and tick Sound Generator (v9.9.3) or Sound Generator + Kits (v9.43).</li>
+          <li>Load the unmodified stock 5.52 <code>SP404MKII_APP1.bin</code> above and tick Sound Generator (v9.9.3) or Sound Generator + Kits (v9.46).</li>
           <li>Download the result as <code>SP404MKII_APP1.bin</code>. Use it with the unchanged official 5.52 <code>SP404MKII_APP0.bin</code> and your established SD-card update procedure.</li>
           <li>Return to the known-good update for hangs, stuck notes or audio breakup.</li>
         </ol>
@@ -283,8 +284,7 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
 </div>
 <script src="synth-data.js?v=waves-v9-9-3-e111c584"></script>
 <script src="waves-data.js?v=waves-v9-9-3-e111c584"></script>
-<script src="kits-data.js?v=kits-v9-43-f6b83372"></script>
-<script src="kits-midi-data.js?v=kits-midi-v9-44-test1-d47f46d4"></script>
-<script src="doomos-patcher.js?v=kits-v9-43-midi-v9-44-test1"></script>
+<script src="kits-data.js?v=kits-v9-46-7b5fbcb4"></script>
+<script src="doomos-patcher.js?v=kits-v9-46"></script>
 </body>
 </html>

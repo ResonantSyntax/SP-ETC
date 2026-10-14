@@ -205,12 +205,7 @@ if (typeof module === 'object' && module.exports) {
           ' checked> Sound Generator (4 voices)') +
         '</label></div>' : '') +
       (window.DOOMOS_KITS ?
-        '<div class="synth-choice"><label><input type="checkbox" id="synthKits"> Sound Generator + Kits v9.43 (13 synthesized kits)</label></div>' : '') +
-      (window.DOOMOS_KITS_MIDI ?
-        '<div class="synth-choice"><label><input type="checkbox" id="synthKitsMidi"> Test build: Sound Generator + Kits v9.44-test1 (MIDI)</label>' +
-        '<p class="small">Experimental and not yet played on hardware. Everything in Kits v9.43, plus external MIDI: ' +
-        'notes 36–51 play pads 1–16, a new M.CH menu item sets the Sound Generator’s channel (default 16), ' +
-        'and CCs control the kit and synth parameters. See the MIDI test guide below.</p></div>' : '') +
+        '<div class="synth-choice"><label><input type="checkbox" id="synthKits"> Sound Generator + Kits v9.46 (13 synthesized kits)</label></div>' : '') +
       '<div class="actions">' +
       '<button type="button" class="btn" id="patch" disabled>Patch firmware</button>' +
       '<a class="btn" id="download" download="SP404MKII_APP1.bin" hidden>Download patched firmware ↓</a>' +
@@ -223,8 +218,8 @@ if (typeof module === 'object' && module.exports) {
     const input = $('file'), drop = $('drop'), big = $('dropBig'), small = $('dropSmall');
     const status = $('status'), state = $('state');
     const patchBtn = $('patch'), download = $('download'), reset = $('reset');
-    const synthPoly = $('synthPoly'), synthKits = $('synthKits'), synthMidi = $('synthKitsMidi');
-    const choices = [synthPoly, synthKits, synthMidi].filter(Boolean);
+    const synthPoly = $('synthPoly'), synthKits = $('synthKits');
+    const choices = [synthPoly, synthKits].filter(Boolean);
     for (const box of choices) box.addEventListener('change', () => {
       if (box.checked) for (const other of choices) if (other !== box) other.checked = false;
     });
@@ -296,9 +291,8 @@ if (typeof module === 'object' && module.exports) {
 
     async function patch() {
       if (!source) return;
-      const addMidi = !!(synthMidi && synthMidi.checked);
-      const addKits = !addMidi && synthKits && synthKits.checked;
-      const addPoly = !addMidi && !addKits && synthPoly && synthPoly.checked;
+      const addKits = !!(synthKits && synthKits.checked);
+      const addPoly = !addKits && synthPoly && synthPoly.checked;
       const addWaves = addPoly && !!window.DOOMOS_WAVES;
       for (const box of choices) box.disabled = true;
       patchBtn.disabled = true;
@@ -307,9 +301,6 @@ if (typeof module === 'object' && module.exports) {
       await new Promise(r => setTimeout(r, 20));
       try {
         let result = applyPatch(container, source);
-        if (addMidi) {
-          result = applyPatch(fromBase64(window.DOOMOS_KITS_MIDI_PATCH), result.bytes);
-        }
         if (addKits) {
           result = applyPatch(fromBase64(window.DOOMOS_KITS_PATCH), result.bytes);
         }
@@ -324,7 +315,7 @@ if (typeof module === 'object' && module.exports) {
         download.hidden = false;
         reset.hidden = false;
         patchBtn.hidden = true;
-        say('Done. ' + (addMidi ? 'Test build Sound Generator + Kits v9.44-test1 (MIDI)' : addKits ? 'Sound Generator + Kits v9.43' : addPoly ? 'Sound Generator (4 voices' +
+        say('Done. ' + (addKits ? 'Sound Generator + Kits v9.46' : addPoly ? 'Sound Generator (4 voices' +
             (addWaves ? ', 17 new waves, envelopes, 34 scales, arpeggiator, v9.9.3)' : ')') : 'Base build without synth additions') +
             ' has been patched into firmware ' + result.label + '. '
             + 'Download it and keep the name SP404MKII_APP1.bin.', 'ok');

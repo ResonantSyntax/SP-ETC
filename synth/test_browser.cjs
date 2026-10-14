@@ -12,7 +12,7 @@ if (!input) throw new Error('Usage: node synth/test_browser.cjs /path/to/stock/S
 const stock = new Uint8Array(fs.readFileSync(input));
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 
-function load(includeSynth = true, includeWaves = false, includeKits = false, includeMidi = false) {
+function load(includeSynth = true, includeWaves = false, includeKits = false) {
   const elements = new Map();
   const get = id => {
     if (!elements.has(id)) elements.set(id, {
@@ -32,7 +32,7 @@ function load(includeSynth = true, includeWaves = false, includeKits = false, in
       addEventListener(event, fn) { if (event === 'DOMContentLoaded') start = fn; },
       querySelectorAll() { return []; },
       getElementById(id) {
-        if (['synthPoly','synthWaves','synthKits','synthKitsMidi'].includes(id) && !get('doomos-patcher').innerHTML.includes('id="' + id + '"')) return null;
+        if (['synthPoly','synthWaves','synthKits'].includes(id) && !get('doomos-patcher').innerHTML.includes('id="' + id + '"')) return null;
         return get(id);
       },
     },
@@ -44,7 +44,6 @@ function load(includeSynth = true, includeWaves = false, includeKits = false, in
   if (includeSynth) vm.runInContext(fs.readFileSync(path.join(root, 'synth-data.js'), 'utf8'), context);
   if (includeWaves) vm.runInContext(fs.readFileSync(path.join(root, 'waves-data.js'), 'utf8'), context);
   if (includeKits) vm.runInContext(fs.readFileSync(path.join(root, 'kits-data.js'), 'utf8'), context);
-  if (includeMidi) vm.runInContext(fs.readFileSync(path.join(root, 'kits-midi-data.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(root, 'doomos-patcher.js'), 'utf8'), context);
   start();
   return { context, get, api: context.module.exports, blob: () => blob };
@@ -120,9 +119,11 @@ async function choose(page, bytes, name = 'SP404MKII_APP1.bin') {
   const html = fs.readFileSync(path.join(root,'index.html'),'utf8');
   const readme = fs.readFileSync(path.join(root,'README.md'),'utf8');
   assert.match(html,/Envelope preset guide \(ENV\)/);
-  assert.match(html,/doomos-patcher\.js\?v=kits-v9-43-midi-v9-44-test1/);
-  assert.match(html,/kits-midi-data\.js\?v=kits-midi-v9-44-test1-d47f46d4/);
-  assert.match(html,/MIDI test guide \(v9\.44-test1, experimental\)/);
+  assert.match(html,/doomos-patcher\.js\?v=kits-v9-46/);
+  assert.match(html,/kits-data\.js\?v=kits-v9-46-7b5fbcb4/);
+  assert.doesNotMatch(html,/kits-midi-data|MIDI test guide|v9\.43|v9\.44/);
+  assert.match(html,/Drum kit guide \(v9\.46\)/);
+  assert.match(html,/MIDI guide \(Kits v9\.46\)/);
   assert.match(readme,/Sound Generator envelopes \(v9\.9\.3\)/);
   assert.match(readme,/## Scale pads \(v9\.9\.3\)/);
   assert.match(readme,/## Arpeggiator \(v9\.9\.3\)/);
@@ -190,8 +191,8 @@ async function choose(page, bytes, name = 'SP404MKII_APP1.bin') {
   assert.equal(kitPage.get('synthPoly').checked,false);
   const kitOverlay=api.fromBase64(kitPage.context.window.DOOMOS_KITS_PATCH);
   const kitResult=api.applyPatch(kitOverlay,doom.bytes);
-  assert.equal(kitResult.digest,'f6b83372d10d96b8fb070df6790f6e5ed375a457391cab43eae2e9233848a515');
-  assert.equal(kitResult.bytes.length,3085968);
+  assert.equal(kitResult.digest,'7b5fbcb4c3ce1e8782fef4b5803be74c7d14eddf25a1b53682abe00c9ed3684a');
+  assert.equal(kitResult.bytes.length,3094624);
   assert.equal(JSON.stringify(kitPage.context.window.DOOMOS_KITS.kit_selector_range),'[1,13]');
   assert.throws(()=>api.applyPatch(kitOverlay,stock),/unsupported firmware/);
   kitPage.get('synthPoly').checked=true;
@@ -199,7 +200,7 @@ async function choose(page, bytes, name = 'SP404MKII_APP1.bin') {
   assert.equal(kitPage.get('synthPoly').checked,false,'selection excludes legacy generator');
   await choose(kitPage,stock);await kitPage.get('patch').listeners.click();
   assert.equal(digest(new Uint8Array(await kitPage.blob().arrayBuffer())),kitResult.digest);
-  assert.match(kitPage.get('status').textContent,/Sound Generator \+ Kits v9\.43/);
+  assert.match(kitPage.get('status').textContent,/Sound Generator \+ Kits v9\.46/);
   assert.equal(kitPage.get('synthKits').disabled,true);
   kitPage.get('reset').listeners.click();assert.equal(kitPage.get('synthKits').disabled,false);
   assert.equal(kitPage.get('synthKits').checked,true,'reset preserves chosen kit option');
@@ -217,35 +218,14 @@ async function choose(page, bytes, name = 'SP404MKII_APP1.bin') {
   assert.equal(kitPage.blob(),null);assert.equal(kitPage.get('download').hidden,true);
   assert.equal(kitPage.get('synthKits').disabled,false);
   assert.match(kitPage.get('status').textContent,/came out wrong/);
-  // Experimental MIDI test build: a third, opt-in option with its own guarded overlay.
-  const midiPage = load(true,true,true,true);
-  const midiPanel = midiPage.get('doomos-patcher').innerHTML;
-  assert.equal((midiPanel.match(/type="checkbox"/g)||[]).length,3);
-  assert.match(midiPanel,/Test build: Sound Generator \+ Kits v9\.44-test1 \(MIDI\)/);
-  assert.match(midiPanel,/not yet played on hardware/);
-  assert.equal(midiPage.get('synthKitsMidi').checked,false,'test build is opt-in');
-  assert.equal(midiPage.context.window.DOOMOS_KITS_MIDI.experimental,true);
-  const midiOverlay=api.fromBase64(midiPage.context.window.DOOMOS_KITS_MIDI_PATCH);
-  const midiResult=api.applyPatch(midiOverlay,doom.bytes);
-  assert.equal(midiResult.digest,'d47f46d4204a90366ac06774050b9ee4c7b9cdfb6470ca65be9f10c24ad1a51d');
-  assert.equal(midiResult.bytes.length,3088608);
-  assert.throws(()=>api.applyPatch(midiOverlay,stock),/unsupported firmware/);
-  midiPage.get('synthKits').checked=true;
-  midiPage.get('synthKitsMidi').checked=true;midiPage.get('synthKitsMidi').listeners.change();
-  assert.equal(midiPage.get('synthKits').checked,false,'test build excludes the published kits');
-  assert.equal(midiPage.get('synthPoly').checked,false);
-  await choose(midiPage,stock);await midiPage.get('patch').listeners.click();
-  assert.equal(digest(new Uint8Array(await midiPage.blob().arrayBuffer())),midiResult.digest);
-  assert.match(midiPage.get('status').textContent,/Test build Sound Generator \+ Kits v9\.44-test1 \(MIDI\)/);
-  assert.equal(midiPage.get('synthKitsMidi').disabled,true);
-  midiPage.get('reset').listeners.click();assert.equal(midiPage.get('synthKitsMidi').disabled,false);
-  midiPage.get('synthKits').checked=true;midiPage.get('synthKits').listeners.change();
-  assert.equal(midiPage.get('synthKitsMidi').checked,false,'published kits exclude the test build');
-  await choose(midiPage,stock);await midiPage.get('patch').listeners.click();
-  assert.equal(digest(new Uint8Array(await midiPage.blob().arrayBuffer())),kitResult.digest);
-  midiPage.get('reset').listeners.click();midiPage.get('synthKits').checked=false;
-  await choose(midiPage,stock);await midiPage.get('patch').listeners.click();
-  assert.equal(digest(new Uint8Array(await midiPage.blob().arrayBuffer())),doom.digest);
-  console.log('PASS: experimental MIDI test option, exact v9.44-test1 output and exclusive selection.');
-  console.log('PASS: optional kits, exact v9.43 output, legacy selections, reset, corruption rejection; exact stock DOOM/poly-v4/v9.9.3 downloads, reset, header-image removal, hash gates and corrupt-overlay rejection.');
+  // v9.46 is build v9.46-test3 plus the RESAMPLE start fix, in one guarded overlay; the v9.44-test1
+  // MIDI test option it supersedes is gone from the page and the patcher.
+  assert.equal(kitPage.context.window.DOOMOS_KITS.release,'v9.46');
+  assert.equal(kitPage.context.window.DOOMOS_KITS.revision,'v9.46-test3');
+  assert.equal(kitPage.context.window.DOOMOS_KITS.start_fix,'resample-startfix-2');
+  assert.equal(kitPage.context.window.DOOMOS_KITS.kit_stage_sha256,'88384c3c9760559e721c1a14973ef3a2ced6abf016572b0a73c5dfb0cef492ba');
+  assert.equal(kitPage.context.window.DOOMOS_KITS_MIDI,undefined);
+  assert.doesNotMatch(kitPage.get('doomos-patcher').innerHTML,/synthKitsMidi|Test build/);
+  assert.ok(!fs.existsSync(path.join(root,'kits-midi-data.js')),'superseded MIDI test overlay removed');
+  console.log('PASS: optional kits, exact v9.46 output (v9.46-test3 + RESAMPLE start fix), MIDI test option retired, legacy selections, reset, corruption rejection; exact stock DOOM/poly-v4/v9.9.3 downloads, reset, header-image removal, hash gates and corrupt-overlay rejection.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -1,9 +1,18 @@
-# Synthesized machine kits v9.46 (test candidate)
+# Synthesized machine kits v9.46
 
-This branch carries the v9.46-test3 kit candidate. test3 adds the kits to the
-looper: on the LOOPER screen, SHIFT + PATTERN EDIT now opens the kits, as
-SHIFT + RECORD SETTING opens the melodic Sound Generator there
-([Looper](#looper)).
+The patcher's **Sound Generator + Kits** option produces v9.46: build
+v9.46-test3 plus the RESAMPLE start fix, APP1 SHA-256 `7b5fbcb4…684a`
+(3,094,624 bytes). It replaces v9.43 (build v9.43-test3, `f6b83372…a515`) and
+the experimental v9.44-test1 MIDI build, whose MIDI it includes.
+
+test1 and test2 were partly played on hardware (drum REC, BOUNC and the
+looper), and those reports led to the changes below. MIDI, hot resample and the
+RESAMPLE start fix have no hardware report yet; test2 and test3's own changes
+are checked in the emulator only.
+
+test3 adds the kits to the looper: on the LOOPER screen, SHIFT + PATTERN EDIT
+now opens the kits, as SHIFT + RECORD SETTING opens the melodic Sound Generator
+there ([Looper](#looper)).
 
 test2 answered the first hardware report on test1:
 
@@ -33,15 +42,10 @@ test1 combined the open test branches:
 - The RESAMPLE start fix: a resampled take's START lands on its first sound
   ([RESAMPLE start fix](#resample-start-fix)).
 
-test3 has emulator verification only and is not in the patcher. The patcher's
-published option is still v9.43 (build v9.43-test3, APP1 SHA-256
-`f6b83372…a515`); its experimental option is the v9.44-test1 MIDI build.
-
-v9.43 has thirteen kits, every voice re-measured against references. Its test1
-and test2 were played on hardware. test2 answered the first report (kick level,
-FM kick and bells, recording struck drums together, the REC destination pad
-blink). test3 trims the drum VALUE menu after the second report and has emulator
-verification only.
+The kits themselves are v9.43's: thirteen kits, every voice re-measured against
+references. v9.43's test1 and test2 were played on hardware; test2 answered the
+first report (kick level, FM kick and bells, recording struck drums together,
+the REC destination pad blink) and test3 trimmed the drum VALUE menu.
 
 Select **Sound Generator + Kits** in the patcher. This separate option
 includes the melodic generator and shared arpeggiator. Both browser choices
@@ -308,7 +312,8 @@ is open, as stock MIDI to the Sound Generator always has.
 
 ### Channel: M.CH
 
-M.CH is the last VALUE item in both modes: 1–16, default 16. It is RAM-only and
+M.CH is in the VALUE menu of both modes (the last item in melodic mode, just
+before BOUNC in drum mode): 1–16, default 16. It is RAM-only and
 returns to 16 at power-on. Changing it stops the sounding notes and clears the
 arp's held notes, so a note held on the old channel cannot hang.
 

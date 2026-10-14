@@ -1,21 +1,14 @@
-# Kits MIDI test build v9.44-test1 (experimental)
+# Kits MIDI (Sound Generator + Kits v9.46)
 
-The patcher offers this build as **Test build: Sound Generator + Kits
-v9.44-test1 (MIDI)**, next to the published Sound Generator v9.9.3 and Sound
-Generator + Kits v9.43. It is v9.43 plus external MIDI, so the kits and the
-melodic Sound Generator can be sequenced from a DAW or a hardware sequencer
-instead of being resampled.
+External MIDI is part of **Sound Generator + Kits v9.46** in the patcher, so the
+kits and the melodic Sound Generator can be sequenced from a DAW or a hardware
+sequencer instead of being resampled. It first appeared as the experimental
+v9.44-test1 build (APP1 `d47f46d4…a51d`), which v9.46 replaces; the patcher no
+longer offers that test build.
 
-**Status:** it has passed the emulator checks below but has not been played on
-hardware yet. Back up first and keep your known-good update for rollback.
-
-- APP1 SHA-256 `d47f46d4204a90366ac06774050b9ee4c7b9cdfb6470ca65be9f10c24ad1a51d`
-  (3,088,608 bytes); APP0 stays stock. A clean rebuild from stock 5.52
-  reproduces it.
-- Source, build and overlay script: branch
-  [`claude/kits-midi`](https://github.com/tracelistener/doom-os-etc./tree/claude/kits-midi)
-  (`synth/build_kits.py`, then `synth/publish_kits_midi.py`). Its `synth/KITS.md`
-  has the full technical notes. This main branch keeps the v9.43 sources.
+**Status:** emulator-checked as described below; not yet confirmed on hardware.
+Back up first and keep your known-good update for rollback. Source, build and
+the other v9.46 features: [KITS.md](KITS.md).
 
 Everything below works while the Sound Generator is open, in drum (kits) or
 melodic mode; the kits run on the Sound Generator screen. Leaving that screen,
@@ -24,7 +17,8 @@ same four voices, so only one of them plays at a time.
 
 ## Channel: M.CH
 
-M.CH is the last VALUE item in both modes: 1–16, default 16. It is RAM-only and
+M.CH is in the VALUE menu of both modes (the last item in melodic mode, just
+before BOUNC in drum mode): 1–16, default 16. It is RAM-only and
 returns to 16 at power-on. Changing it stops the sounding notes and clears the
 arp's held notes, so a note held on the old channel cannot hang.
 
@@ -113,7 +107,7 @@ knob edits.
 
 ## Emulator checks
 
-`synth/test_kit_midi.py` (on the branch) boots the built image the way its
+`synth/test_kit_midi.py` boots the built image the way its
 scatter loader does and feeds MIDI through the stock dispatcher with the Sound
 Generator code running:
 
@@ -126,8 +120,8 @@ Generator code running:
 - 336 drum, 35 melodic and 32 arp CC cases set exactly the knob values; 1,630
   other CCs change nothing; every CC still reaches the stock CC queue byte for
   byte; CC 123 and CC 120 behave as described above.
-- The v9.43 kit, capture, chord, shortcut and menu checks pass on this build,
-  and the patcher test applies its overlay to an exact APP1.
+- The kit, capture, chord, shortcut and menu checks pass on v9.46, and the
+  patcher test applies its overlay to an exact APP1.
 
 ## Known stock quirk
 

@@ -4,11 +4,11 @@
 
 Sound Generator **v9.9.3** adds four live voices, 17 new waveforms, nine
 volume/filter-envelope presets, 34 scale choices and an arpeggiator to the SP-404MKII. Firmware processing happens
-locally in your browser; nothing is uploaded. Choose the existing Sound Generator option or **Sound Generator + Kits v9.43**
+locally in your browser; nothing is uploaded. Choose the existing Sound Generator option or **Sound Generator + Kits v9.46**
 for thirteen synthesized machine kits. Both start unchecked; no selection produces
 the base build. [Kit controls, reproduction and validation](synth/KITS.md).
 
-## Synthesized kits v9.43
+## Synthesized kits v9.46
 
 Thirteen kits: TR808, DR110, KPR77, Lel' UDS, FM, TR909, TR606, SDS-V, Mini
 Pops 7, CR78, CR8K, TR707 and TR727, every voice fitted to recordings or
@@ -16,34 +16,43 @@ plug-in captures. SHIFT+PATTERN EDIT opens Kits; SHIFT+RECORD SETTING opens
 melodic mode. Tap SHIFT to toggle the two parameter pages. KIT selects only
 machines, never OFF. The modes have separate VALUE menus and share the
 arpeggiator. In drum mode REC records the last drums struck together (up to
-four within 100 ms). All sounds are synthesized, with sixteen assignments per
-kit and same-machine variants marked `+`. These are independent models, not
-recovered Roland ACB. The v9.43-test2 build was played on hardware; the
-published test3 build adds two VALUE-menu changes checked in the emulator. CPU
-headroom under heavy use is not yet measured on a device. APP0 is unchanged.
-See [KITS.md](synth/KITS.md).
+four within 100 ms), each to its own ring-out. All sounds are synthesized, with
+sixteen assignments per kit and same-machine variants marked `+`. These are
+independent models, not recovered Roland ACB. APP0 is unchanged. See
+[KITS.md](synth/KITS.md).
 
-**Known issue, drum REC:** a drum recording takes its length from the melodic
-Sound Generator's Pad Length, which drum mode doesn't show. If Pad Length is set
-to a waveform-cycle value instead of a time, REC in drum mode saves only a tiny
-blip. Workaround: switch to melodic mode (SHIFT + RECORD SETTING), tap SHIFT for
-the Pad Length / Balance page, set Pad Length to a time such as 2 seconds, then
-go back to drums (SHIFT + PATTERN EDIT) and REC as usual. A fix that records each
-drum at its own length is coming with the next kit build. This also applies to
-the v9.44-test1 MIDI test build.
+New in v9.46:
 
-## Experimental: Kits MIDI test build (v9.44-test1)
+- **MIDI:** sequence the kits and the melodic Sound Generator from a DAW or a
+  hardware sequencer. Notes 36–51 play pads 1–16, the M.CH menu item sets the
+  channel (default 16), CCs control every kit and synth parameter, and CC
+  120/123 stop hung notes. It works while the Sound Generator is open.
+  [Note map and CC chart](synth/KITS_MIDI.md).
+- **BOUNC:** write the current kit, with every pad's settings, into the sixteen
+  pads of a sample bank. A bank that has samples asks once: FILL keeps them and
+  fills the empty pads, OVER replaces them all, then SURE? confirms.
+- **Drum REC length:** a drum recording runs until its drums have rung out (at
+  most 10 s). It no longer takes the melodic Pad Length, which saved only a
+  blip when Pad Length was set to waveform cycles.
+- **Every recording loads:** the SP leaves a pad empty when its sample is
+  shorter than 21 ms. Melodic REC with a Pad Length of a few cycles of a high
+  enough note now becomes the fewest whole cycles that reach 21 ms, and drum
+  recordings are never shorter.
+- **Resample and looper:** SHIFT + PATTERN EDIT opens the kits from the
+  RESAMPLE screen while a take is armed, and from the LOOPER screen (MARK with
+  MARK Function set to Looper). With the looper on, REC on the Sound Generator
+  screen records the loop, in kits as in melodic.
+- **RESAMPLE start fix:** a resampled take starts on its first sound instead of
+  keeping a few milliseconds of silence from the round trip through the effects.
+- **Clean starts:** UDS, MP-7, TR-707 and TR-727 hits start their noise filters
+  at rest, so the same pad sounds the same every time.
 
-The patcher also offers **Test build: Sound Generator + Kits v9.44-test1
-(MIDI)**. It is v9.43 plus external MIDI, so the kits and the melodic Sound
-Generator can be sequenced from a DAW or hardware sequencer: notes 36–51 play
-pads 1–16, a new M.CH menu item sets the Sound Generator's channel (default
-16), CCs control every kit and synth parameter, and CC 120/123 stop hung notes.
-It works while the Sound Generator is open, in drum (kits) or melodic mode,
-and stops when you leave that screen. It has passed the
-emulator checks but has not been played on hardware yet. Note map, CC chart and
-status: [KITS_MIDI.md](synth/KITS_MIDI.md). Source: branch
-[`claude/kits-midi`](https://github.com/tracelistener/doom-os-etc./tree/claude/kits-midi).
+v9.46 is build v9.46-test3 plus the RESAMPLE start fix. Its test builds were
+partly played on hardware (drum REC, BOUNC and the looper), and those reports
+shaped the release. MIDI, hot resample and the start fix have no hardware report
+yet, and the last changes (the 21 ms minimum, the BOUNC questions, the looper
+shortcut) are checked in the emulator only. CPU headroom under heavy use is not
+yet measured on a device.
 
 ## What this mod adds
 
@@ -147,7 +156,7 @@ You can also download this repository as a ZIP file (under the Code button), unz
 ### Manual installation
 
 1. Download the 5.52 system update from [Roland's support page](https://www.roland.com/global/support/by_product/sp-404mk2/updates_drivers/) and unzip it.
-2. Open [our patcher](https://tracelistener.github.io/doom-os-etc./) and load the stock `SP404MKII_APP1.bin`. Select Sound Generator for v9.9.3, or Sound Generator + Kits for v9.43 with the thirteen machine kits and mode/UI fixes. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
+2. Open [our patcher](https://tracelistener.github.io/doom-os-etc./) and load the stock `SP404MKII_APP1.bin`. Select Sound Generator for v9.9.3, or Sound Generator + Kits for v9.46 with the thirteen machine kits and mode/UI fixes. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
 3. Download the patched `SP404MKII_APP1.bin` and use it with the unchanged official 5.52 `SP404MKII_APP0.bin` for your test update. Back up first and keep your known-good update for rollback.
 4. Insert the card, hold **SHIFT** while you turn the SP on, and press the **VALUE** knob when the update menu appears.
 5. When the update is done, turn the SP off and on again.

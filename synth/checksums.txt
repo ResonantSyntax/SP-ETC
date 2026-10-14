@@ -33,3 +33,7 @@ DOOM-SoundGenerator-Kits-v9.43  f6b83372d10d96b8fb070df6790f6e5ed375a457391cab43
 # v9.44-test1 (experimental patcher test option): v9.43 + external MIDI (M.CH, drum notes 36-51, CC chart,
 # CC 120/123). Emulator-checked only. Source and overlay script: branch claude/kits-midi.
 DOOM-SoundGenerator-Kits-MIDI-v9.44-test1  d47f46d4204a90366ac06774050b9ee4c7b9cdfb6470ca65be9f10c24ad1a51d  3088608
+# v9.46 (build v9.46-test3 + RESAMPLE start fix resample-startfix-2), in the patcher: v9.43's kits plus external
+# MIDI, BOUNC, drum REC to each drum's ring-out, 1000-frame minimum, clean starts, kits on RESAMPLE and LOOPER,
+# RESAMPLE start fix. Replaces v9.43 and the v9.44-test1 option. Test builds partly played on hardware.
+DOOM-SoundGenerator-Kits-v9.46  7b5fbcb4c3ce1e8782fef4b5803be74c7d14eddf25a1b53682abe00c9ed3684a  3094624
