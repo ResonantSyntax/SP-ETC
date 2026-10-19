@@ -43,7 +43,7 @@ HERE = Path(__file__).resolve().parent
 FLASH, COPY, ZERO = 0x60080000, 0x600800E4, 0x60080100   # scatter rows: copy, zero fill
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
 PUBLISHED_V946 = '7b5fbcb4c3ce1e8782fef4b5803be74c7d14eddf25a1b53682abe00c9ed3684a'
-REVISION = 'bounce-3-test1'
+REVISION = 'bounce-3-test2'
 SLOT = 0x5000                       # reserved: [base, base + SLOT)
 SLOT_CEILING = 0x83FED000           # the CPU meter test build's slot, then the start fix at 0x83FEF000
 BRIDGES = {'tx': 0x00, 'rx': 0x30, 'ui': 0x80, 'gate': 0xC0}
@@ -174,7 +174,7 @@ GUARDS = [
     (0x80108FA8, 0x80108FD4, '1e13fb6648596022c41df34d0f0b8ec960f3b9bd534e18db690e60c01531e598',
      '"Pattern is Running": [0x82e0d660 + 0xa5] or [0x82dffc88 + 0x2c0]'),
     (0x800D5E70, 0x800D5E76, '5c47fe8f5cbd083bae6c2ddba6a98fe9729f7db7b26f324bef6e4f8da57cc508',
-     'looper running: [0x82e0b71c + 0x39]'),
+     'looper enabled: [0x82e0b71c + 0x39] (the feed records into the looper while it is set)'),
     (0x8012CFE8, 0x8012D344, 'e3695b3a54d0b90f92da73e94080df10a565d20183a4f6b06fc9cae4be897a5b',
      'RESAMPLE pad handler: an occupied pad (status 0x64) plays unless project 0xbf/0xdd is 1 or the page is '
      'modal; an empty pad becomes the destination: REC BPM 0x1b from project 0x21 + bank, settings 0x1a, '
@@ -236,6 +236,31 @@ GUARDS = [
      'input volume (0x80591aac, level): the effects chip\'s parameter 0x22'),
     (0x800D9818, 0x800D981E, '027168e16d284f28241b05568b507a1d17524c770be025e9a9485316d18d0875',
      'settings get 0x25: the value the setter stores ([obj + 0x5c])'),
+    # bounce-3-test2: the looper's phase, and the command queue behind the exchange's fence
+    (0x8001921C, 0x80019242, '58c56d7e67c9ffdcba345cddc05e94e459e63ec3c62d4602073b14fd6e37a2e5',
+     'MARK Function (param 0x141) set: 2 enables the looper (0x8001c1a8), 0..1 disables it (0x8001c2b0)'),
+    (0x800195EC, 0x800195F6, 'ef2b617ba6d09188b26a1a6db2ae1e34a1f29ac7d622e8cd50cc85044a99f758',
+     'MARK Function set to 2: the enable, a tail call'),
+    (0x8001C1A8, 0x8001C2AC, '9c5b42cdb7cf4f4491c81b2debc4b5d46149a1b842ab93259fd534ecf5ebfc5a',
+     'looper enable: +0x39 = 1, the loop buffers cleared, phase +0x101 = 0 (empty)'),
+    (0x8001C2B0, 0x8001C2C0, '5ac3c7b29ce98507714034a750ef06c39376c6e457560d8eaeda6e2019099c28',
+     'looper disable: 0x8001f820, then +0x39 = 0'),
+    (0x8001F820, 0x8001F934, '06b3f0532cde142dd7860fc68a2c7a6caa37e277830cbc3c7762364274ddf020',
+     'looper stop on disable: phases 5, 8, 9 and 10 -> 6 (stopped)'),
+    (0x80070280, 0x80070A80, '76144f6bc55718389d920608f3be059b76b8b23b114c48e4643e92151b01fb45',
+     'looper task commands: 0 record / close the loop / play / stop, 1 overdub, 4 erase; the phases +0x101'),
+    (0x0001D634, 0x0001E248, 'f56dd99c8e64fe54d794780653525279c183b40e1d17cd2ec8ac6634f61193dc',
+     'looper input (audio task): phase 1 waits for the level, 2-3 record the first pass, 6 + [+0x102] starts '
+     'an overdub, 7 waits for the level, 8-9 overdub'),
+    (0x0001E248, 0x0001E622, 'ba99b137dbb938e62a8da01c555a31e88ea496f73ade99cd50d91c4f7bde6555',
+     'looper output (mixer): plays in phases 5, 8, 9 and 10 only, enabled or not'),
+    (0x800DA528, 0x800DA592, 'd2b82ce8b93f0a905b84ff8c84c1bf4cc43e3767edd15df4c08a56191dfd0f2c',
+     'SMPL TASK queue put (0x800e25c0 type 0xa4 commands and 0x800d48e8 type 0xa8 target sets): one FIFO'),
+    (0x8004C230, 0x8004C27A, '5012df16e16e7fef1be360f81faac55d352c05fd3e3c477ded5640937705dac0',
+     'SMPL TASK queue pop: oldest first'),
+    (0x801947C0, 0x80194890, 'a2139db2a6c6eb3e9b77df005d5b1e424b36ca27babcb5d687e0f196c5ecc5a2',
+     'SMPL TASK queue loop: pops in order; 0xa4 -> the command dispatcher 0x8004d8b8 (the exchange runs inside '
+     'it), 0xa8 -> the target store 0x800fb000'),
 ]
 # 16-bit jump-table entries: (address, value, what)
 TABLE_GUARDS = [
@@ -260,6 +285,7 @@ TABLE_GUARDS = [
     (0x800DB9C6, 634, 'pad set 0x71 (loop point)'),
     (0x800D953C, 403, 'settings get 0x25 (EXT SOURCE) -> 0x800d9818'),
     (0x800DD148, 439, 'settings set 0x25 (EXT SOURCE) -> 0x800dd46c'),
+    (0x80018FBE, 621, 'system parameter set 0x141 (MARK Function) -> 0x8001921c'),
 ]
 POPUPS = {
     'setup': 'BOUNCE A-1>A-9 | REPLACE A-1\\nNO TAIL | TAIL | LOOP | TAIL ONLY',
@@ -466,7 +492,9 @@ def build(inp: Path, out: Path, zig: Path, base: int):
         parent_app1=str(inp), parent_sha256=parent_sha, parent_is_published_v946=parent_sha == PUBLISHED_V946,
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
         if parent_manifest.exists() else None,
-        replaces='bounce-2-test1 (the same four sites, plus the pad-event gate)',
+        replaces='bounce-3-test1 (the same five sites; the looper test fixed)',
+        changes=['the looper refuses or ends a bounce only while it plays, records, overdubs or waits for a '
+                 'level (phase +0x101), no longer whenever MARK Function = LOOPER (+0x39 = enabled)'],
         pad_settings=PAD_SETTINGS,
         replace=dict(command='0x40d -> 0x800a6c30(gSmplMgr 0x80591800, source, scratch, 2), then a recorder target '
                              'write (param 1 = 15) as the fence; checked: both pads hold samples, sizes swapped',
@@ -478,7 +506,10 @@ def build(inp: Path, out: Path, zig: Path, base: int):
                          '-> INPUT TURNED ON, the take discarded',
                    notes='0x800bef10 drops every pad note-on but the run\'s own trigger while a bounce owns the '
                          'recorder (MIDI, rolls, the sequencer); a pattern or the looper starting -> discarded',
-                   pad_link='the source out of its PAD LINK group for the run'),
+                   pad_link='the source out of its PAD LINK group for the run',
+                   looper='refused, or the take discarded, while the looper phase (0x82e0b71c + 0x101) is '
+                          'not 0 (empty) or 6 (stopped), or is 6 with an overdub queued (+0x102); when '
+                          'the looper is disabled, only its playing phases 5, 8, 9, 10'),
         recorder_failures='the RX side writes only while the stock gate would (sub-state 2, error word 0); when the '
                           'stock recorder ends a take itself the run waits for its finalize and reports STORAGE FULL '
                           '(-0x3e, -0x78, -0x80) or BOUNCE FAILED, with PART ON <scratch> when it left a take there',

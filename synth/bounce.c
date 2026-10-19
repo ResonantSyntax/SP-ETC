@@ -5,7 +5,8 @@
  * popup names the target and the mode. The scratch pad is the first empty pad after the source in its
  * bank, then the other banks A..J (protected banks are skipped). VALUE picks NO TAIL / TAIL / LOOP;
  * pressing VALUE, or SHIFT + VALUE, picks TO PAD / REPLACE (and UNDO, offered first on a pad this
- * session replaced); REC starts, EXIT backs out.
+ * session replaced); REC starts, EXIT backs out. The mode and TO PAD / REPLACE are kept in RAM for
+ * the next setup as soon as they are picked.
  *
  * The run (UI task, from the popup tick, bnc_ui):
  *   1. pin REC length (settings 0x24) to FREE and END Snap (0x59) off, set REC BPM and the destination
@@ -76,7 +77,10 @@ typedef unsigned char u8;
 #define SYSPRM 0x82DFEED0u                              /* system parameters (Resample_Routing 0x5c) */
 #define SEQ_PLAY (0x82E0D660u + 0xA5u)                  /* the two flags "Pattern is Running" tests */
 #define SEQ_RUN (0x82DFFC88u + 0x2C0u)
-#define LOOPER_ON (0x82E0B71Cu + 0x39u)
+#define LOOPER 0x82E0B71Cu                              /* the looper (MARK Function = LOOPER) */
+#define LOOPER_ON (LOOPER + 0x39u)                      /* 1 while MARK Function is LOOPER: enabled, not playing */
+#define LOOPER_PHASE (LOOPER + 0x101u)                  /* what it does: see looper_running() */
+#define LOOPER_GO (LOOPER + 0x102u)                     /* stopped: an overdub starts on the next audio block */
 #define PAGE_ID 0x80245880u
 #define KEY_BITS 0x80592448u                            /* key held: bit (key & 7) of [KEY_BITS + key / 8] */
 #define POPUP_TIMER 0x805922B4u
@@ -253,7 +257,7 @@ struct ui {
     u32 pinned;
     u32 msg;                    /* a popup to show when idle */
     u32 waits;                  /* a recorder command is pending (cancel) */
-    u32 last_mode;              /* remembered for the next setup (RAM) */
+    u32 last_mode;              /* kept for the next setup (RAM) as soon as it is picked */
     s32 cal_l;                  /* this boot's last onset-calibrated L */
     u32 cal_valid;
     u32 runs;
@@ -704,7 +708,20 @@ static void show(u32 ms) {
 }
 
 static u32 pattern_running(void) { return V8(SEQ_PLAY) != 0 || V32(SEQ_RUN) != 0; }
-static u32 looper_running(void) { return V8(LOOPER_ON) != 0; }
+/* The looper plays, records, or waits for a level to start: anything but empty (phase 0) or stopped (6).
+ * MARK Function = LOOPER (param 0x141 = 2, setter 0x80018d28) only enables it: 0x8001c1a8 sets +0x39 and
+ * phase 0. Phases (looper task 0x80070280, audio side 0x1d634): 1 armed for the first take, 2 and 3 its
+ * first pass, 4 the buffer full, 5 playing, 7 armed for an overdub, 8 overdubbing, 9 ending an overdub,
+ * 10 playing with an overdub queued. The mixer (0x1e248) plays phases 5, 8, 9 and 10 whether or not the
+ * looper is enabled; it records only while enabled (the feed, 0x1cb44). An armed looper is refused too:
+ * the bounce's own sound would start it. */
+#define LOOPER_AUDIBLE ((1u << 5) | (1u << 8) | (1u << 9) | (1u << 10))
+static u32 looper_running(void) {
+    u32 phase = V8(LOOPER_PHASE);
+    if (!V8(LOOPER_ON))
+        return phase < 32 && (LOOPER_AUDIBLE >> phase & 1);
+    return phase != 0 && (phase != 6 || V8(LOOPER_GO));
+}
 static u32 target_pad(void) { return V32(TARGET_VALUES + 4); }
 
 /* The first empty pad after the source in its bank, then banks A..J; never in a protected bank. */
@@ -1243,6 +1260,8 @@ static void step_target(s32 dir, u32 wrap) {
         }
         if (U.targets & (1u << TARGET_ORDER[at])) {
             U.target = TARGET_ORDER[at];
+            if (U.target != T_UNDO)         /* kept from here on: EXIT or a refusal does not lose it */
+                U.last_target = U.target;
             aim();
             return;
         }
@@ -1311,7 +1330,7 @@ EXPORT s32 bnc_event(u32 page, const volatile s16 *ev) {
                         break;
                     m = a2 > 0 ? m + 1 : m - 1;
                     if (U.modes & (1u << m)) {
-                        U.mode = m;
+                        U.mode = U.last_mode = m;
                         break;
                     }
                 }

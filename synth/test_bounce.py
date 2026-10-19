@@ -6,16 +6,22 @@ Reads OUT_DIR/manifest.json for the parent APP1. Static image checks first. Then
 is booted in Unicorn the way its scatter loader does it, and the stock code runs for real: the
 recorder feed behind the RX bridge, the pad note (0x800cdbd0) and the pad-event dispatcher behind
 the gate bridge, the pad parameter getter and setter (with its conversions, protect test and
-side effects), the pad name, SMPL TASK's command dispatcher for 0x40d with the stock exchange
-(0x800a6c30) and its parameter swap, the settings setter for EXT SOURCE, the popup function, the
-page's vtable, and for the MIDI checks the stock MIDI dispatcher. Modelled: SMPL TASK (the
-recorder commands, standby, REC_START, the finalize and cancel, ALL SOUND OFF, the command ring's
-order, a busy task), the pad-event ring (a note-on there starts the source's voice), the files on
-the card (renames, loads), the source pad's voice (it renders the pad's PCM into the stems from the
-first block after its trigger), the effects chip (RX = the record mix L frames later, optionally
-with gain, an echo, noise, or the input while EXT SOURCE is on), the eDMA positions, the recorder
-engine's writer (it keeps the frames it is given: the take), and the settings, project and system
-parameter stores. No screen, no SD card, no real timing: those need the unit.
+side effects), the pad name, SMPL TASK's command queue (the posts 0x800e25c0 / 0x800d48e8, the put
+and pop, the task's loop 0x80194738, the target store 0x800fb000) and its command dispatcher for
+0x40d with the stock exchange (0x800a6c30), its file swap (0x80051040) and path builder, and its
+parameter swap, the settings setter for EXT SOURCE, the popup function, the page's vtable, the UI
+task's event dispatcher (0x8003b530) where a check drives keys through it, the looper (the MARK
+Function setter, its init, the LOOPER TASK's commands, its audio input), and for the MIDI checks
+the stock MIDI dispatcher. Modelled: SMPL TASK's recorder commands at the dispatcher's entry
+(standby, REC_START, the finalize and cancel, ALL SOUND OFF; a busy task holds the exchange at
+the queue's pop), the pad-event ring (a note-on there starts the source's voice), the card under
+the file swap at its file calls (unlink, rename, open; by path), the pad loader and save, the
+RTOS (locks, waits, task creation, event flags), the source pad's voice (it renders the pad's PCM
+into the stems from the first block after its trigger), the effects chip (RX = the record mix L
+frames later, optionally with gain, an echo, noise, or the input while EXT SOURCE is on), the eDMA
+positions, the recorder engine's writer (it keeps the frames it is given: the take), and the
+settings, project and system parameter stores. No screen, no SD card, no real timing: those need
+the unit.
 
 Checks:
 - static: only the header, the five sites and the appended tail differ from the parent; the
@@ -24,6 +30,9 @@ Checks:
   capture, meter and gate call, the popup tick's registers, the pad-event dispatcher's paths);
 - the page filter: every event reaches DOOM OS's filter unless it is the gesture, or a bounce is
   set up or running; the gesture's conditions; the setup popup, VALUE, VALUE pressed, SHIFT+VALUE;
+  the target and mode kept once picked;
+- the same keys through the UI task's own dispatcher, and a whole REPLACE that way;
+- the looper through its stock code: refused only while it plays, records, overdubs or is armed;
 - whole runs through the bridges (NO TAIL, TAIL, LOOP; one-shots and loops; at their own rate and
   not; sharp and soft starts; D = -1, 0, +1; an extra frame of latency; the boot's calibration):
   the take holds exactly the RX frames from T0 through the window, START and END land on the
@@ -31,7 +40,8 @@ Checks:
 - the bounced pad's settings: performance settings copied, printed ones neutral, as the stock
   getter reads them back;
 - REPLACE and UNDO through the real exchange: the swap, PAD LINK, bit-exact undo, the records, a
-  changed pad, protected banks, a failed swap, a stalled command ring;
+  changed pad, protected banks, a failed swap, a stalled command ring; the fence stored only after
+  the exchange returned, in the same pass of SMPL TASK's loop;
 - leaks: EXT SOURCE, MIDI notes through the stock MIDI dispatcher, the run's own trigger under
   FIXED VELOCITY, a pattern or the looper starting, PAD LINK;
 - refusals, EXIT at every phase and failures (the stock recorder ending a take itself included):
@@ -60,29 +70,47 @@ REC_STATE, REC_SUB, REC_ERR, REC_ENGINE = REC + 0x39, REC + 0x24E, REC + 0x250, 
 FEED_ON = 0x805917C4
 POPUP_STATE, POPUP_TEXT, POPUP_TIMER = 0x8024589C, 0x802468D8, 0x805922B4
 KEYS, PAGE_ID = 0x80592448, 0x80245880
-SEQ_PLAY, SEQ_RUN, LOOPER_ON = 0x82E0D660 + 0xA5, 0x82DFFC88 + 0x2C0, 0x82E0B71C + 0x39
+SEQ_PLAY, SEQ_RUN = 0x82E0D660 + 0xA5, 0x82DFFC88 + 0x2C0
+LOOPER = 0x82E0B71C
+LOOPER_ON, LOOPER_PHASE, LOOPER_GO, LOOPER_TRIG = LOOPER + 0x39, LOOPER + 0x101, LOOPER + 0x102, LOOPER + 0x80
+LOOPER_INIT, LOOPER_CMD, LOOPER_IN, SYS_SET, SYS_OBJ = 0x80045968, 0x80070280, 0x1D634, 0x80018D28, 0x80591ADC
+LOOPER_AUTO = 0x80019780                # the looper's level-trigger option (from the settings setter): +0x80
 TARGET_VALUES = 0x80246E14
 SMPL, FILE_INFO = 0x82E2CD08, 0x82E495E4
 PADGET, PADSET, PADINIT, PADNAME = 0x800DC6B8, 0x800DA720, 0x800CFA68, 0x800CFA28
 EXCHANGE, SMPL_MGR, DISPATCHER = 0x800A6C30, 0x80591800, 0x8004D8B8
 MIDI_DISPATCH = 0x80066278
+# SMPL TASK's command queue: put 0x800da528, pop 0x8004c230, the task's loop 0x80194738 (case 2)
+QBASE, QWRITE, QREAD, QWRAP, SMPL_LOOP, QPOP = 0x80B4C924, 0x805917E0, 0x805917E4, 0xFFE, 0x80194738, 0x8004C230
+# the UI task's event dispatcher and what it finds at run time on the RESAMPLE page
+UI_DISPATCH, PAGE_PTR, PAGE_VTABLE, PREFILTER, KEY_PAIRS, PAGE_LIVE = (0x8003B530, 0x80592368, 0x8022346C,
+                                                                       0x82DFD318, 0x80B119DC, 0x8024587A)
 STACK, AUDIO_SP, RET = 0x30010000, 0x300F0000, 0x3001F000
-PAGE_OBJ, EVENT, MSG, CMD_MSG = 0x30090000, 0x30091000, 0x30093000, 0x30094000
+PAGE_OBJ, EVENT, MSG, CMD_MSG, EVENT2 = 0x30090000, 0x30091000, 0x30093000, 0x30094000, 0x30095000
 ENGINE, ENGINE_VT, WRITER = 0x30080000, 0x30081000, 0x30082000
 VOICES, STREAMS = 0x31000000, 0x31400000
 TEXT = 0x30092000
 STUBS = {
-    0x800E25C0: 'post', 0x800D48E8: 'target', 0x6031C8F8: 'doom',
+    0x800E25C0: 'post', 0x800D48E8: 'target', 0x800DA528: 'qput', QPOP: 'qpop', 0x6031C8F8: 'doom',
     0x800D94D8: 'get', 0x800DD0C0: 'set', 0x800DDA38: 'pget', 0x800DED18: 'pset', 0x800DA010: 'sysget',
-    0x800CE420: 'modal', 0x101BA: 'zero', 0x1BB6A: 'nop', 0x1D634: 'nop', GATE: 'gate', WRITER: 'writer',
+    0x800CE420: 'modal', 0x101BA: 'zero', 0x1BB6A: 'nop', LOOPER_IN: 'looper_in', GATE: 'gate', WRITER: 'writer',
     0x800D8B90: 'nop',               # the project's change broadcast (its listeners are not built here)
     0x800E11D0: 'nop',               # the sequencer's notice after a TEMPO SYNC change (its object is not built)
     # around the exchange in command 0x40d's case: preview files closed, a debug line, the remote's notice
     0x800DEBD8: 'nop', 0x8003A7A0: 'zero', 0x800D31C6: 'nop', 0x800D9F58: 'nop', 0x800E1190: 'one',
-    RING: 'ring', DISPATCH_A: 'other', DISPATCH_B: 'other',
-    # the exchange's file and voice side: the card and SMPL CHARGE TASK are not here
-    0x80051040: 'swapfiles', 0x800CFB20: 'loadpad', 0x800CF218: 'savepads', 0x800D7478: 'nop', 0x800D8998: 'zero',
+    RING: 'ring', DISPATCH_A: 'other',
+    # SMPL TASK's queue runs for real (the posts, the put, the task's loop, the target store); not here: the
+    # task's event flag (RTOS) and the debug line the post prints. The recorder commands are modelled at the
+    # command dispatcher's entry; 0x40d runs the real dispatcher.
+    0x800D30A4: 'nop', 0xE668: 'nop', DISPATCHER: 'command',
+    # the exchange's card and voice side: the real file swap (0x80051040) and path builder run, the file calls
+    # under them go to a card model keyed by path; the loader, the save, SMPL CHARGE TASK and voices are not here
+    0x800DECD8: 'unlink', 0x800100D0: 'rename', 0x800DEC60: 'open',
+    0x800CFB20: 'loadpad', 0x800CF218: 'savepads', 0x800D7478: 'nop', 0x800D8998: 'zero',
     0x800D8A70: 'nop', 0x800D8960: 'nop', 0x80095BD0: 'nop', 0x800D8628: 'zero', 0x800D84F0: 'nop', 0x800D88C8: 'nop',
+    # the looper's tasks (RTOS): locks, 10 ms waits, task creation and wake-ups; the recorder's MARK mode
+    0x800DED08: 'nop', 0x800DECF8: 'nop', 0x408C: 'nop', 0x80097490: 'nop', 0xF38C: 'nop', 0x800C2638: 'nop',
+    0x8001D938: 'nop',
 }
 KEY_REC, KEY_RESAMPLE, KEY_EXIT, KEY_SHIFT, KEY_VALUE = 0x1B, 0x1C, 0x22, 0x2A, 0x31
 EV_KEY, EV_KEY_UP, EV_ENCODER, EV_KNOB, EV_PAD, EV_PAD_UP = 5, 6, 7, 9, 0x10, 0x11
@@ -233,7 +261,7 @@ class Machine:
         uc.reg_write(ar.UC_ARM_REG_FPEXC, 0x40000000)
         uc.mem_write(RET, b'\x00\xbf\x00\xbf')
         self.sym = man['entries'] if man else {}
-        self.log, self.queue, self.take = [], [], []
+        self.log, self.take = [], []
         self.settings = {0x36: 1, 0x24: 3, 0x59: 0, 0x1B: 12000, 0x1A: -1, 0x25: 0}
         self.project = {0: 0, 0xBF: 0, 0xDD: 0, 0xFB: 0}
         self.status = [0] * 160
@@ -258,6 +286,10 @@ class Machine:
         self.ui_ms = 0
         self.swap_fail = None
         self.stall = False
+        self.ignore = set()                             # recorder commands the model drops (no standby, ...)
+        self.fs_log = []
+        self.looper_in_real = False
+        self.project_no = 1                             # 0x800e1190 (stubbed 'one'): PROJECT_02
         self.overrun_at = None
         self.pending_overrun = False
         self.input_calls = []
@@ -308,13 +340,46 @@ class Machine:
         r0, r1, r2, r3 = self.regs()
         sr = [s32(x) for x in (r0, r1, r2, r3)]
         value = 0
-        if name == 'post':
-            self.queue.append(('cmd', r0, sr[1], sr[2]))
+        if name == 'post':                              # observed; the real post queues the command
             self.log.append(('post', r0))
             self.post_times.append((self.ui_ms, r0))
-        elif name == 'target':
-            self.queue.append(('target', r1, sr[2]))
+            return
+        elif name == 'target':                          # observed; the real 0x800d48e8 queues it
             self.log.append(('target', r1, sr[2]))
+            return
+        elif name == 'qput':                            # SMPL TASK's queue: commands and target sets are real
+            if self.r8(r0) in (0xA4, 0xA8):
+                return
+            self.log.append(('other', address, bytes(uc.mem_read(r0, 6))))   # the pad-event dispatcher's others
+        elif name == 'qpop':                            # a stalled task takes nothing from the exchange on
+            if self.stall:
+                head = self.pending()[:1]
+                if head and head[0][:2] == ('cmd', 0x40D):
+                    self._ret(0)
+                    return
+            return
+        elif name == 'command':                         # SMPL TASK's command dispatcher: 0x40d runs for real
+            typ, _, cmd, a1, a2 = struct.unpack('<BBHii', bytes(uc.mem_read(r0, 12)))
+            if cmd == 0x40D:
+                self.log.append(('exchange', a1, a2))
+                return
+            self._command(cmd)
+        elif name == 'looper_in':                       # the feed's looper input: real only where a check asks
+            if self.looper_in_real:
+                return
+        elif name == 'unlink':
+            path = self.cstr(r0)
+            self.fs_log.append(('unlink', path))
+            value = 0 if self.files.pop(path, None) is not None else -1
+        elif name == 'rename':                          # as FatFs: no rename onto an existing name
+            a, b = self.cstr(r0), self.cstr(r1)
+            self.fs_log.append(('rename', a, b))
+            if self.swap_fail != 'rename' and a in self.files and b not in self.files:
+                self.files[b] = self.files.pop(a)
+        elif name == 'open':
+            path = self.cstr(r0)
+            self.fs_log.append(('open', path))
+            value = 1 if path in self.files else -1
         elif name == 'doom':
             self.log.append(('doom', struct.unpack('<h', bytes(uc.mem_read(r1, 2)))[0]))
             value = 0x55
@@ -362,14 +427,6 @@ class Machine:
                 self.voice.trigger(self.tx_n)
         elif name == 'other':
             self.log.append(('other', address, bytes(uc.mem_read(r0, 6))))
-        elif name == 'swapfiles':                       # 0x80051040(a, b): B -> tmp, A -> B, tmp -> A
-            self.log.append(('swapfiles', r0, r1))
-            if self.swap_fail != 'rename':
-                fa, fb = self.files.pop(r0, None), self.files.pop(r1, None)
-                if fb is not None:
-                    self.files[r0] = fb
-                if fa is not None:
-                    self.files[r1] = fa
         elif name == 'loadpad':                         # the pad loader: the file's size into the file info
             value = self._load(r0)
         elif name == 'savepads':
@@ -384,8 +441,18 @@ class Machine:
         if pad < 160:
             self.status[pad] = 0
 
+    def path(self, pad):
+        """A pad's file, as 0x800d60c8 builds it (internal storage; settings 0x84 = 0)."""
+        return f'B:/ROLAND/SP-404MKII/PROJECT_{self.project_no + 1:02d}/SMPL/BANK{pad // 16 + 1}-{pad % 16 + 1:02d}.SMP'
+
+    def file(self, pad):
+        return self.files.get(self.path(pad))
+
+    def cstr(self, a):
+        return bytes(self.uc.mem_read(a, 256)).split(b'\0')[0].decode('latin-1')
+
     def _load(self, pad):
-        f = self.files.get(pad)
+        f = self.file(pad)
         info = FILE_INFO + pad * 36
         if f is None:
             self.status[pad] = 0
@@ -420,12 +487,12 @@ class Machine:
         if self.uc.reg_read(ar.UC_ARM_REG_PC) != until:
             raise RuntimeError(f'did not reach {until:#x} from {start:#x} (pc {self.uc.reg_read(ar.UC_ARM_REG_PC):#x})')
 
-    def call(self, fn, *args):
+    def call(self, fn, *args, count=3_000_000):
         uc = self.uc
         for k, v in enumerate(args):
             uc.reg_write(getattr(ar, f'UC_ARM_REG_R{k}'), v & 0xFFFFFFFF)
         uc.reg_write(ar.UC_ARM_REG_LR, RET | 1)
-        self.run(fn, RET)
+        self.run(fn, RET, count=count)
         return uc.reg_read(ar.UC_ARM_REG_R0)
 
     def field(self, which, name):
@@ -473,7 +540,7 @@ class Machine:
 
     def load_pad(self, pad, frames, start=0, end=None, loop=0, lp=None, tag=None, **params):
         end = frames if end is None else end
-        self.files[pad] = dict(frames=frames, ch=2, tag=tag or ('pad', pad, frames))
+        self.files[self.path(pad)] = dict(frames=frames, ch=2, tag=tag or ('pad', pad, frames))
         self.call(PADINIT, SMPL, pad, 0x200 + 4 * start, 0x200 + 4 * end)
         info = FILE_INFO + pad * 36
         self.w32(info + 8, 2)
@@ -491,7 +558,7 @@ class Machine:
         """Everything the exchange moves with a pad: its parameter record, name and block, and its file."""
         return (bytes(self.uc.mem_read(SMPL + 0xD0 + pad * 0xAC, 0xAC)),
                 bytes(self.uc.mem_read(SMPL + 0x6CFC + pad * 24, 24)),
-                bytes(self.uc.mem_read(SMPL + 0xF800 + pad * 0x80, 0x80)), repr(self.files.get(pad)))
+                bytes(self.uc.mem_read(SMPL + 0xF800 + pad * 0x80, 0x80)), repr(self.file(pad)))
 
     def name(self, pad):
         return bytes(self.uc.mem_read(SMPL + 0x6CFC + pad * 24, 24)).split(b'\0')[0].decode('ascii').rstrip()
@@ -541,6 +608,23 @@ class Machine:
             self.press_keys()
         return r
 
+    def real_ui(self):
+        """The UI dispatcher's state on the RESAMPLE page at run time: no mode holds the keys (0x82dfd314 + 4 < 0),
+        no key pairs (0x80b119dc memset to -1 at boot, 0x8003b27e), the page live, its object (0x80053cb8 makes
+        it on page entry) with the vtable whose +8 is the patched filter slot."""
+        self.w32(PREFILTER, 0xFFFFFFFF)
+        self.uc.mem_write(KEY_PAIRS, b'\xff' * 0x80)
+        self.uc.mem_write(PAGE_LIVE, struct.pack('<H', 0x0E))
+        self.w32(PAGE_PTR, PAGE_OBJ)
+        self.w32(PAGE_OBJ, PAGE_VTABLE)
+
+    def dispatch(self, kind, a1=0, a2=0):
+        """An event through the UI task's real dispatcher (0x8003b530); keys set their held bits there."""
+        self.uc.mem_write(EVENT2, struct.pack('<6h', kind, a1, a2, 0, 0, 0))
+        before = len([x for x in self.log if x[0] == 'doom'])
+        self.call(UI_DISPATCH, EVENT2)
+        return len([x for x in self.log if x[0] == 'doom']) > before
+
     def pad_event(self, pad, vel, mode=2):
         """A pad event through the (patched) pad-event dispatcher, as the MIDI note-on builds it."""
         ev = bytes([pad, mode, 0, vel if vel else 0xFF, 0xFF if vel else 0x40, 0])
@@ -550,53 +634,26 @@ class Machine:
         return len(self.ring) > before
 
     # ---- SMPL TASK ----
+    def pending(self):
+        """SMPL TASK's queue, oldest first: ('cmd', cmd, a1, a2), ('target', id, value), ('other', type)."""
+        out, i, w = [], self.r32(QREAD), self.r32(QWRITE)
+        while i != w:
+            b = bytes(self.uc.mem_read(QBASE + 16 * i, 16))
+            if b[0] == 0xA4:
+                out.append(('cmd',) + struct.unpack_from('<Hii', b, 2))
+            elif b[0] == 0xA8:
+                out.append(('target',) + struct.unpack_from('<Hi', b, 2))
+            else:
+                out.append(('other', b[0]))
+            i = 0 if i >= QWRAP else i + 1
+        return out
+
     def settle(self):
-        queue, self.queue = self.queue, []
         if self.pending_overrun and self.r8(REC_STATE) == 2:       # REC TASK, flag 0x20: the stock finalize
             self.pending_overrun = False
             self.finalize()
-        for k, item in enumerate(queue):
-            if self.stall and item[0] == 'cmd' and item[1] == 0x40D:   # SMPL TASK busy: the exchange waits
-                self.queue = queue[k:] + self.queue
-                break
-            state = self.r8(REC_STATE)
-            if item[0] == 'target':
-                if state != 2:
-                    self.w32(TARGET_VALUES + 4 * item[1], item[2])
-                continue
-            cmd = item[1]
-            if cmd == 5 and self.voice:
-                self.voice.stop()
-            elif cmd == 0x14 and state == 0:
-                self.uc.mem_write(REC_STATE, b'\x01')
-                self.uc.mem_write(REC_SUB, b'\x01')
-                self.w32(REC_ERR, 0)                      # the stock standby clears the error word
-                self.w32(FEED_ON, 1)                      # as the stock standby does
-                self.uc.mem_write(ENGINE + 0x1C0, struct.pack('<Q', 0x800))
-                self.uc.mem_write(ENGINE + 0x200, struct.pack('<Q', 0))
-                self.uc.mem_write(ENGINE + 0x208, struct.pack('<q', -1))
-                self.take = []
-            elif cmd == 0x17 and state in (1, 3):
-                self.uc.mem_write(REC_STATE, b'\x02')
-                self.uc.mem_write(REC_SUB, b'\x02')
-                self.dest = self.r32(TARGET_VALUES) * 16 + self.r32(TARGET_VALUES + 4)
-            elif cmd == 0x18 and state == 1:
-                self.uc.mem_write(REC_STATE, b'\x00')
-                self.uc.mem_write(REC_SUB, b'\x00')
-                self.w32(TARGET_VALUES + 4, 0xFFFFFFFF)
-            elif cmd == 0x18 and state == 2:
-                self.finalize()
-            elif cmd == 0x1A and state == 2:
-                self.uc.mem_write(REC_STATE, b'\x00')
-                self.uc.mem_write(REC_SUB, b'\x00')
-                self.take = []
-                self.w32(TARGET_VALUES + 4, 0xFFFFFFFF)
-            elif cmd == 0xD:
-                self.saves += 1
-            elif cmd == 0x40D:                            # the real SMPL TASK dispatcher, case 0x40d
-                self.log.append(('exchange', item[2], item[3]))
-                self.uc.mem_write(CMD_MSG, struct.pack('<BBH2i', 0xA4, 0, cmd, item[2], item[3]))
-                self.call(DISPATCHER, CMD_MSG)
+        if self.r32(QREAD) != self.r32(QWRITE):
+            self.call(SMPL_LOOP, 0, 2)                  # the task's loop: every message, in order
         if self.final_due is not None and self.ui_ms >= self.final_due:
             self.final_due = None
             d, n = self.dest, len(self.take)
@@ -608,6 +665,40 @@ class Machine:
                 self.w32(base + 0xD4, self.r32(base + 0xD4) + 12)    # the stock zero-cross adjust moves START
             self.settings[0x59] = 0
             self.w32(TARGET_VALUES + 4, 0xFFFFFFFF)
+
+    def _command(self, cmd):
+        """The recorder commands as SMPL TASK runs them (modelled), at the moment the task takes them."""
+        if cmd in self.ignore:
+            return
+        state = self.r8(REC_STATE)
+        if cmd == 5 and self.voice:
+            self.voice.stop()
+        elif cmd == 0x14 and state == 0:
+            self.uc.mem_write(REC_STATE, b'\x01')
+            self.uc.mem_write(REC_SUB, b'\x01')
+            self.w32(REC_ERR, 0)                        # the stock standby clears the error word
+            self.w32(FEED_ON, 1)                        # as the stock standby does
+            self.uc.mem_write(ENGINE + 0x1C0, struct.pack('<Q', 0x800))
+            self.uc.mem_write(ENGINE + 0x200, struct.pack('<Q', 0))
+            self.uc.mem_write(ENGINE + 0x208, struct.pack('<q', -1))
+            self.take = []
+        elif cmd == 0x17 and state in (1, 3):
+            self.uc.mem_write(REC_STATE, b'\x02')
+            self.uc.mem_write(REC_SUB, b'\x02')
+            self.dest = self.r32(TARGET_VALUES) * 16 + self.r32(TARGET_VALUES + 4)
+        elif cmd == 0x18 and state == 1:
+            self.uc.mem_write(REC_STATE, b'\x00')
+            self.uc.mem_write(REC_SUB, b'\x00')
+            self.w32(TARGET_VALUES + 4, 0xFFFFFFFF)
+        elif cmd == 0x18 and state == 2:
+            self.finalize()
+        elif cmd == 0x1A and state == 2:
+            self.uc.mem_write(REC_STATE, b'\x00')
+            self.uc.mem_write(REC_SUB, b'\x00')
+            self.take = []
+            self.w32(TARGET_VALUES + 4, 0xFFFFFFFF)
+        elif cmd == 0xD:
+            self.saves += 1
 
     def finalize(self):
         """REC_STOP in state 2, or the stock recorder ending the take itself: state 0 before the 500 ms wait."""
@@ -1007,6 +1098,22 @@ def filter_checks(img, man):
     mg.ui(300)
     r, passed = mg.event(EV_PAD, 0, 100)
     check(passed, 'after EXIT a sample pad plays again (DOOM OS gets the event)')
+    # the choice is kept as soon as it is made: EXIT (or a refusal) does not lose it
+    mg.gesture(0)
+    mg.ui(1)
+    first = mg.popup()
+    mg.tap(KEY_VALUE)
+    mg.ui(1)
+    mg.tap(KEY_EXIT)
+    mg.ui(300)
+    mg.gesture(0)
+    mg.ui(1)
+    again = mg.popup()
+    mg.tap(KEY_EXIT)
+    mg.ui(300)
+    check(first == 'BOUNCE A-1>A-2\nLOOP' and again == 'REPLACE A-1\nLOOP',
+          f'the target and the mode are kept once picked, not only once a run starts: after EXIT the gesture offers '
+          f'them again ({first!r}, {again!r})')
     # the modes each source offers
     mr = boot(img, man)
     mr.load_pad(1, 4800, loop=1)
@@ -1031,8 +1138,7 @@ def filter_checks(img, man):
     for name, setup, text in (('no empty pad', lambda mm: [mm.status.__setitem__(p, 1) for p in range(160)],
                                'NO EMPTY PAD'),
                               ('pattern running', lambda mm: mm.uc.mem_write(SEQ_PLAY, b'\x01'), 'STOP PATTERN FIRST'),
-                              ('pattern running (system flag)', lambda mm: mm.w32(SEQ_RUN, 1), 'STOP PATTERN FIRST'),
-                              ('looper running', lambda mm: mm.uc.mem_write(LOOPER_ON, b'\x01'), 'STOP LOOPER FIRST')):
+                              ('pattern running (system flag)', lambda mm: mm.w32(SEQ_RUN, 1), 'STOP PATTERN FIRST')):
         mm = boot(img, man)
         mm.load_pad(0, 4800)
         setup(mm)
@@ -1348,7 +1454,7 @@ def replace_checks(img, man):
     check(posts == [5, 0x2A, 0x14, 0x17, 5, 0xD, 0x18, 0xD, 0x40D, 0xD] and ('exchange', 0, 1) in m.log,
           f'REPLACE: standby .. stop, save, then the stock exchange 0x40d(A-1, A-2), save ({[hex(p) for p in posts]})')
     check(m.voice.link_at_trigger == 0, 'during the run the source is out of its PAD LINK group: the pad alone plays')
-    check(m.record(1)[1:] == orig[1:] and m.files[1]['tag'] == ('pad', 0, 3000),
+    check(m.record(1)[1:] == orig[1:] and m.file(1)['tag'] == ('pad', 0, 3000),
           'after the exchange the scratch pad holds the original: its file, name and block')
     check(m.pad_get(P_LINK, 1) == 0 and m.pad_get(P_LINK, 0) == 4,
           'PAD LINK: the bounce takes the source\'s group 4, the parked original leaves it')
@@ -1356,7 +1462,7 @@ def replace_checks(img, man):
     o1 = bytearray(orig[0])
     o1[0x11C - 0xD0:0x11C - 0xD0 + 4] = struct.pack('<I', 0)
     check(a1 == bytes(o1), 'the original\'s parameter record moved whole, PAD LINK aside')
-    check(m.files[0]['tag'][0] == 'take' and m.pad_get(0x67, 0) == 384 + 77 and m.name(0).startswith('A1 L77'),
+    check(m.file(0)['tag'][0] == 'take' and m.pad_get(0x67, 0) == 384 + 77 and m.name(0).startswith('A1 L77'),
           'the source pad plays the bounce: its file, exact START, the run\'s name')
     ok, got = neutral_ok(m, 0)
     check(ok and m.pad_get(0x6A, 0) == 1, f'the bounce on the source pad: printed settings neutral ({got})')
@@ -1397,7 +1503,7 @@ def replace_checks(img, man):
           f'UNDO: sound off, the exchange again, save ({m.popup()!r}, {[hex(p) for p in posts]})')
     check(m.record(0) == orig, 'UNDO is bit-exact: the original\'s file, parameter record (PAD LINK 4 again), name and '
                                'block are back on A-1')
-    check(m.files[1]['tag'][0] == 'take' and m.pad_get(P_LINK, 1) == 0 and m.undos() == [],
+    check(m.file(1)['tag'][0] == 'take' and m.pad_get(P_LINK, 1) == 0 and m.undos() == [],
           'after UNDO the bounce stays on A-2, unlinked; the record is gone')
     m.gesture(0)
     m.ui(1)
@@ -1467,14 +1573,14 @@ def replace_checks(img, man):
     orig = m.record(0)
     m.swap_fail = 'rename'
     res = run_bounce(m, 0, 0, target=T_REPLACE)
-    check(res['popup'] == 'SWAP FAILED\nCHECK A-1 A-2' and m.undos() == [] and m.files[0]['tag'] == ('pad', 0, 3000),
+    check(res['popup'] == 'SWAP FAILED\nCHECK A-1 A-2' and m.undos() == [] and m.file(0)['tag'] == ('pad', 0, 3000),
           f'the files did not move: SWAP FAILED, no UNDO record ({res["popup"]!r})')
     # SMPL TASK stalls before the exchange: the fence never lands, 10 s
     m, pcm = setup(seed=48)
     m.stall = True
     res = run_bounce(m, 0, 0, target=T_REPLACE, budget=12000)
     check(res['popup'] == 'SWAP FAILED\nCHECK A-1 A-2' and m.undos() == [] and m.u('state') == U_IDLE and
-          ('cmd', 0x40D, 0, 1) in m.queue,
+          ('cmd', 0x40D, 0, 1) in m.pending(),
           f'the exchange never confirmed within 10 s: SWAP FAILED, the pads to be checked ({res["popup"]!r})')
     # EXIT while swapping is ignored
     m, pcm = setup(seed=49)
@@ -1570,8 +1676,10 @@ def leak_checks(img, man):
           f'FIXED VELOCITY 90: the trigger passes the gate with velocity 90 ({rings})')
     # a pattern or the looper starting during the run: the take is discarded
     for name, start, text in (('pattern', lambda mm: mm.uc.mem_write(SEQ_PLAY, b'\x01'), 'STOP PATTERN FIRST'),
-                              ('looper', lambda mm: mm.uc.mem_write(LOOPER_ON, b'\x01'), 'STOP LOOPER FIRST')):
+                              ('looper', lambda mm: looper_cmd(mm, 0), 'STOP LOOPER FIRST')):
         m, pcm = setup(seed=66)
+        if name == 'looper':                    # MARK Function = LOOPER, a loop recorded and stopped
+            looper_ready(m, phase=6)
 
         def go(mm, i, start=start):
             if mm.u('state') == U_RUN and mm.a('fed') > 200:
@@ -1682,7 +1790,7 @@ def failure_checks(img, man):
 
     def no_standby(mm, i):
         if mm.u('state') == U_STANDBY:
-            mm.queue = [q for q in mm.queue if q != ('cmd', 0x14, 0, 0)]
+            mm.ignore.add(0x14)
     res = run_bounce(m, 0, 0, during=no_standby)
     check(res['popup'] == 'BOUNCE FAILED', f'standby never starts (no temp file): BOUNCE FAILED after 3 s')
     restored(m, 'no standby')
@@ -1786,6 +1894,257 @@ def cost_checks(img, man):
           'block)')
 
 
+# ---- the looper, through its own stock code ----
+def looper_init(m):
+    """The looper as the boot leaves it (0x80045968, for real): disabled, phase 0."""
+    m.call(LOOPER_INIT)
+
+
+def mark_function(m, value):
+    """MARK Function (system parameter 0x141) through the real setter 0x80018d28: 2 = LOOPER enables the looper."""
+    m.call(SYS_SET, SYS_OBJ, 0x141, value, 0, count=20_000_000)   # the enable clears both loop buffers
+
+
+def looper_auto(m, on):
+    """The looper's level trigger (the settings setter's 0x80019780, for real): on, MARK from empty or stopped
+    arms it (phase 1 or 7) and the input level starts the take; off, MARK records at once. On after the boot."""
+    m.call(LOOPER_AUTO, LOOPER, on)
+
+
+def looper_cmd(m, cmd):
+    """A looper command as the LOOPER TASK runs it (0x80070280, for real): 0 = MARK, 1 = overdub, 4 = erase."""
+    m.call(LOOPER_CMD, LOOPER, cmd, count=20_000_000)           # erase clears both loop buffers
+
+
+def looper_block(m):
+    """One audio block through the looper's real input (0x1d634), as the feed calls it while it is enabled."""
+    m.looper_in_real = True
+    m.call(LOOPER_IN, LOOPER, CAPTURE, 64)
+    m.looper_in_real = False
+
+
+def looper_state(m):
+    return m.r8(LOOPER_ON), m.r8(LOOPER_PHASE), m.r8(LOOPER_GO)
+
+
+def looper_ready(m, phase=0):
+    """MARK Function = LOOPER; phase 0 (empty) or 6 (a loop recorded, then stopped), by the stock commands."""
+    looper_init(m)
+    mark_function(m, 2)
+    looper_auto(m, 0)
+    if phase == 6:
+        looper_cmd(m, 0)                        # record
+        looper_cmd(m, 0)                        # close the loop: play
+        looper_cmd(m, 0)                        # stop
+    if looper_state(m)[:2] != (1, phase):
+        raise RuntimeError(f'looper not ready: {looper_state(m)}')
+
+
+def looper_checks(img, man):
+    """The looper refuses a bounce only while it plays, records, overdubs or waits for a level: the stock
+    setter, the LOOPER TASK's commands and its audio input run for real."""
+    m = boot(img, man)
+    m.load_pad(0, 4800)
+
+    def gesture_text():
+        m.gesture(0)
+        m.ui(1)
+        text, state = m.popup(), m.u('state')
+        if state == U_SETUP:
+            m.tap(KEY_EXIT)
+            m.ui(1)
+        return text, state
+
+    looper_init(m)
+    check(looper_state(m) == (0, 0, 0) and m.r8(LOOPER_TRIG) == 1,
+          f'the looper after the boot: disabled, empty, level trigger on ({looper_state(m)})')
+    text, state = gesture_text()
+    check(state == U_SETUP, f'MARK Function not LOOPER: the bounce is set up ({text!r})')
+    mark_function(m, 2)
+    check(looper_state(m) == (1, 0, 0),
+          f'MARK Function = LOOPER through the stock setter: +0x39 = 1, phase 0 ({looper_state(m)})')
+    text, state = gesture_text()
+    check(state == U_SETUP and text.startswith('BOUNCE A-1>A-2'),
+          f'MARK Function = LOOPER, the looper empty: the bounce is set up, not refused ({text!r})')
+    looper_cmd(m, 0)
+    text, state = gesture_text()
+    check(looper_state(m)[1] == 1 and state == U_IDLE and text == 'STOP LOOPER FIRST',
+          f'MARK with the level trigger on: armed (phase 1), refused: the bounce itself would start it '
+          f'({looper_state(m)}, {text!r})')
+    looper_cmd(m, 0)                            # MARK again: disarmed
+    looper_auto(m, 0)
+    text, state = gesture_text()
+    check(looper_state(m) == (1, 0, 0) and state == U_SETUP, f'disarmed, level trigger off: set up ({text!r})')
+    steps = [(lambda: looper_cmd(m, 0), 2, 'MARK: the first pass records', True),
+             (lambda: looper_cmd(m, 0), 5, 'MARK again: the loop closed, playing', True),
+             (lambda: looper_cmd(m, 0), 6, 'MARK again: stopped', False),
+             (lambda: looper_cmd(m, 1), 6, 'overdub from stop: queued for the next block (+0x102)', True),
+             (lambda: looper_block(m), 8, 'the next audio block: overdubbing (plays and records)', True),
+             (lambda: looper_cmd(m, 1), 9, 'overdub off: ending at the loop\'s end', True),
+             (lambda: looper_cmd(m, 0), 6, 'MARK: stopped', False),
+             (lambda: looper_cmd(m, 4), 0, 'erase: empty', False)]
+    for do, phase, what, refused in steps:
+        do()
+        st = looper_state(m)
+        text, state = gesture_text()
+        ok = (state == U_IDLE and text == 'STOP LOOPER FIRST') if refused else state == U_SETUP
+        check(st[1] == phase and ok, f'looper {what} (phase {st[1]}, go {st[2]}): '
+              f'{"refused" if refused else "set up"} ({text!r})')
+    looper_auto(m, 1)
+    looper_cmd(m, 0)
+    text, state = gesture_text()
+    check(looper_state(m)[1] == 1 and state == U_IDLE and text == 'STOP LOOPER FIRST',
+          f'armed again for a level: refused ({looper_state(m)}, {text!r})')
+    mark_function(m, 0)
+    text, state = gesture_text()
+    check(looper_state(m)[:2] == (0, 1) and state == U_SETUP,
+          f'MARK Function back to MARK while armed: disabled, the feed no longer reaches it: set up ({text!r})')
+    mark_function(m, 2)                         # enabled again: empty
+    looper_auto(m, 0)
+    looper_cmd(m, 0)
+    looper_cmd(m, 0)                            # playing
+    mark_function(m, 0)                         # the stock disable stops it first
+    text, state = gesture_text()
+    check(looper_state(m)[:2] == (0, 6) and state == U_SETUP,
+          f'MARK Function back to MARK while playing: the stock disable stops it (phase 6): set up ({text!r})')
+    # REC in the setup popup checks again
+    m2 = boot(img, man, seed=3)
+    m2.load_pad(0, 4800)
+    looper_ready(m2, phase=6)
+    m2.gesture(0)
+    m2.ui(1)
+    looper_cmd(m2, 0)                           # the looper plays before REC is pressed
+    m2.tap(KEY_REC)
+    m2.ui(1)
+    check(m2.u('state') == U_IDLE and m2.popup() == 'STOP LOOPER FIRST' and
+          not [x for x in m2.log if x[0] == 'post'],
+          f'the looper started between the gesture and REC: refused at REC, nothing posted ({m2.popup()!r})')
+    # a whole bounce with MARK Function = LOOPER and a loop stopped
+    m3 = boot(img, man, seed=4)
+    pcm = pcm_burst(3000, 4)
+    m3.load_pad(0, 3000)
+    m3.voice = Voice(m3, 0, pcm, 0, 3000, 0, 1)
+    looper_ready(m3, phase=6)
+    res = run_bounce(m3, 0, 0)
+    check(res.get('popup') == 'BOUNCED A-1\nON A-2' and m3.take[77:77 + 3000] == pcm and looper_state(m3)[:2] == (1, 6),
+          f'a bounce with MARK Function = LOOPER, the loop stopped: done, the looper left as it was '
+          f'({res.get("popup")!r})')
+    note('the looper: refused only while it plays, records, overdubs or waits for a level')
+
+
+# ---- events through the UI task's real dispatcher ----
+def dispatcher_checks(img, man):
+    """The gesture, VALUE pressed, SHIFT + VALUE, REC and EXIT reach the module through the UI task's own
+    dispatcher (0x8003b530) and page 0xe's registry handler (0x80053cb8), as on the unit."""
+    m = boot(img, man)
+    m.real_ui()
+    m.load_pad(0, 4800)
+    m.dispatch(EV_KEY, KEY_RESAMPLE)
+    held = m.r8(KEYS + (KEY_RESAMPLE >> 3)) >> (KEY_RESAMPLE & 7) & 1
+    m.dispatch(EV_PAD, 0, 100)
+    m.dispatch(EV_PAD_UP, 0, 0)
+    m.dispatch(EV_KEY_UP, KEY_RESAMPLE)
+    m.ui(1)
+    check(held and m.u('state') == U_SETUP and m.popup() == 'BOUNCE A-1>A-2\nNO TAIL',
+          f'the gesture through the stock dispatcher: the setup popup ({m.popup()!r})')
+    m.dispatch(EV_KEY, KEY_VALUE)
+    m.dispatch(EV_KEY_UP, KEY_VALUE)
+    m.ui(1)
+    check(m.u('target') == T_REPLACE and m.popup() == 'REPLACE A-1\nNO TAIL',
+          f'VALUE pressed (key 0x31, as the stock SG page takes it) through the stock dispatcher: REPLACE '
+          f'({m.popup()!r})')
+    m.dispatch(EV_KEY, KEY_VALUE)
+    m.dispatch(EV_KEY_UP, KEY_VALUE)
+    m.ui(1)
+    check(m.u('target') == T_PAD and m.popup() == 'BOUNCE A-1>A-2\nNO TAIL', 'VALUE pressed again: TO PAD')
+    m.dispatch(EV_KEY, KEY_SHIFT)
+    m.dispatch(EV_ENCODER, 0, 1)
+    m.dispatch(EV_KEY_UP, KEY_SHIFT)
+    m.ui(1)
+    check(m.u('target') == T_REPLACE, 'SHIFT + VALUE right through the stock dispatcher: REPLACE')
+    m.dispatch(EV_ENCODER, 0, 1)
+    m.ui(1)
+    check(m.u('target') == T_REPLACE and m.u('mode') == TAIL and m.popup() == 'REPLACE A-1\nTAIL',
+          f'VALUE turned: the mode; the target stays ({m.popup()!r})')
+    m.dispatch(EV_KEY, KEY_EXIT)
+    m.dispatch(EV_KEY_UP, KEY_EXIT)
+    m.ui(1)
+    check(m.u('state') == U_IDLE and m.popup() == 'BOUNCE CANCELLED\nNOTHING CHANGED',
+          'EXIT through the stock dispatcher: cancelled')
+    # a whole REPLACE, every key through the stock dispatcher
+    m = boot(img, man, seed=5)
+    m.real_ui()
+    pcm = pcm_burst(3000, 5)
+    m.load_pad(0, 3000)
+    m.voice = Voice(m, 0, pcm, 0, 3000, 0, 1)
+    orig = m.record(0)
+    m.dispatch(EV_KEY, KEY_RESAMPLE)
+    m.dispatch(EV_PAD, 0, 100)
+    m.dispatch(EV_PAD_UP, 0, 0)
+    m.dispatch(EV_KEY_UP, KEY_RESAMPLE)
+    m.ui(1)
+    m.dispatch(EV_KEY, KEY_VALUE)
+    m.dispatch(EV_KEY_UP, KEY_VALUE)
+    m.ui(1)
+    setup_text = m.popup()
+    m.dispatch(EV_KEY, KEY_REC)
+    m.dispatch(EV_KEY_UP, KEY_REC)
+    texts = set()
+    for _ in range(4000):
+        m.period()
+        texts.add(m.popup().split('\n')[0])
+        if m.u('state') == U_IDLE:
+            break
+    for _ in range(4):
+        m.ui(1)
+    swaps = [x for x in m.fs_log if x[0] == 'rename']
+    a, b = m.path(0), m.path(1)
+    tmp = 'B:/tmp.SMP'
+    check(setup_text == 'REPLACE A-1\nNO TAIL' and m.popup() == 'REPLACED A-1\nORIG ON A-2' and
+          texts <= {'REPLACE A-1', 'REPLACED A-1'} and swaps == [('rename', b, tmp), ('rename', a, b), ('rename', tmp, a)]
+          and m.file(0)['tag'][0] == 'take' and m.record(1)[3] == orig[3],
+          f'REPLACE with every key through the stock dispatcher: the real file swap renames {b} -> tmp, {a} -> {b}, '
+          f'tmp -> {a}; the bounce on A-1, the original on A-2 ({m.popup()!r}, {sorted(texts)})')
+    note('events through the stock dispatcher')
+
+
+# ---- the exchange's fence, through SMPL TASK's real queue ----
+def fence_checks(img, man):
+    """The REPLACE fence lands only after the exchange: the module's posts go through the real post (0x800e25c0)
+    and target set (0x800d48e8) into SMPL TASK's one queue, and the task's real loop takes them in order."""
+    m = boot(img, man, seed=6)
+    pcm = pcm_burst(3000, 6)
+    m.load_pad(0, 3000)
+    m.voice = Voice(m, 0, pcm, 0, 3000, 0, 1)
+    order = []
+
+    def seen(uc, address, size, what):
+        if what == 'exchange_done':
+            order.append(('exchange returned',))
+        elif what == 'store':
+            r1, r2 = (uc.reg_read(getattr(ar, f'UC_ARM_REG_R{k}')) for k in (1, 2))
+            if r1 == 1:
+                order.append(('target 1', s32(r2), m.r8(REC_STATE)))
+    passes = []
+
+    def loop_entry(uc, address, size, _):
+        passes.append(m.pending())
+    m.uc.hook_add(UC_HOOK_CODE, seen, 'exchange_done', begin=0x8004F8C8, end=0x8004F8C8)
+    m.uc.hook_add(UC_HOOK_CODE, seen, 'store', begin=0x800FB000, end=0x800FB000)
+    m.uc.hook_add(UC_HOOK_CODE, loop_entry, None, begin=SMPL_LOOP, end=SMPL_LOOP)
+    res = run_bounce(m, 0, 0, target=T_REPLACE)
+    fence = [i for i, x in enumerate(order) if x[0] == 'target 1' and x[1] in (14, 15)]
+    done = [i for i, x in enumerate(order) if x[0] == 'exchange returned']
+    check(res['popup'] == 'REPLACED A-1\nORIG ON A-2' and len(done) == 1 and len(fence) == 1 and done[0] < fence[0],
+          f'the fence (target 1 = 15) is stored by the real target store after 0x800a6c30 returned ({order[-6:]})')
+    px = [q for q in passes if ('cmd', 0x40D, 0, 1) in q]
+    q = px[0] if px else []
+    at = q.index(('cmd', 0x40D, 0, 1)) if q else 0
+    check(len(px) == 1 and [x for x in q[at + 1:] if x[0] == 'target'][:1] == [('target', 1, 15)],
+          f'the exchange and the fence reach SMPL TASK in one pass of its loop, the fence after it ({q})')
+    note('the fence through the real queue')
+
+
 def main():
     out = Path(sys.argv[1])
     man = json.loads((out / 'manifest.json').read_text(encoding='utf-8'))
@@ -1796,9 +2155,12 @@ def main():
     interface_checks(img, man)
     gate_checks(img, man)
     filter_checks(img, man)
+    dispatcher_checks(img, man)
+    looper_checks(img, man)
     r = runs(img, man)
     settings_checks(img, man)
     replace_checks(img, man)
+    fence_checks(img, man)
     leak_checks(img, man)
     failure_checks(img, man)
     cost_checks(img, man)

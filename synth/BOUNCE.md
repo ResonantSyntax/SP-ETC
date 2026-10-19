@@ -8,8 +8,26 @@ swaps them back.
 
 This is a test build on the published Sound Generator + Kits v9.46 (kits plus the RESAMPLE start
 fix). It supersedes stage 2 (bounce-2-test1, which never ran on the unit) on the same sites, plus
-one more. Emulator-checked only; the next hardware round covers stage 2 and stage 3 together.
-Stage 1 is the bounce probe ([BOUNCE_PROBE.md](BOUNCE_PROBE.md)).
+one more. Stage 1 is the bounce probe ([BOUNCE_PROBE.md](BOUNCE_PROBE.md)).
+
+**bounce-3-test2** follows the first hardware run of bounce-3-test1 (2026-10-19):
+
+- **MARK Function = LOOPER refused every bounce** (`STOP LOOPER FIRST` with the looper stopped).
+  The module read `0x82e0b71c + 0x39`, which is the looper's *enable* flag: the MARK Function
+  setter (system parameter 0x141 = 2) sets it through `0x8001c1a8` whether anything plays or not.
+  test2 reads the looper's phase (`+0x101`) instead and refuses only while it plays, records,
+  overdubs or waits for a level ([what ends up in the take](#what-ends-up-in-the-take)).
+- **A REPLACE ended on `BOUNCED …`:** the run had TO PAD selected when REC was pressed. Only the
+  gesture and VALUE (or SHIFT + VALUE) in the setup popup write the target. The emulator now runs
+  the gesture, VALUE pressed and REC through the UI task's own dispatcher (`0x8003b530`): VALUE
+  arrives as key 0x31, as on the stock SG page, and selects REPLACE, which then runs to
+  `REPLACED`. One way to reach REC on TO PAD was that the choice was kept only once a run started,
+  so after EXIT or a refusal the next gesture came back on TO PAD. In test2 the target and the
+  mode are kept as soon as they are picked. Check the popup's first line before pressing REC.
+- The timing matched: L = M on every take, P 65 on that boot.
+
+Emulator-checked only otherwise; the hardware test is
+`analysis/kit_pr1_audit/release/bounce-3-test2/HARDWARE_TEST.md`.
 
 Background: the bounce-in-place study, `analysis/bounce_in_place/REPORT.md` (§2–§4, §7, §9),
 outside this repository.
@@ -43,7 +61,8 @@ setting the run changed comes back. While a bounce is set up or running, every o
 and pad is ignored, so nothing else can sound in the take.
 
 The first bounce after power-on starts on TO PAD and NO TAIL. After that the setup popup starts
-on the target and mode you used last; this is kept in RAM only.
+on the target and mode you picked last, as soon as you picked them (EXIT does not lose them); this
+is kept in RAM only.
 
 ### UNDO
 
@@ -113,9 +132,28 @@ The bounce records what RESAMPLE records: the main mix after the bus effects and
 effects (BUS 3/4), before the output volume. Only the pad itself sounds:
 
 - **Other sounds:** the run posts ALL SOUND OFF and the sequencer's sound off, and waits for
-  silence. A pattern or the looper must be stopped first (`STOP PATTERN FIRST`,
-  `STOP LOOPER FIRST`); one that starts during the run ends it with the same popup, and the take
-  is discarded.
+  silence. A pattern must be stopped first (`STOP PATTERN FIRST`); one that starts during the run
+  ends it with the same popup, and the take is discarded.
+- **The looper:** MARK Function = LOOPER is fine while the looper is empty or stopped. It is
+  refused (`STOP LOOPER FIRST`), and a run it starts during is discarded, while the looper plays,
+  records its first pass, overdubs, or is armed to start on a level (its own trigger would fire
+  on the bounce). The module reads the looper's phase, `0x82e0b71c + 0x101`, which the LOOPER
+  TASK's commands (`0x80070280`) and the looper's audio input (`0x1d634`) set:
+
+  | Phase | The looper | Bounce |
+  | --- | --- | --- |
+  | 0 | empty (MARK Function = LOOPER enables it here, `0x8001c1a8`) | allowed |
+  | 1, 7 | armed: waits for the input level to start the first take, or an overdub | refused |
+  | 2, 3 | records the first pass | refused |
+  | 4 | the loop buffer full: the task starts playing or overdubbing | refused |
+  | 5, 10 | plays (10: an overdub queued for the loop's start) | refused |
+  | 6 | stopped (with `+0x102` set: an overdub starts on the next audio block, refused) | allowed |
+  | 8, 9 | overdubs (9: to the end of the loop) | refused |
+
+  The mixer (`0x1e248`) plays phases 5, 8, 9 and 10 whether the looper is enabled or not; the
+  feed records into it only while it is enabled (`+0x39`, `0x1cb44`). With MARK Function set to
+  something else, the stock disable has stopped it (`0x8001f820`: 5, 8, 9, 10 → 6), and only
+  those playing phases refuse.
 - **Notes:** while a bounce owns the recorder, every pad note-on but the run's own trigger is
   dropped where all of them meet, at the stock pad-event dispatcher (`0x800bef10`): MIDI notes
   (the stock MIDI note-on posts them there), rolls, the sequencer. Note-offs pass.
@@ -178,8 +216,8 @@ A1 L77 M77 P61.5 D0
 | `P61.5` | the mean eDMA phase over the silence wait |
 | `D0` | RX blocks minus TX blocks counted since boot |
 
-These stay in bounce-3-test1: this round is the first time the timing runs on the unit, and T3
-reads L and M from every bounce. A REPLACE shows them on the replaced pad; the parked original
+These stay in the bounce-3 test builds: the timing is being checked on the unit, and T3 reads L
+and M from every bounce. A REPLACE shows them on the replaced pad; the parked original
 keeps its own name. The release names the pads instead (for example the source's name plus
 ` BNC`), once the numbers have done their job.
 
@@ -190,7 +228,8 @@ keeps its own name. The release names the pads instead (for example the source's
 | EXIT in the setup, the standby, the silence wait or the take | discards the take (cancel 0x1a, or 0x18 in standby), restores everything | `BOUNCE CANCELLED` / `NOTHING CHANGED` |
 | EXIT while the take is saved or the pads are swapped | ignored: these steps run to the end | |
 | the input never quiet for 200 ms in 10 s | discards | `FX STILL RINGING` |
-| a pattern or the looper running, or starting | refuses, or discards | `STOP PATTERN FIRST`, `STOP LOOPER FIRST` |
+| a pattern running, or starting | refuses, or discards | `STOP PATTERN FIRST` |
+| the looper playing, recording, overdubbing or armed, or starting (MARK Function = LOOPER alone is fine) | refuses, or discards | `STOP LOOPER FIRST` |
 | EXT SOURCE switched on during the take | discards | `INPUT TURNED ON` / `NOTHING CHANGED` |
 | a protected bank (REPLACE from it, or a source the run would have to change) | refuses before anything is set | `BANK PROTECTED` / `NOTHING CHANGED` |
 | the standby, the take start or the voice not coming (1–3 s), ROUTING not Mix, a mono recorder | discards | `BOUNCE FAILED` |
@@ -207,8 +246,12 @@ file cannot be opened the last two renames are skipped and the scratch file stay
 `B:/tmp.SMP`), swaps the two pads' parameter records, names and extended blocks in RAM, reloads
 both pads (one whose file does not load is cleared), and saves the pad parameters. It always
 reports success. The run therefore checks the result itself: a recorder target write posted
-behind the exchange in the same FIFO command ring marks its end, and then both pads must hold
-samples with each other's former size and channels. That catches a swap that did not happen; it
+behind the exchange marks its end, and then both pads must hold samples with each other's former
+size and channels. The fence holds because SMPL TASK has one queue: the post (`0x800e25c0`, type
+0xa4) and the target set (`0x800d48e8`, type 0xa8) both go through `0x800da528`, and the task's
+loop (`0x801947c0`) takes messages oldest first, runs 0xa4 commands in the dispatcher
+`0x8004d8b8` (the exchange runs to its end inside it), and only then stores the 0xa8 write
+(`0x800fb000`). That catches a swap that did not happen; it
 cannot tell two files of the same size apart.
 
 It is **not atomic**. The pad parameters are saved only after the renames and reloads, so a power
@@ -285,14 +328,17 @@ minimum). Only the window plays.
   module's state, so its zeros take no flash. APP1 stays below the kit PCM planning boundary
   (`0x60376000`). The builder checks that no row overlaps the slot and that nothing in the input
   refers to it.
-- **Guards:** every patched site is checked against its exact v9.46 contents. 79 spans the module
-  calls or relies on are checked byte for byte (SHA-256 in the builder), plus 21 jump-table
+- **Guards:** every patched site is checked against its exact v9.46 contents. 90 spans the module
+  calls or relies on are checked byte for byte (SHA-256 in the builder), plus 22 jump-table
   entries. Stage 3 adds the pad-event dispatcher and its ring, the pad note and the note-on's PAD
   LINK loop, command 0x40d and the exchange with its file and parameter swaps, the whole pad getter
   and setter with its conversions and protect test, the new-sample defaults, the envelope page, the
   renderer's routing and the per-voice update, the recorder's overrun, error word and drain, and
-  the EXT SOURCE setter case with the input volume. All are stock 5.52 bytes in v9.46 except the
-  four marked v9.46 (the start fix and DOOM OS's filter).
+  the EXT SOURCE setter case with the input volume. bounce-3-test2 adds the looper: the MARK
+  Function setter case and its jump-table entry, enable, disable and the disable's stop, the LOOPER
+  TASK's commands, the looper's audio input and output. It also adds SMPL TASK's queue put, pop and
+  loop, behind the REPLACE fence. All are stock 5.52 bytes in v9.46 except the four marked v9.46
+  (the start fix and DOOM OS's filter).
 - **Branch scan:** no direct branch anywhere in the ITCM or SDRAM code lands inside a patched
   span.
 - **Cost (emulator):** about 50 instructions per TX+RX block pair when idle; up to about 2,600
@@ -310,25 +356,42 @@ python synth/build_bounce.py out/kits-v946-final/SP404MKII_APP1.bin out/bounce -
 python synth/test_bounce.py out/bounce
 ```
 
-bounce-3-test1 is APP1 `59e061cf…221d` (3,103,744 bytes). It comes out the same on the published
+bounce-3-test2 is APP1 `571589da…20aa` (3,103,808 bytes). It comes out the same on the published
 v9.46 (`7b5fbcb4…684a`) and on a clean rebuild of every stage from stock 5.52 (v9.5 `d0919e40…`,
 v9.6 `1b2d50e0…`, kits `88384c3c…`, start fix `7b5fbcb4…684a`), and two builds are byte-identical.
+(bounce-3-test1 was `59e061cf…221d`, 3,103,744 bytes.)
 
 ## Checks (emulator)
 
 `test_bounce.py` boots the built image in Unicorn the way its scatter loader does. Stock code runs
-for real: the recorder feed behind the RX bridge, the pad note and the pad-event dispatcher behind
-the gate bridge, the pad parameter getter and setter (with their conversions, protect test and
-side effects), the pad name, SMPL TASK's command dispatcher for 0x40d with the exchange and its
-parameter swap, the settings setter for EXT SOURCE, the stock MIDI dispatcher, the popup function
-and the page's vtable.
+for real:
+
+- the recorder feed behind the RX bridge, the pad note and the pad-event dispatcher behind the
+  gate bridge;
+- the pad parameter getter and setter (with their conversions, protect test and side effects),
+  and the pad name;
+- SMPL TASK's command queue end to end: the module's posts and target sets (`0x800e25c0`,
+  `0x800d48e8`), the queue put and pop, the task's loop, the target store (`0x800fb000`), and the
+  command dispatcher for 0x40d with the exchange, its file swap (`0x80051040`) and path builder,
+  and its parameter swap;
+- the settings setter for EXT SOURCE, and the stock MIDI dispatcher;
+- the UI task's event dispatcher (`0x8003b530`) with page 0xe's registry handler, in the checks
+  that drive keys, the encoder and pads through it;
+- the looper: the MARK Function setter, the looper's boot init, the LOOPER TASK's commands, its
+  level-trigger option and its audio input;
+- the popup function and the page's vtable.
 
 Modelled:
 
-- SMPL TASK: standby, REC_START, the finalize (with a stock-like snap of START), cancel, sound
-  off, the command ring's order, a busy task;
-- the pad-event ring (a note-on there starts the source's voice), the files on the card (renames,
-  loads, a failed rename);
+- SMPL TASK's recorder commands, at the dispatcher's entry: standby, REC_START, the finalize
+  (with a stock-like snap of START), cancel, sound off; a busy task (the queue's pop holds the
+  exchange);
+- the pad-event ring (a note-on there starts the source's voice); the card under the file swap,
+  at its file calls (unlink, rename (FatFs: not onto an existing name), open), keyed by path; the
+  pad loader and the parameter save; a failed rename;
+- the RTOS under the looper and the queue (locks, waits, task creation, event flags), and the
+  dispatcher's run-time state on the RESAMPLE page (no mode holding the keys, no key pairs, the
+  page object live);
 - the source pad's voice, which renders the pad's frames into the DRY stems from the first block
   after its trigger;
 - the effects chip: RX = the record mix L frames later, optionally with gain, an echo, noise, or
@@ -336,7 +399,7 @@ Modelled:
 - the eDMA positions (reads jitter by one frame), the recorder engine's writer (it keeps the
   take, and can fill its ring), and the settings, project and system parameter stores.
 
-The checks (373 cases):
+The checks (412 cases):
 
 - **Static:** only the header, the five sites and the appended tail differ from v9.46. The
   scatter table is v9.46's rows plus a copy row and a zero-fill row; APP1 ends below the PCM
@@ -353,8 +416,24 @@ The checks (373 cases):
   RESAMPLE held, with SHIFT, with the recorder busy, outside the RESAMPLE mode, on a modal page,
   with project 0xbf/0xdd set, on an empty pad, or on pad 17+; in setup, keys, knobs and pads are
   swallowed; VALUE clamps; VALUE pressed and SHIFT + VALUE pick the target; EXIT changes nothing;
-  the modes each kind of pad offers; the destination search, protected banks skipped; the
-  refusals.
+  the target and mode kept once picked (after EXIT the gesture offers them again); the modes each
+  kind of pad offers; the destination search, protected banks skipped; the refusals.
+- **Through the UI task's own dispatcher** (`0x8003b530`, page 0xe's registry handler
+  `0x80053cb8`): the gesture (RESAMPLE's held bit set by the dispatcher itself), VALUE pressed
+  (key 0x31) to REPLACE and back, SHIFT + VALUE, VALUE turned, EXIT; and a whole REPLACE with
+  every key sent that way. That REPLACE checks the real file swap's renames, by the path builder's
+  own paths, and ends on `REPLACED`.
+- **The looper, through its stock code:** after the boot init, disabled and empty; MARK Function =
+  LOOPER through the stock setter: enabled, empty, a bounce set up; then each phase through the
+  LOOPER TASK's commands and the audio input. The phases are armed (level trigger on, the boot
+  default), recording, playing, stopped, overdub queued, overdubbing, ending an overdub, stopped,
+  erased, and armed again. Each is refused or set up as it should be. MARK Function changed back
+  while armed and while playing (the stock disable stops it): set up. The looper started between
+  the gesture and REC: refused at REC, nothing posted. A whole bounce with the loop stopped: done,
+  the looper left as it was. On bounce-3-test1 these checks fail as the unit did.
+- **The fence through the real queue:** the exchange and the fence reach SMPL TASK in one pass of
+  its loop, the fence after it, and the real target store writes 15 only after `0x800a6c30` has
+  returned.
 - **Whole runs through the bridges:** the take is the RX stream from F0 frame for frame,
   START/END and the loop point land on the window, a dry take is the source's own frames: NO TAIL
   (sharp attack, echo, 125 ms soft start, START/END inside the file, a looped pad, a pitched
@@ -374,7 +453,8 @@ The checks (373 cases):
 - **Leaks:** EXT SOURCE on with music on the input (muted, a clean take, on again), switched on
   during the take (discarded) and during the silence wait (muted again); a MIDI note on channel 1
   through the stock MIDI dispatcher during the take (dropped at the gate, the take clean) and when
-  idle (passes); FIXED VELOCITY; a pattern or the looper starting; PAD LINK.
+  idle (passes); FIXED VELOCITY; a pattern starting, or the looper (enabled, stopped) told to
+  play by the LOOPER TASK, during the take: discarded; PAD LINK.
 - **Refusals, EXIT and failures:** EXIT during standby, the silence wait, the recording (TO PAD
   and REPLACE), while saving, while swapping; `FX STILL RINGING`; ROUTING not Mix; a mono
   recorder; a pattern started during setup; a source that never sounds; a finalize that leaves
@@ -390,7 +470,9 @@ fix and bounce probe suites pass on their own builds.
 Not checked by the emulator, which is what the hardware test is for:
 
 - the real voice start and stream timing, and the effects chip's delay;
-- the SD card: the take's writes, the renames, a full card, a slow card, a power loss;
+- the SD card: the take's writes, the renames themselves (the emulator runs the file swap down to
+  its file calls), the pad loader and save, a full card, a slow card, a power loss;
+- the looper's real timing and its level trigger on the unit's input;
 - that input volume 0 silences every input path the effects chip mixes;
 - the stock finalize and exchange themselves on the card, the project reload;
 - MIDI from a real port, the screen, popups' lengths and LEDs;
