@@ -1,10 +1,11 @@
-"""Bounce in place, stage 2: bounce a sample pad through its effects into an empty pad, frame-exact.
+"""Bounce in place, stage 3: a sample pad through its effects, frame-exact, to an empty pad or in its
+place (REPLACE through the stock pad exchange, with UNDO).
 
 A stage applied to the published Sound Generator + Kits v9.46 image (kits plus the RESAMPLE start
-fix). It replaces the bounce probe (build_bounce_probe.py): the same three audio and UI sites, now
-bridged to bounce.c, plus page 0xe's event filter. See BOUNCE.md.
+fix). It supersedes stage 2 (bounce-2-test1): the same four sites, bridged to the stage 3 bounce.c,
+plus the pad-event dispatcher. See BOUNCE.md.
 
-Four sites change, each checked against its exact v9.46 contents:
+Five sites change, each checked against its exact v9.46 contents:
   0x0001d090  audio task, TX block: mov.w r1,#0x1000; mov r0,r5; bl mixer
               -> tx bridge: the same mixer call, then bnc_tx, then back to 0x1d09a
   0x0001d0c2  audio task, RX block: mov.w r1,#0x800; bl feed; b loop
@@ -12,6 +13,9 @@ Four sites change, each checked against its exact v9.46 contents:
                  gate cannot write the take); the same feed call, then bnc_rx, then the loop head
   0x8006b950  popup tick (UI task, every 1 ms): its first four instructions
               -> ui bridge: bnc_ui, then those four instructions
+  0x800bef10  pad-event dispatcher, every pad note from every task: ldrb; cmp #0xa0; bhi; b.w ring
+              -> gate bridge: bnc_gate(event); 0 drops the event (a note-on while a bounce owns the
+                 recorder), 1 runs the four displaced instructions
   0x80223474  RESAMPLE page (0xe) vtable slot +8, the page's event filter: DOOM OS's 0x6031c8f9
               -> bnc_event, which hands every event it does not use to DOOM OS's filter
 The two audio bridges use no stack, so the mixer and the feed run at their stock depth. Stock code
@@ -36,23 +40,25 @@ from build_bounce_probe import check_no_branch_into
 from build_start_fix import refs_into
 
 HERE = Path(__file__).resolve().parent
-FLASH, COPY = 0x60080000, 0x600800E4
+FLASH, COPY, ZERO = 0x60080000, 0x600800E4, 0x60080100   # scatter rows: copy, zero fill
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
 PUBLISHED_V946 = '7b5fbcb4c3ce1e8782fef4b5803be74c7d14eddf25a1b53682abe00c9ed3684a'
-REVISION = 'bounce-2-test1'
+REVISION = 'bounce-3-test1'
 SLOT = 0x5000                       # reserved: [base, base + SLOT)
 SLOT_CEILING = 0x83FED000           # the CPU meter test build's slot, then the start fix at 0x83FEF000
-BRIDGES = {'tx': 0x00, 'rx': 0x30, 'ui': 0x80}
+BRIDGES = {'tx': 0x00, 'rx': 0x30, 'ui': 0x80, 'gate': 0xC0}
 CODE_OFFSET = 0x100                 # the C module links after the bridges
 PCM_BANK = 0x60376000               # build_arp_kit.py's flash planning boundary for kit PCM
-EXPORTS = ('bnc_tx', 'bnc_rx', 'bnc_ui', 'bnc_event', 'bnc_estimate', 'bnc_aud', 'bnc_ui_state', 'bnc_text',
-           'bnc_own')
+FUNCTIONS = ('bnc_tx', 'bnc_rx', 'bnc_ui', 'bnc_event', 'bnc_estimate', 'bnc_gate')
+EXPORTS = FUNCTIONS + ('bnc_aud', 'bnc_ui_state', 'bnc_text', 'bnc_own', 'bnc_expect')
 FEED_ON = 0x805917C4                # the recorder feed calls the gate while this word is set
 MIXER, FEED, TX_BACK, LOOP, TICK_REST = 0x1C2D0, 0x1CA80, 0x1D09A, 0x1D05C, 0x8006B95C
+RING, DISPATCH_HIGH = 0x80018590, 0x800BEF1C   # the pad-event ring put; the dispatcher's path for 0xa1+
 SITES = {
     'tx': (0x1D090, 10, ['mov.w r1, #0x1000', 'mov r0, r5', 'bl #0x1c2d0']),
     'rx': (0x1D0C2, 10, ['mov.w r1, #0x800', 'bl #0x1ca80', 'b #0x1d05c']),
     'ui': (0x8006B950, 12, ['push {r4, r5, r6, lr}', 'movw r4, #0x22ac', 'movt r4, #0x8059', 'ldr r1, [r4, #8]']),
+    'gate': (0x800BEF10, 10, ['ldrb r1, [r0]', 'cmp r1, #0xa0', 'bhi #0x800bef1c', 'b.w #0x80018590']),
 }
 VTABLE_SLOT, DOOM_FILTER = 0x80223474, 0x6031C8F9     # RESAMPLE page vtable 0x8022346c, +8
 # Code and data the module and bridges rely on: (start, end, SHA-256 of the v9.46 runtime bytes, what it
@@ -176,6 +182,60 @@ GUARDS = [
     (0x6031C8F8, 0x6031C9A8, 'c3c66d467d9349e7a4cd28da79f776f2aab969f6c04da222f35232ce19e18179',
      'v9.46 (DOOM OS ED5E): the page event filter (page, event); events it does not take go to 0x800a80a9; it '
      'reads the page id at 0x80245880'),
+    # stage 3
+    (0x800BEF10, 0x800BEF4A, 'deaea7d78c2fba4baa97bd35b05354f3795aa79ee12b35963e4c02adf429fb89',
+     'pad-event dispatcher (event): byte 0 <= 0xa0 -> the ring put 0x80018590, 0xa1 too; the site'),
+    (0x80018590, 0x800185FA, 'ef7f3106abb62df882ad3923ec1b9afc434170ff4caf07aba9129dcf3109bd8b',
+     'pad-event ring put: SMPL TASK starts the voice from it (byte 3 velocity, 0x80+ = off)'),
+    (0x800CDBD0, 0x800CDE80, 'e54db5be9985d3a1a74b5a7499e219207f8faf3f4be9bb35fe099cb4aa8efc9d',
+     'pad note: event {pad, 4, -, velocity or 0xff, 0xff or 0x40, 0} through 0x800bef10; FIXED VELOCITY '
+     '(project 0xf5) replaces the velocity with project 0xdc'),
+    (0x800AEC48, 0x800AF0CE, '6844ac43adc6e43642f416c0b6d93e19a79215b644ac70757643961b1fc99177',
+     'note-on: every other pad with the same nonzero PAD LINK (0x79) starts directly, not through the ring'),
+    (0x8004F88C, 0x8004F91C, '1e10109b4687cb94f4f379b29c119383c1a25a339837a2f243b50a97d6597f4b',
+     'command 0x40d: close the sample manager\'s preview files, 0x800a6c30(gSmplMgr, [msg+4], [msg+8], 2)'),
+    (0x8004FAE8, 0x8004FB14, 'd09aec034373cadb12deaf759da0dc6413a2ab63fbd127c493205652f5e82595',
+     'command 0x40d, its only exit for 0x800a6c30\'s result 0: remote notice, UI refresh'),
+    (0x800A6C30, 0x800A6D80, '2db31f7921c4570befc87b1901974504fc86f0fe20b9837c9ac88789285ac736',
+     'exchange (mode 2): stop both pads\' voices, unload, swap files, swap parameters, reload both, save the '
+     'pads; always returns 0'),
+    (0x80051040, 0x800510CE, 'b04a9a29a04085625e2d2ecd634b91f3b9a6635f642e2f71ee9baeedc7fc6601',
+     'file swap: delete B:/tmp.SMP, rename B -> tmp, A -> B, tmp -> A (.SMP paths), results unchecked'),
+    (0x8018C2D8, 0x8018C3BC, '12df8970c14d03d51758be3e9bf77a696f783894372c758f7bee73844b3405ef',
+     'parameter swap: the 0xac-byte record, the 24-byte name and the 0x80-byte block of both pads'),
+    (0x800DA720, 0x800DC6B2, '967531f2cdcdb042fac6065253e54bb04ac5fa038269cb6cc8e4db5f6526026c',
+     'pad set, whole: protect test, conversion, a store per id; GATE/LOOP on clear Polyphonic bit 5; '
+     'GATE/LOOP/0x72/PLAY post a save'),
+    (0x800DC6B8, 0x800DCF08, '76d59a974bf02d89a2b46f14293ee991a737fc3f66453f2c7c952414e5cd4fc7',
+     'pad get, whole: LENGTH and channels from the file info; 0x69..0x7f from the pad record'),
+    (0x8001A570, 0x8001AA78, '755e7c5ef0a9001df5858fd2857cad3c307d4c76f841897e4208f04ed11c956d',
+     'pad set conversion: VOLUME 0..127, PITCH -12..12, FINE -100..100, SPEED 500..15000, PAN 13..115, BUS 0..6, '
+     'Hold 1..100, Attack/Release 0..127'),
+    (0x8001AA78, 0x8001AB80, 'c9e9ba56aa278c29362633315c6b761f97aa2a565977d772cffa3738a7731ef0',
+     'protect test (obj, id, pad): SMPL+0x19900 and the bank\'s Protect (pad get 0x17 + bank)'),
+    (0x800CFA68, 0x800CFB1C, '5076537fa1fe4b05572f552f9deb65f65449cd8e0612cfbab02eeb147ecc0aed',
+     'a new sample\'s defaults: VOLUME 127, PAN 64, PITCH/FINE 0, SPEED 10000, PLAY 0, VINYL 1, BUS FX 1, '
+     'Attack 0, Hold 100, Release 0'),
+    (0x800F5D10, 0x800F5DEC, 'deec1a510192f8edc85ba6341dd3a98c7d8442672ce69a1dd7671f4001e98226',
+     'envelope page: CTRL1 Attack (0x7d), CTRL2 Hold (0x7e, x100/127), CTRL3 Release (0x7f)'),
+    (0x00014B88, 0x00014D90, 'f77ecc56d616e6b5f40b56b3373bb290e2e8e0684df59d9de46c34104c20ec51',
+     'renderer: the voice\'s bus is its BUS FX Assign; 0 (DRY) is the one value sent through DRY Routing'),
+    (0x800A2C98, 0x800A2D98, 'a9218e7997eb2fb293fe96cc2c645194f7e7bc4703d3577b5a92e4bae13ee405',
+     'per-voice parameter update: PITCH/FINE ratio, PAN gains (64 = unity), BUS, envelope'),
+    (0x8017E5B0, 0x8017E5D0, '578aa0664efb99b60a39a5d1912e25f23025469e1bc4d2426bb377abfda0e34a',
+     'stereo writer, ring full: error word -0x79, REC TASK stop (flag 0x20), 100 ms delay'),
+    (0x8017EA10, 0x8017EA16, '00488a29c8a023bfe68da1993f62328446bd6d4816032b28805e74aa68e4bbd9',
+     'the error word store, CSampleRec + 0x250'),
+    (0x800EA308, 0x800EA3D4, '766012228ecb48eb25b61b72012d2e37985a2df485e26636926079c7d95d8fc8',
+     'REC TASK drain: a failed write or the spent budget -> error word -0x3e, then the stock finalize'),
+    (0x800DD46C, 0x800DD494, '34fc5f0db81d56f76bb2f3eca39f45ebd4ac333bd4ece2ac05a840a99622b117',
+     'settings set 0x25 (EXT SOURCE): with the input forced off (project 0xf8) input volume 0'),
+    (0x800DD97C, 0x800DD9B4, '0a343872dd225f95b7ea0cca36148486878ab44c242dfc159a0ca5ac48333d34',
+     'settings set 0x25: on a change, 0 -> input volume 0, 1 -> system parameter 0x22'),
+    (0x8001A1C8, 0x8001A1F2, '5bbdd2c7802f21b59c6f3433e7237c912daf9f2b804a9f0ec82382f8c6d5016d',
+     'input volume (0x80591aac, level): the effects chip\'s parameter 0x22'),
+    (0x800D9818, 0x800D981E, '027168e16d284f28241b05568b507a1d17524c770be025e9a9485316d18d0875',
+     'settings get 0x25: the value the setter stores ([obj + 0x5c])'),
 ]
 # 16-bit jump-table entries: (address, value, what)
 TABLE_GUARDS = [
@@ -198,15 +258,33 @@ TABLE_GUARDS = [
     (0x800DB9B4, 344, 'pad set 0x68 (END)'),
     (0x800DB9BA, 468, 'pad set 0x6b (LOOP)'),
     (0x800DB9C6, 634, 'pad set 0x71 (loop point)'),
+    (0x800D953C, 403, 'settings get 0x25 (EXT SOURCE) -> 0x800d9818'),
+    (0x800DD148, 439, 'settings set 0x25 (EXT SOURCE) -> 0x800dd46c'),
 ]
 POPUPS = {
-    'setup': 'BOUNCE A-1>A-9\\nNO TAIL | TAIL | LOOP | TAIL ONLY',
-    'waiting': 'BOUNCE A-1>A-9\\nWAIT SILENCE',
-    'running': 'BOUNCE A-1>A-9\\nNO TAIL 37% | LOOP 37% | TAIL 2.4s',
-    'done': 'BOUNCED A-1\\nON A-9',
+    'setup': 'BOUNCE A-1>A-9 | REPLACE A-1\\nNO TAIL | TAIL | LOOP | TAIL ONLY',
+    'undo': 'UNDO BOUNCE?\\nORIG ON A-9',
+    'waiting': 'BOUNCE A-1>A-9 | REPLACE A-1\\nWAIT SILENCE',
+    'running': 'BOUNCE A-1>A-9 | REPLACE A-1\\nNO TAIL 37% | LOOP 37% | TAIL 2.4s',
+    'swapping': 'REPLACE A-1\\nSWAPPING | UNDO A-1\\nSWAPPING',
+    'done': ['BOUNCED A-1\\nON A-9', 'REPLACED A-1\\nORIG ON A-9', 'UNDONE A-1\\nBOUNCE ON A-9'],
     'cancelled': 'BOUNCE CANCELLED\\nNOTHING CHANGED',
-    'refused': ['NO EMPTY PAD', 'STOP PATTERN FIRST', 'STOP LOOPER FIRST', 'FX STILL RINGING', 'BOUNCE FAILED'],
+    'refused': ['NO EMPTY PAD', 'STOP PATTERN FIRST', 'STOP LOOPER FIRST', 'FX STILL RINGING', 'BOUNCE FAILED',
+                'BANK PROTECTED\\nNOTHING CHANGED', 'INPUT TURNED ON\\nNOTHING CHANGED', 'CANNOT UNDO\\nPADS CHANGED'],
+    'failed': ['STORAGE FULL\\nPART ON A-9 | NOTHING CHANGED', 'BOUNCE FAILED\\nPART ON A-9 | NOTHING CHANGED',
+               'SWAP FAILED\\nCHECK A-1 A-9'],
 }
+PAD_SETTINGS = dict(
+    copied=['GATE 0x6a', 'MUTE GROUP 0x6d', 'TEMPO SYNC 0x6e', 'Polyphonic 0x70 (its stretch bits too)', 'Roll 0x7b'],
+    copied_when='VINYL MODE 0x77 with TEMPO SYNC on (sync needs it off), else the default 1; the loop flag 0x72 when '
+                'NO TAIL keeps a loop',
+    neutral={'VOLUME 0x69': 127, 'PAN 0x78': 64, 'PITCH 0x73': 0, 'FINE 0x74': 0, 'SPEED 0x76': 10000,
+             'PLAY 0x75': 0, 'BUS FX Assign 0x7a': '0 (DRY)', 'Attack 0x7d': 0, 'Hold 0x7e': 100, 'Release 0x7f': 0},
+    by_mode='LOOP 0x6b: NO TAIL keeps the source\'s, LOOP on, TAIL off; loop point: NO TAIL of a loop at the source\'s '
+            'own offset, else START',
+    pad_link='TO PAD: 0. REPLACE: the bounce takes the source\'s group and the parked original leaves it (0); UNDO '
+             'puts it back. During the run the source is out of its group, so only the pad itself is recorded',
+    stock_defaults='everything else as the stock finalize leaves any new sample (0x800cfa68), ORIGINAL BPM = REC BPM')
 
 
 def sha(b):
@@ -226,7 +304,7 @@ def compile_module(folder: Path, zig: Path, link_base: int, limit: int):
     folder.mkdir(parents=True, exist_ok=True)
     if subprocess.check_output([str(zig), 'version'], text=True).strip() != '0.13.0':
         raise ValueError('needs Zig 0.13.0')
-    keep = ' '.join(f'KEEP(*(.text.{n}))' for n in EXPORTS[:5])
+    keep = ' '.join(f'KEEP(*(.text.{n}))' for n in FUNCTIONS)
     (folder / 'bounce.ld').write_text(f'''ENTRY(bnc_tx)
 SECTIONS {{
  . = {link_base:#x};
@@ -247,11 +325,27 @@ SECTIONS {{
                     '-fdata-sections', '-nostdlib', '-Wl,--no-undefined', '-Wl,--build-id=none', '-Wl,-e,bnc_tx',
                     '-Wl,-T,' + str(folder / 'bounce.ld'), str(source), '-o', str(folder / 'bounce.elf')],
                    check=True, env=env)
-    code, symbols = read_module((folder / 'bounce.elf').read_bytes(), link_base, limit)
+    elf = (folder / 'bounce.elf').read_bytes()
+    code, symbols = read_module(elf, link_base, limit)
     missing = [n for n in EXPORTS if n not in symbols]
     if missing:
         raise ValueError(f'module exports missing: {missing}')
-    return code, {n: symbols[n] for n in EXPORTS}, sha(source.read_bytes())
+    bss = bss_range(elf)
+    if bss[0] < link_base or bss[0] + bss[1] != link_base + len(code) or any(code[bss[0] - link_base:]):
+        raise ValueError('the module must end with its zero-initialised .bss')
+    return code, {n: symbols[n] for n in EXPORTS}, sha(source.read_bytes()), bss
+
+
+def bss_range(elf):
+    """(address, size) of the ELF's .bss: it becomes a zero-fill boot row instead of stored zeros."""
+    shoff = struct.unpack_from('<I', elf, 32)[0]
+    shsize, count, names = struct.unpack_from('<3H', elf, 46)
+    sections = [struct.unpack_from('<10I', elf, shoff + i * shsize) for i in range(count)]
+    strings = sections[names]
+    for s in sections:
+        if elf[strings[4] + s[0]:].split(b'\0')[0] == b'.bss':
+            return s[3], s[5]
+    raise ValueError('the module has no .bss')
 
 
 def bridge_sources(sym):
@@ -268,6 +362,11 @@ def bridge_sources(sym):
         # displaced loads, then the tick at 0x8006b95c.
         'ui': ('push {r4, r5, r6, lr}\npush {r0, r1}\n' + call(sym['bnc_ui']) + 'pop {r0, r1}\n'
                'movw r4, #0x22ac\nmovt r4, #0x8059\nldr r1, [r4, #8]\n' + jump(TICK_REST)),
+        # From 0x800bef10 (bx), r0 = the event, lr = the caller: bnc_gate(event); 0 returns to the caller
+        # (the event is dropped), else the four displaced instructions with the event in r0.
+        'gate': ('push {r0, lr}\n' + call(sym['bnc_gate']) + 'mov r12, r0\npop.w {r0, lr}\ncmp.w r12, #0\n'
+                 'bne pass\nbx lr\npass:\nldrb r1, [r0]\ncmp r1, #0xa0\nbhi high\n' + jump(RING) + 'high:\n' +
+                 jump(DISPATCH_HIGH)),
     }
 
 
@@ -306,7 +405,8 @@ def build(inp: Path, out: Path, zig: Path, base: int):
     if hits:
         raise ValueError(f'input refers to the slot: {hits[:4]}')
 
-    module, symbols, source_sha = compile_module(out / 'build', zig, base + CODE_OFFSET, base + SLOT)
+    module, symbols, source_sha, (bss_at, bss_size) = compile_module(out / 'build', zig, base + CODE_OFFSET,
+                                                                     base + SLOT)
     blob = bytearray(CODE_OFFSET)
     entries = {}
     sources = bridge_sources(symbols)
@@ -317,9 +417,9 @@ def build(inp: Path, out: Path, zig: Path, base: int):
             raise ValueError(f'bridge {key} too long ({len(code)} bytes)')
         blob[offset:offset + len(code)] = code
         entries[f'{key}_bridge'] = base + offset
-    blob += module
-    if len(blob) > SLOT:
-        raise ValueError(f'blob ({len(blob)} bytes) exceeds the slot')
+    blob += module[:bss_at - (base + CODE_OFFSET)]      # stored: bridges, code, constants; .bss is a zero row
+    if bss_at + bss_size > base + SLOT:
+        raise ValueError(f'the module ({bss_at + bss_size - base} bytes) exceeds the slot')
     entries.update(symbols)
 
     patches = []
@@ -344,13 +444,14 @@ def build(inp: Path, out: Path, zig: Path, base: int):
     img += bytes(file_at - len(img)) + blob
     table = (len(img) + 15) & ~15
     img += bytes(table - len(img))
-    for row in rows + [[FLASH + file_at, base, len(blob), COPY]]:
+    new_rows = [[FLASH + file_at, base, len(blob), COPY], [0, bss_at, bss_size, ZERO]]
+    for row in rows + new_rows:
         img += struct.pack('<4I', *row)
     struct.pack_into('<2I', img, 0x80, table - 0x80, len(img) - 0x80)
     if FLASH + len(img) > PCM_BANK:
-        raise ValueError('APP1 would reach the kit PCM planning boundary')
-    if runtime(img, base, len(blob)) != bytes(blob):
-        raise ValueError('the new row does not reproduce the blob')
+        raise ValueError(f'APP1 would reach the kit PCM planning boundary ({FLASH + len(img) - PCM_BANK} bytes over)')
+    if runtime(img, base, len(blob)) != bytes(blob) or scatter(img)[-2:] != new_rows:
+        raise ValueError('the new rows do not reproduce the module')
 
     out.mkdir(parents=True, exist_ok=True)
     (out / 'SP404MKII_APP1.bin').write_bytes(img)
@@ -359,14 +460,31 @@ def build(inp: Path, out: Path, zig: Path, base: int):
     parent_sha = sha(inp.read_bytes())
     manifest = dict(
         revision=REVISION, status='hardware-unverified', published=False,
-        description='bounce in place, stage 2: hold RESAMPLE and tap a sample pad; the pad is recorded through '
-                    'its effects into the first empty pad, frame-exact, in NO TAIL, TAIL or LOOP mode',
+        description='bounce in place, stage 3: hold RESAMPLE and tap a sample pad; the pad is recorded through '
+                    'its effects, frame-exact, in NO TAIL, TAIL or LOOP mode, onto the first empty pad (TO PAD) or '
+                    'in its place (REPLACE: the stock pad exchange, the original kept on that pad), with UNDO',
         parent_app1=str(inp), parent_sha256=parent_sha, parent_is_published_v946=parent_sha == PUBLISHED_V946,
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
         if parent_manifest.exists() else None,
-        replaces='bounce-probe-1 (the same three sites)',
+        replaces='bounce-2-test1 (the same four sites, plus the pad-event gate)',
+        pad_settings=PAD_SETTINGS,
+        replace=dict(command='0x40d -> 0x800a6c30(gSmplMgr 0x80591800, source, scratch, 2), then a recorder target '
+                             'write (param 1 = 15) as the fence; checked: both pads hold samples, sizes swapped',
+                     guarantees='files renamed through B:/tmp.SMP and parameters swapped in RAM, then both pads '
+                                'reloaded and the pad parameters saved; not atomic: a power loss between the '
+                                'renames and the save leaves files and parameters out of step',
+                     undo='RAM only, up to 8 pairs; the same exchange again, then the original\'s PAD LINK back'),
+        leaks=dict(input='EXT SOURCE (settings 0x25) off from REC to the end, then back; switched on during a take '
+                         '-> INPUT TURNED ON, the take discarded',
+                   notes='0x800bef10 drops every pad note-on but the run\'s own trigger while a bounce owns the '
+                         'recorder (MIDI, rolls, the sequencer); a pattern or the looper starting -> discarded',
+                   pad_link='the source out of its PAD LINK group for the run'),
+        recorder_failures='the RX side writes only while the stock gate would (sub-state 2, error word 0); when the '
+                          'stock recorder ends a take itself the run waits for its finalize and reports STORAGE FULL '
+                          '(-0x3e, -0x78, -0x80) or BOUNCE FAILED, with PART ON <scratch> when it left a take there',
         sha256=sha(img), size=len(img), app0_sha256=APP0_SHA,
         slot=[base, base + SLOT], blob_base=base, blob_file_offset=file_at, blob_size=len(blob), blob_sha256=sha(blob),
+        bss=[bss_at, bss_size], rows_added='a copy row for the blob, a zero-fill row for the module\'s .bss',
         source='synth/bounce.c', source_sha256=source_sha, compiler='zig 0.13.0 cc -Os',
         entries=entries, patches=patches, data_patches=data_patches,
         branch_scan=dict(bytes=scanned, result='no direct branch into a patched span'),

@@ -83,7 +83,7 @@ Numbers are clamped to ±99999, so the text always fits the stock popup buffer.
 - **The first hit of a take showed no popup,** though it was counted: the stock screen redraws
   when the recorder goes from standby to recording.
 
-Stage 2 ([BOUNCE.md](BOUNCE.md)) uses these results:
+Stages 2 and 3 ([BOUNCE.md](BOUNCE.md)) use these results:
 
 - it takes L from each bounce's own onset;
 - it remembers the boot's L for soft starts;

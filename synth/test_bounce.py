@@ -1,29 +1,41 @@
-"""Checks for bounce in place, stage 2 (build_bounce.py).
+"""Checks for bounce in place, stage 3 (build_bounce.py).
 
 usage: python synth/test_bounce.py OUT_DIR      (unicorn and keystone on PYTHONPATH)
 
 Reads OUT_DIR/manifest.json for the parent APP1. Static image checks first. Then the built image
 is booted in Unicorn the way its scatter loader does it, and the stock code runs for real: the
-recorder feed behind the RX bridge, the pad parameter getter and setter, the pad name, the popup
-function and the page's vtable. Modelled: SMPL TASK (the recorder commands, standby, REC_START, the
-finalize and cancel, ALL SOUND OFF), the source pad's voice (it renders the pad's PCM into the
-stems from the first block after its trigger), the effects chip (RX = the record mix L frames
-later, optionally with gain, an echo or noise), the eDMA positions, the recorder engine's writer
-(it keeps the frames it is given: the take), and the settings, project and system parameter
-stores. No screen, no SD card, no real timing: those need the unit.
+recorder feed behind the RX bridge, the pad note (0x800cdbd0) and the pad-event dispatcher behind
+the gate bridge, the pad parameter getter and setter (with its conversions, protect test and
+side effects), the pad name, SMPL TASK's command dispatcher for 0x40d with the stock exchange
+(0x800a6c30) and its parameter swap, the settings setter for EXT SOURCE, the popup function, the
+page's vtable, and for the MIDI checks the stock MIDI dispatcher. Modelled: SMPL TASK (the
+recorder commands, standby, REC_START, the finalize and cancel, ALL SOUND OFF, the command ring's
+order, a busy task), the pad-event ring (a note-on there starts the source's voice), the files on
+the card (renames, loads), the source pad's voice (it renders the pad's PCM into the stems from the
+first block after its trigger), the effects chip (RX = the record mix L frames later, optionally
+with gain, an echo, noise, or the input while EXT SOURCE is on), the eDMA positions, the recorder
+engine's writer (it keeps the frames it is given: the take), and the settings, project and system
+parameter stores. No screen, no SD card, no real timing: those need the unit.
 
 Checks:
-- static: only the header, the four sites and the appended tail differ from the parent; the rows;
-  the guards hold on the parent;
+- static: only the header, the five sites and the appended tail differ from the parent; the
+  rows (a copy row and a zero-fill row added); the guards hold on the parent;
 - bridges against the parent's own instructions (mixer arguments and stack depth, the feed's
-  capture, meter and gate call, the popup tick's registers);
+  capture, meter and gate call, the popup tick's registers, the pad-event dispatcher's paths);
 - the page filter: every event reaches DOOM OS's filter unless it is the gesture, or a bounce is
-  set up or running; the gesture's conditions; the setup popup and VALUE;
+  set up or running; the gesture's conditions; the setup popup, VALUE, VALUE pressed, SHIFT+VALUE;
 - whole runs through the bridges (NO TAIL, TAIL, LOOP; one-shots and loops; at their own rate and
   not; sharp and soft starts; D = -1, 0, +1; an extra frame of latency; the boot's calibration):
   the take holds exactly the RX frames from T0 through the window, START and END land on the
   window, the take is the source's own frames when the effect is dry, the environment comes back;
-- refusals, EXIT at every phase and failures: nothing changes, everything pinned comes back.
+- the bounced pad's settings: performance settings copied, printed ones neutral, as the stock
+  getter reads them back;
+- REPLACE and UNDO through the real exchange: the swap, PAD LINK, bit-exact undo, the records, a
+  changed pad, protected banks, a failed swap, a stalled command ring;
+- leaks: EXT SOURCE, MIDI notes through the stock MIDI dispatcher, the run's own trigger under
+  FIXED VELOCITY, a pattern or the looper starting, PAD LINK;
+- refusals, EXIT at every phase and failures (the stock recorder ending a take itself included):
+  nothing changes, everything pinned comes back.
 """
 import hashlib
 import json
@@ -38,12 +50,13 @@ from unicorn import arm_const as ar  # noqa: E402
 FLASH, COPY, DECOMPRESS, ZERO = 0x60080000, 0x600800E4, 0x60080088, 0x60080100
 TX_SITE, TX_BACK, RX_SITE, LOOP_HEAD = 0x1D090, 0x1D09A, 0x1D0C2, 0x1D05C
 UI_SITE, UI_REST = 0x8006B950, 0x8006B95C
+GATE_SITE, RING, DISPATCH_A, DISPATCH_B = 0x800BEF10, 0x80018590, 0x80018400, 0x800DA528
 MIXER, FEED, GATE = 0x1C2D0, 0x1CA80, 0x1BAA4
 VTABLE_SLOT = 0x80223474
 STEMS, CAPTURE, SLOTS = 0x202AD3A0, 0x202AD0A0, 0x202AE1A0
 TX3, RXBUF, TCD3_SADDR, TCD4_DADDR = 0x20006000, 0x20008000, 0x400E9060, 0x400E9090
 REC = 0x82E0E71C
-REC_STATE, REC_ENGINE = REC + 0x39, REC + 0x254
+REC_STATE, REC_SUB, REC_ERR, REC_ENGINE = REC + 0x39, REC + 0x24E, REC + 0x250, REC + 0x254
 FEED_ON = 0x805917C4
 POPUP_STATE, POPUP_TEXT, POPUP_TIMER = 0x8024589C, 0x802468D8, 0x805922B4
 KEYS, PAGE_ID = 0x80592448, 0x80245880
@@ -51,29 +64,50 @@ SEQ_PLAY, SEQ_RUN, LOOPER_ON = 0x82E0D660 + 0xA5, 0x82DFFC88 + 0x2C0, 0x82E0B71C
 TARGET_VALUES = 0x80246E14
 SMPL, FILE_INFO = 0x82E2CD08, 0x82E495E4
 PADGET, PADSET, PADINIT, PADNAME = 0x800DC6B8, 0x800DA720, 0x800CFA68, 0x800CFA28
+EXCHANGE, SMPL_MGR, DISPATCHER = 0x800A6C30, 0x80591800, 0x8004D8B8
+MIDI_DISPATCH = 0x80066278
 STACK, AUDIO_SP, RET = 0x30010000, 0x300F0000, 0x3001F000
-PAGE_OBJ, EVENT = 0x30090000, 0x30091000
+PAGE_OBJ, EVENT, MSG, CMD_MSG = 0x30090000, 0x30091000, 0x30093000, 0x30094000
 ENGINE, ENGINE_VT, WRITER = 0x30080000, 0x30081000, 0x30082000
 VOICES, STREAMS = 0x31000000, 0x31400000
 TEXT = 0x30092000
 STUBS = {
-    0x800E25C0: 'post', 0x800D48E8: 'target', 0x800CDBD0: 'trigger', 0x6031C8F8: 'doom',
+    0x800E25C0: 'post', 0x800D48E8: 'target', 0x6031C8F8: 'doom',
     0x800D94D8: 'get', 0x800DD0C0: 'set', 0x800DDA38: 'pget', 0x800DED18: 'pset', 0x800DA010: 'sysget',
     0x800CE420: 'modal', 0x101BA: 'zero', 0x1BB6A: 'nop', 0x1D634: 'nop', GATE: 'gate', WRITER: 'writer',
     0x800D8B90: 'nop',               # the project's change broadcast (its listeners are not built here)
+    0x800E11D0: 'nop',               # the sequencer's notice after a TEMPO SYNC change (its object is not built)
+    # around the exchange in command 0x40d's case: preview files closed, a debug line, the remote's notice
+    0x800DEBD8: 'nop', 0x8003A7A0: 'zero', 0x800D31C6: 'nop', 0x800D9F58: 'nop', 0x800E1190: 'one',
+    RING: 'ring', DISPATCH_A: 'other', DISPATCH_B: 'other',
+    # the exchange's file and voice side: the card and SMPL CHARGE TASK are not here
+    0x80051040: 'swapfiles', 0x800CFB20: 'loadpad', 0x800CF218: 'savepads', 0x800D7478: 'nop', 0x800D8998: 'zero',
+    0x800D8A70: 'nop', 0x800D8960: 'nop', 0x80095BD0: 'nop', 0x800D8628: 'zero', 0x800D84F0: 'nop', 0x800D88C8: 'nop',
 }
-KEY_REC, KEY_RESAMPLE, KEY_EXIT, KEY_SHIFT = 0x1B, 0x1C, 0x22, 0x2A
+KEY_REC, KEY_RESAMPLE, KEY_EXIT, KEY_SHIFT, KEY_VALUE = 0x1B, 0x1C, 0x22, 0x2A, 0x31
 EV_KEY, EV_KEY_UP, EV_ENCODER, EV_KNOB, EV_PAD, EV_PAD_UP = 5, 6, 7, 9, 0x10, 0x11
 FIELDS_A = ('tx_blocks rx_blocks phase quiet_rx quiet_tx pad mode skip measure armed_voices slot voice t0 f0 fed '
             'stop have_l cached l l_est l_meas p_n p0 p_sum p16 d tx_onset scan last_nz voice_end last_loud win '
             'rx_now fail').split()
 FIELDS_U = ('state ms since shown refresh src dst mode modes loop_src loop_pin len1 len2 native saved_len saved_snap '
             'saved_bpm pinned msg waits last_mode cal_l cal_valid runs r_l r_est r_meas r_p16 r_d r_start r_end r_len '
-            'r_mode r_exact').split()
+            'r_mode r_exact target targets last_target scratch lp_off ext_pin saved_ext link_pin link_src swap_kind '
+            'swap_a swap_b want_len_a want_ch_a want_len_b want_ch_b fence undo_slot undo_next partial err dropped').split()
+UNDO_FIELDS = 'used pad keep len_pad ch_pad len_keep ch_keep link'.split()
+UNDOS = 8
 SIGNED = {'l', 'l_est', 'l_meas', 'p0', 'p_sum', 'p16', 'd', 'saved_len', 'saved_snap', 'saved_bpm', 'cal_l', 'r_l',
-          'r_est', 'r_meas', 'r_p16', 'r_d'}
-U_IDLE, U_SETUP, U_STANDBY, U_SILENCE, U_RECSTART, U_VOICE, U_RUN, U_FINAL, U_CANCEL = range(9)
+          'r_est', 'r_meas', 'r_p16', 'r_d', 'saved_ext', 'link_src', 'err'}
+(U_IDLE, U_SETUP, U_STANDBY, U_SILENCE, U_RECSTART, U_VOICE, U_RUN, U_FINAL, U_CANCEL, U_SWAP,
+ U_STOCKSTOP) = range(11)
 NO_TAIL, TAIL, LOOP = range(3)
+T_PAD, T_REPLACE, T_UNDO = range(3)
+# pad parameters
+P_LENGTH, P_START, P_END, P_VOLUME, P_GATE, P_LOOP, P_MUTE, P_SYNC, P_OBPM, P_POLY, P_LP, P_TOP = (
+    0x66, 0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6D, 0x6E, 0x6F, 0x70, 0x71, 0x72)
+P_PITCH, P_FINE, P_PLAY, P_SPEED, P_VINYL, P_PAN, P_LINK, P_BUS, P_ROLL, P_ATTACK, P_HOLD, P_RELEASE = (
+    0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x7B, 0x7D, 0x7E, 0x7F)
+NEUTRAL = {P_VOLUME: 127, P_PAN: 64, P_PITCH: 0, P_FINE: 0, P_SPEED: 10000, P_PLAY: 0, P_BUS: 0, P_ATTACK: 0,
+           P_HOLD: 100, P_RELEASE: 0}
 fails = []
 cases = [0]
 
@@ -130,6 +164,10 @@ def s16(v):
     return max(-32768, min(32767, int(v)))
 
 
+def s32(v):
+    return struct.unpack('<i', struct.pack('<I', v & 0xFFFFFFFF))[0]
+
+
 class Voice:
     """The source pad's voice: renders the pad's PCM (stereo, 16-bit) into DRY stems from its first block."""
 
@@ -139,11 +177,13 @@ class Voice:
         self.loop = False
         self.trigger_block = None
         self.active = False
+        self.link_at_trigger = None
 
     def trigger(self, n):
-        """The pad's LOOP as it stands at the trigger (the run may have changed it)."""
+        """The pad's LOOP and PAD LINK as they stand at the trigger (the run may have changed them)."""
         self.trigger_block = n
         self.loop = self.m.r32(SMPL + self.pad * 0xAC + 0xE4) != 0
+        self.link_at_trigger = self.m.r32(SMPL + self.pad * 0xAC + 0x11C)
 
     def tick(self, n):
         """Stems for TX block n (list of 64 (l, r)), and the slot's state after the renderer."""
@@ -175,7 +215,7 @@ class Voice:
 
 
 class Machine:
-    def __init__(self, img, man=None):
+    def __init__(self, img, man=None, skip=()):
         self.uc = uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
         for base, size in ((0x0, 0x20000), (0x20000000, 0x80000), (0x20200000, 0x100000), (0x80000000, 0x4000000),
                            (0x30000000, 0x100000), (0x31000000, 0x800000), (0x60000000, 0x400000),
@@ -187,21 +227,24 @@ class Machine:
                 uc.mem_write(dst, img[load - FLASH:load - FLASH + size])
             elif handler == DECOMPRESS:
                 uc.mem_write(dst, decompress(img[load - FLASH:], size))
+            elif handler == ZERO:
+                uc.mem_write(dst, bytes(size))
         uc.reg_write(ar.UC_ARM_REG_C1_C0_2, uc.reg_read(ar.UC_ARM_REG_C1_C0_2) | (0xF << 20))
         uc.reg_write(ar.UC_ARM_REG_FPEXC, 0x40000000)
         uc.mem_write(RET, b'\x00\xbf\x00\xbf')
         self.sym = man['entries'] if man else {}
         self.log, self.queue, self.take = [], [], []
-        self.settings = {0x36: 1, 0x24: 3, 0x59: 0, 0x1B: 12000, 0x1A: -1}
+        self.settings = {0x36: 1, 0x24: 3, 0x59: 0, 0x1B: 12000, 0x1A: -1, 0x25: 0}
         self.project = {0: 0, 0xBF: 0, 0xDD: 0, 0xFB: 0}
         self.status = [0] * 160
+        self.files = {}
         self.routing = 0
         self.modal = 0
         self.dest = None
         self.final_due = None
         self.voice = None
         self.trigger_ignored = False
-        self.fx = dict(L=77, gain=1.0, echo=None, noise=0)
+        self.fx = dict(L=77, gain=1.0, echo=None, noise=0, input=0)
         self.tx_mix = {}
         self.tx_n = self.rx_n = 0
         self.gate_calls = []
@@ -209,12 +252,23 @@ class Machine:
         self.mixer_calls = []
         self.finalized = []
         self.saves = 0
+        self.param_saves = 0
+        self.ring = []
         self.texts = []
         self.ui_ms = 0
+        self.swap_fail = None
+        self.stall = False
+        self.overrun_at = None
+        self.pending_overrun = False
+        self.input_calls = []
+        self.sysprm = {0x22: 77}                         # system parameter 0x22: the input level
         for addr, name in STUBS.items():
-            uc.hook_add(UC_HOOK_CODE, self._stub, name, begin=addr, end=addr)
+            if name not in skip:
+                uc.hook_add(UC_HOOK_CODE, self._stub, name, begin=addr, end=addr)
         uc.hook_add(UC_HOOK_CODE, self._mixer, None, begin=MIXER, end=MIXER)
         uc.hook_add(UC_HOOK_CODE, self._popup, None, begin=0x800D3FF0, end=0x800D3FF0)
+        uc.hook_add(UC_HOOK_CODE, self._trigger, None, begin=0x800CDBD0, end=0x800CDBD0)
+        uc.hook_add(UC_HOOK_CODE, self._unload, None, begin=0x800D9440, end=0x800D9440)
         uc.mem_write(POPUP_STATE, b'\x01')
         self.w32(FEED_ON, 1)
         self.w32(0x82E011A8, 0)                        # settings 0x27 = 0: RX pair 0
@@ -252,7 +306,7 @@ class Machine:
 
     def _stub(self, uc, address, size, name):
         r0, r1, r2, r3 = self.regs()
-        sr = [struct.unpack('<i', struct.pack('<I', x))[0] for x in (r0, r1, r2, r3)]
+        sr = [s32(x) for x in (r0, r1, r2, r3)]
         value = 0
         if name == 'post':
             self.queue.append(('cmd', r0, sr[1], sr[2]))
@@ -261,16 +315,14 @@ class Machine:
         elif name == 'target':
             self.queue.append(('target', r1, sr[2]))
             self.log.append(('target', r1, sr[2]))
-        elif name == 'trigger':
-            self.log.append(('trigger', r0, r1, r2))
-            if self.voice and not self.trigger_ignored and r1:
-                self.voice.trigger(self.tx_n)
         elif name == 'doom':
             self.log.append(('doom', struct.unpack('<h', bytes(uc.mem_read(r1, 2)))[0]))
             value = 0x55
         elif name == 'get':
             value = self.settings.get(r1, 0)
         elif name == 'set':
+            if r1 == 0x25 and self.settings.get(0x25, 0) != sr[2]:
+                self.input_calls.append((self.ui_ms, sr[2]))   # the stock setter sends the input volume
             self.settings[r1] = sr[2]
             self.log.append(('set', r1, sr[2], sr[3]))
         elif name == 'pget':
@@ -284,11 +336,13 @@ class Machine:
             self.project[r1] = sr[2]
             self.log.append(('pset', r1, sr[2]))
         elif name == 'sysget':
-            value = self.routing if r1 == 0x5C else 0
+            value = self.routing if r1 == 0x5C else self.sysprm.get(r1, 0)
         elif name == 'modal':
             value = self.modal
         elif name == 'zero':
             value = 0
+        elif name == 'one':
+            value = 1
         elif name == 'gate':
             self.gate_calls.append((self.r8(REC_STATE), r0, r1, r2))
         elif name == 'writer':
@@ -296,7 +350,52 @@ class Machine:
             self.take += [struct.unpack_from('<2h', data, 4 * i) for i in range(r2)]
             frames = struct.unpack('<Q', bytes(uc.mem_read(ENGINE + 0x200, 8)))[0] + r2
             uc.mem_write(ENGINE + 0x200, struct.pack('<Q', frames))
+            if self.overrun_at is not None and len(self.take) >= self.overrun_at:   # 0x8017e5b0: the ring full
+                self.overrun_at = None
+                self.w32(REC_ERR, -0x79)
+                self.pending_overrun = True
+        elif name == 'ring':                            # SMPL TASK takes the event: a note-on starts the voice
+            ev = bytes(uc.mem_read(r0, 6))
+            self.ring.append((self.ui_ms, ev[0], ev[1], ev[3]))
+            self.log.append(('ring', ev[0], ev[1], ev[3]))
+            if self.voice and not self.trigger_ignored and ev[0] == self.voice.pad and 1 <= ev[3] <= 127:
+                self.voice.trigger(self.tx_n)
+        elif name == 'other':
+            self.log.append(('other', address, bytes(uc.mem_read(r0, 6))))
+        elif name == 'swapfiles':                       # 0x80051040(a, b): B -> tmp, A -> B, tmp -> A
+            self.log.append(('swapfiles', r0, r1))
+            if self.swap_fail != 'rename':
+                fa, fb = self.files.pop(r0, None), self.files.pop(r1, None)
+                if fb is not None:
+                    self.files[r0] = fb
+                if fa is not None:
+                    self.files[r1] = fa
+        elif name == 'loadpad':                         # the pad loader: the file's size into the file info
+            value = self._load(r0)
+        elif name == 'savepads':
+            self.param_saves += 1
         self._ret(value)
+
+    def _trigger(self, uc, address, size, _):
+        self.log.append(('trigger',) + tuple(self.regs(3)))
+
+    def _unload(self, uc, address, size, _):
+        pad = self.uc.reg_read(ar.UC_ARM_REG_R0)
+        if pad < 160:
+            self.status[pad] = 0
+
+    def _load(self, pad):
+        f = self.files.get(pad)
+        info = FILE_INFO + pad * 36
+        if f is None:
+            self.status[pad] = 0
+            return 0
+        frames, ch = f['frames'], f['ch']
+        for off, v in ((8, ch), (0xC, 0x200), (0x10, 0x200 + 2 * ch * frames), (0x18, 0x200),
+                       (0x1C, 0x200 + 2 * ch * frames), (0x20, 0x200)):
+            self.w32(info + off, v)
+        self.status[pad] = 1
+        return 1
 
     def _mixer(self, uc, address, size, _):
         """The stub mixer: this block's stems from the voice model (DRY, 20-bit = 16-bit << 4)."""
@@ -340,6 +439,15 @@ class Machine:
     def u(self, name):
         return self.field('u', name)
 
+    def undo(self, i):
+        base = self.sym['bnc_ui_state'] + 4 * len(FIELDS_U) + 4 * len(UNDO_FIELDS) * i
+        r = {k: self.r32(base + 4 * j) for j, k in enumerate(UNDO_FIELDS)}
+        r['link'] = s32(r['link'])
+        return r
+
+    def undos(self):
+        return [self.undo(i) for i in range(UNDOS) if self.undo(i)['used']]
+
     # ---- the SP's state ----
     def dma(self, p):
         """eDMA positions: (TX line 3 frame - RX frame) mod 128 reads p or p + 1 (the FIFOs' jitter)."""
@@ -358,13 +466,14 @@ class Machine:
         self.uc.mem_write(stream, b'\x01\x00' if on else b'\x00\xff')
 
     def pad_get(self, pid, pad):
-        return self.call(PADGET, SMPL, pid, pad)
+        return s32(self.call(PADGET, SMPL, pid, pad))
 
     def pad_set(self, pid, value, pad):
         return self.call(PADSET, SMPL, pid, value, pad)
 
-    def load_pad(self, pad, frames, start=0, end=None, loop=0, lp=None, **params):
+    def load_pad(self, pad, frames, start=0, end=None, loop=0, lp=None, tag=None, **params):
         end = frames if end is None else end
+        self.files[pad] = dict(frames=frames, ch=2, tag=tag or ('pad', pad, frames))
         self.call(PADINIT, SMPL, pad, 0x200 + 4 * start, 0x200 + 4 * end)
         info = FILE_INFO + pad * 36
         self.w32(info + 8, 2)
@@ -377,6 +486,19 @@ class Machine:
             self.pad_set(0x71, lp, pad)
         for pid, v in params.items():             # PITCH 0x73 .. Release 0x7f live at +0xdc + 4 (id - 0x69)
             self.w32(SMPL + pad * 0xAC + 0xDC + 4 * (int(pid[1:], 16) - 0x69), v)
+
+    def record(self, pad):
+        """Everything the exchange moves with a pad: its parameter record, name and block, and its file."""
+        return (bytes(self.uc.mem_read(SMPL + 0xD0 + pad * 0xAC, 0xAC)),
+                bytes(self.uc.mem_read(SMPL + 0x6CFC + pad * 24, 24)),
+                bytes(self.uc.mem_read(SMPL + 0xF800 + pad * 0x80, 0x80)), repr(self.files.get(pad)))
+
+    def name(self, pad):
+        return bytes(self.uc.mem_read(SMPL + 0x6CFC + pad * 24, 24)).split(b'\0')[0].decode('ascii').rstrip()
+
+    def protect(self, bank, on=True):
+        self.uc.mem_write(SMPL + 0x19900, b'\x01')
+        self.w32(SMPL + 0x58 + 4 * bank, 1 if on else 0)
 
     def press_keys(self):
         bits = bytearray(16)
@@ -409,12 +531,34 @@ class Machine:
         self.press_keys()
         return r
 
-    def turn(self, delta):
-        return self.event(EV_ENCODER, 0, delta)
+    def turn(self, delta, shift=False):
+        if shift:
+            self.keys.add(KEY_SHIFT)
+            self.press_keys()
+        r = self.event(EV_ENCODER, 0, delta)
+        if shift:
+            self.keys.discard(KEY_SHIFT)
+            self.press_keys()
+        return r
+
+    def pad_event(self, pad, vel, mode=2):
+        """A pad event through the (patched) pad-event dispatcher, as the MIDI note-on builds it."""
+        ev = bytes([pad, mode, 0, vel if vel else 0xFF, 0xFF if vel else 0x40, 0])
+        self.uc.mem_write(MSG, ev + bytes(2))
+        before = len(self.ring)
+        self.call(GATE_SITE, MSG)
+        return len(self.ring) > before
 
     # ---- SMPL TASK ----
     def settle(self):
-        for item in self.queue:
+        queue, self.queue = self.queue, []
+        if self.pending_overrun and self.r8(REC_STATE) == 2:       # REC TASK, flag 0x20: the stock finalize
+            self.pending_overrun = False
+            self.finalize()
+        for k, item in enumerate(queue):
+            if self.stall and item[0] == 'cmd' and item[1] == 0x40D:   # SMPL TASK busy: the exchange waits
+                self.queue = queue[k:] + self.queue
+                break
             state = self.r8(REC_STATE)
             if item[0] == 'target':
                 if state != 2:
@@ -425,6 +569,8 @@ class Machine:
                 self.voice.stop()
             elif cmd == 0x14 and state == 0:
                 self.uc.mem_write(REC_STATE, b'\x01')
+                self.uc.mem_write(REC_SUB, b'\x01')
+                self.w32(REC_ERR, 0)                      # the stock standby clears the error word
                 self.w32(FEED_ON, 1)                      # as the stock standby does
                 self.uc.mem_write(ENGINE + 0x1C0, struct.pack('<Q', 0x800))
                 self.uc.mem_write(ENGINE + 0x200, struct.pack('<Q', 0))
@@ -432,34 +578,55 @@ class Machine:
                 self.take = []
             elif cmd == 0x17 and state in (1, 3):
                 self.uc.mem_write(REC_STATE, b'\x02')
+                self.uc.mem_write(REC_SUB, b'\x02')
                 self.dest = self.r32(TARGET_VALUES) * 16 + self.r32(TARGET_VALUES + 4)
             elif cmd == 0x18 and state == 1:
                 self.uc.mem_write(REC_STATE, b'\x00')
+                self.uc.mem_write(REC_SUB, b'\x00')
                 self.w32(TARGET_VALUES + 4, 0xFFFFFFFF)
             elif cmd == 0x18 and state == 2:
-                self.uc.mem_write(REC_STATE, b'\x00')     # state 0 comes before the 500 ms wait
-                self.finalized.append(dict(first_sound=struct.unpack('<q', bytes(self.uc.mem_read(ENGINE + 0x208,
-                                                                                                   8)))[0],
-                                           frames=len(self.take), snap=self.settings.get(0x59),
-                                           length=self.settings.get(0x24)))
-                self.final_due = self.ui_ms + 600
+                self.finalize()
             elif cmd == 0x1A and state == 2:
                 self.uc.mem_write(REC_STATE, b'\x00')
+                self.uc.mem_write(REC_SUB, b'\x00')
                 self.take = []
                 self.w32(TARGET_VALUES + 4, 0xFFFFFFFF)
             elif cmd == 0xD:
                 self.saves += 1
-        self.queue = []
+            elif cmd == 0x40D:                            # the real SMPL TASK dispatcher, case 0x40d
+                self.log.append(('exchange', item[2], item[3]))
+                self.uc.mem_write(CMD_MSG, struct.pack('<BBH2i', 0xA4, 0, cmd, item[2], item[3]))
+                self.call(DISPATCHER, CMD_MSG)
         if self.final_due is not None and self.ui_ms >= self.final_due:
             self.final_due = None
             d, n = self.dest, len(self.take)
             if self.load_ok:
-                self.load_pad(d, n + 384, start=384, end=384 + n)
+                self.load_pad(d, n + 384, start=384, end=384 + n, tag=('take', len(self.finalized)))
                 self.uc.mem_write(TEXT, b'New Sample\0')
                 self.call(PADNAME, SMPL, d, TEXT)
                 base = SMPL + d * 0xAC
                 self.w32(base + 0xD4, self.r32(base + 0xD4) + 12)    # the stock zero-cross adjust moves START
             self.settings[0x59] = 0
+            self.w32(TARGET_VALUES + 4, 0xFFFFFFFF)
+
+    def finalize(self):
+        """REC_STOP in state 2, or the stock recorder ending the take itself: state 0 before the 500 ms wait."""
+        self.uc.mem_write(REC_STATE, b'\x00')
+        self.uc.mem_write(REC_SUB, b'\x00')
+        self.finalized.append(dict(first_sound=struct.unpack('<q', bytes(self.uc.mem_read(ENGINE + 0x208, 8)))[0],
+                                   frames=len(self.take), snap=self.settings.get(0x59),
+                                   length=self.settings.get(0x24), err=s32(self.r32(REC_ERR))))
+        self.final_due = self.ui_ms + 600
+
+    def stock_stop(self, err, partial=True):
+        """The stock recorder ends the take itself (a full ring, the card full): it finalizes what it has."""
+        self.w32(REC_ERR, err)
+        if partial:
+            self.finalize()
+        else:
+            self.uc.mem_write(REC_STATE, b'\x00')
+            self.uc.mem_write(REC_SUB, b'\x00')
+            self.take = []
             self.w32(TARGET_VALUES + 4, 0xFFFFFFFF)
 
     # ---- the audio task ----
@@ -475,6 +642,8 @@ class Machine:
             l, r = l + el * eg, r + er * eg
         if fx['noise']:
             l, r = l + self.rng.choice((-1, 1)) * fx['noise'], r + self.rng.choice((-1, 1)) * fx['noise']
+        if fx['input'] and self.settings.get(0x25):     # music on the input, heard while EXT SOURCE is on
+            l, r = l + fx['input'] * ((R * 7) % 5 - 2), r + fx['input'] * ((R * 3) % 5 - 2)
         return s16(l), s16(r)
 
     def tx(self):
@@ -541,8 +710,9 @@ def boot(img, man, d=0, p=61, L=77, seed=1):
     return m
 
 
-def run_bounce(m, src_pad, mode_turns=0, budget=4000, exit_at=None, during=None):
-    """The gesture, VALUE turns, REC, then audio periods until the controller is idle again."""
+def run_bounce(m, src_pad, mode_turns=0, budget=4000, exit_at=None, during=None, target=None):
+    """The gesture, VALUE turns, the target (VALUE pressed until it shows), REC, then audio periods until the
+    controller is idle again."""
     r = m.gesture(src_pad)
     m.ui(1)
     for _ in range(abs(mode_turns)):
@@ -550,6 +720,13 @@ def run_bounce(m, src_pad, mode_turns=0, budget=4000, exit_at=None, during=None)
         m.ui(1)
     if m.u('state') != U_SETUP:
         return dict(gesture=r, setup=False)
+    if target is not None:
+        for _ in range(3):
+            if m.u('target') == target:
+                break
+            m.tap(KEY_VALUE)
+            m.ui(1)
+    setup_text = m.popup()
     m.key(KEY_REC)
     m.key(KEY_REC, False)
     states = []
@@ -568,7 +745,7 @@ def run_bounce(m, src_pad, mode_turns=0, budget=4000, exit_at=None, during=None)
             break
     for _ in range(4):
         m.ui(1)
-    return dict(gesture=r, setup=True, states=states, popup=m.popup())
+    return dict(gesture=r, setup=True, states=states, popup=m.popup(), setup_text=setup_text)
 
 
 def expected_rx(m, first, n):
@@ -577,7 +754,7 @@ def expected_rx(m, first, n):
 
 def check_take(m, label, src_frames, L, mode, win, lp_frames=None):
     """The take = RX frames from F0; START/END on [F0 + L, F0 + L + win); dry: the source's own frames."""
-    f0, t0 = m.a('f0'), m.a('t0')
+    f0 = m.a('f0')
     take = m.take
     start, end = m.u('r_start'), m.u('r_end')
     d = m.u('dst')
@@ -589,12 +766,18 @@ def check_take(m, label, src_frames, L, mode, win, lp_frames=None):
     check(start == 384 + L and end == start + win and m.pad_get(0x67, d) == start and m.pad_get(0x68, d) == end,
           f'{label}: START/END = file frames {start}..{end} (384 pre-roll + L, + {win}), as the pad reads them '
           f'({m.pad_get(0x67, d)}..{m.pad_get(0x68, d)})')
-    check(m.pad_get(0x71, d) == start, f'{label}: loop point = START')
+    want_lp = start + (lp_frames or 0)
+    check(m.pad_get(0x71, d) == want_lp, f'{label}: loop point = START + {lp_frames or 0} ({m.pad_get(0x71, d)})')
     window = take[L:L + win]
     check(len(window) == win, f'{label}: the take covers the window ({len(take)} frames)')
     if src_frames is not None:
         check(window == src_frames, f'{label}: dry, the window is the source\'s own frames')
     return window
+
+
+def neutral_ok(m, pad):
+    got = {pid: m.pad_get(pid, pad) for pid in NEUTRAL}
+    return got == NEUTRAL, got
 
 
 def static_checks(out, man, img, parent):
@@ -607,16 +790,25 @@ def static_checks(out, man, img, parent):
         allowed |= set(range(o, o + p['size']))
         check(parent[o:o + p['size']].hex() == p['original_hex'] and img[o:o + p['size']].hex() == p['replacement_hex'],
               f"site {p['address']:#x}: parent bytes and replacement as in the manifest")
+    check(sorted(p['address'] for p in man['patches']) == [0x1D090, 0x1D0C2, 0x8006B950, 0x800BEF10],
+          'the code sites: TX, RX, popup tick, pad-event dispatcher')
     diff = [i for i in range(len(parent)) if img[i] != parent[i] and i not in allowed]
     check(not diff, f'no other byte of the parent changed ({len(diff)} found)')
     rows_in, rows_out = scatter(parent), scatter(img)
-    check(rows_out[:-1] == rows_in, 'scatter table = parent rows (start fix included) + one row')
-    load, dst, n, fn = rows_out[-1]
-    check((dst, n, fn) == (man['blob_base'], man['blob_size'], COPY), 'added row copies the blob to its base')
+    check(rows_out[:-2] == rows_in, 'scatter table = parent rows (start fix included) + two rows')
+    load, dst, n, fn = rows_out[-2]
+    check((dst, n, fn) == (man['blob_base'], man['blob_size'], COPY), 'a copy row puts the blob at its base')
+    bss_at, bss_n = man['bss']
+    check(rows_out[-1] == [0, bss_at, bss_n, ZERO] and bss_at >= dst + n and
+          bss_at <= man['entries']['bnc_aud'] < bss_at + bss_n and bss_at <= man['entries']['bnc_ui_state'] < bss_at + bss_n,
+          'a zero-fill row clears the module\'s state (.bss) at boot')
     check(sha(img[load - FLASH:load - FLASH + n]) == man['blob_sha256'], 'blob bytes match manifest')
     lo, hi = man['slot']
-    check(dst == lo and dst + n <= hi <= 0x83FED000, 'blob inside its slot, below 0x83FED000 (CPU meter, start fix)')
+    check(dst == lo and bss_at + bss_n <= hi <= 0x83FED000,
+          'blob and state inside their slot, below 0x83FED000 (CPU meter, start fix)')
     check(all(not (max(d_, lo) < min(d_ + k, hi)) for _, d_, k, _f in rows_in), 'no parent row overlaps the slot')
+    check(FLASH + len(img) <= 0x60376000, f'APP1 ends below the kit PCM planning boundary ({0x60376000 - FLASH - len(img)} '
+                                          f'bytes to spare)')
     for g in man['guards']:
         a, e = g['start'], g['end']
         o = a - FLASH if FLASH <= a < FLASH + len(parent) else file_offset(parent, a, e - a)
@@ -687,17 +879,72 @@ def bridge_checks(img, parent, man):
                    bytes(m.uc.mem_read(sp, 16)), list(m.texts)))
     check(ui[0][:3] == ui[1][:3], 'UI bridge: r0, r1, r4-r8, sp and the pushed frame at 0x8006b95c as stock')
     check(ui[1][3] == [] and new.u('ms') == 7, 'UI bridge: bnc_ui ran (7 ms) and raised no popup while idle')
+    # the pad-event dispatcher, idle: every kind of event takes the parent's own path with the same event
+    paths = []
+    for m in (old, new):
+        seen = []
+        for ev in ([3, 4, 0, 100, 0xFF, 0], [3, 4, 0, 0xFF, 0x40, 0], [0xA0, 2, 0, 90, 0xFF, 0], [0xA1, 4, 0, 1, 0xFF, 1],
+                   [0xA4, 0x40D, 0, 0, 0, 0], [0xA8, 0, 1, 0, 0, 0], [0xA5, 0, 0, 0, 0, 0], [0xAB, 0, 0, 0, 0, 0]):
+            m.ring, m.log = [], []
+            m.uc.mem_write(MSG, bytes(b & 0xFF for b in ev) + bytes(2))
+            for k in range(4, 12):
+                m.uc.reg_write(getattr(ar, f'UC_ARM_REG_R{k}'), 0x3000 + k)
+            m.uc.reg_write(ar.UC_ARM_REG_LR, RET | 1)
+            m.uc.reg_write(ar.UC_ARM_REG_R0, MSG)
+            m.run(GATE_SITE, RET, sp=STACK - 0x200)
+            seen.append(([x for x in m.log if x[0] in ('ring', 'other')],
+                         [m.uc.reg_read(getattr(ar, f'UC_ARM_REG_R{k}')) for k in range(4, 12)],
+                         m.uc.reg_read(ar.UC_ARM_REG_SP)))
+        paths.append(seen)
+    check(paths[0] == paths[1], 'gate bridge, idle: pads, 0xa1, commands and the other events take the parent\'s own '
+                                'paths with the same bytes; r4-r11 and sp as stock')
     note('bridges against the parent')
+
+
+def interface_checks(img, man):
+    """The stock interfaces the run relies on, with the stock code itself running."""
+    m = Machine(img, man, skip=('get', 'set'))
+    m.w32(0x82E01144, 0x8021CD10)                      # the settings object's vtable, set by its constructor
+    sent = []
+    m.uc.hook_add(UC_HOOK_CODE, lambda uc, a, s, _: (sent.append(tuple(m.regs(4)[1:])), m._ret(0)), None,
+                  begin=0x800D8118, end=0x800D8118)
+    out = []
+    for v in (1, 0, 0, 1):
+        sent.clear()
+        m.call(0x800DD0C0, 0x82E01144, 0x25, v, 0)
+        out.append((v, s32(m.call(0x800D94D8, 0x82E01144, 0x25, 0)), list(sent)))
+    check(out == [(1, 1, [(0x22, 0, 77)]), (0, 0, [(0x22, 0, 0)]), (0, 0, []), (1, 1, [(0x22, 0, 77)])],
+          f'EXT SOURCE through the stock settings setter: off sends input volume 0 (effects-chip parameter 0x22), '
+          f'on sends the input level, an unchanged value sends nothing ({out})')
+    note('stock interfaces: EXT SOURCE')
+
+
+def gate_checks(img, man):
+    m = boot(img, man)
+    m.w32(m.sym['bnc_own'], 1)
+    m.w32(m.sym['bnc_aud'] + 4 * FIELDS_A.index('pad'), 5)
+    passed = [m.pad_event(3, 100), m.pad_event(5, 100), m.pad_event(3, 0), m.pad_event(0xA1, 64, mode=4),
+              m.pad_event(5, 127, mode=4)]
+    check(passed == [False, False, True, False, False] and m.u('dropped') == 4,
+          f'gate, a bounce owning the recorder: every note-on is dropped (MIDI, the current pad), note-offs pass '
+          f'({passed}, {m.u("dropped")} dropped)')
+    m.w32(m.sym['bnc_expect'], 1)
+    passed = [m.pad_event(3, 100), m.pad_event(5, 90, mode=4), m.pad_event(5, 90, mode=4)]
+    check(passed == [False, True, False] and m.r32(m.sym['bnc_expect']) == 0,
+          'gate: the run\'s own trigger passes once, by its pad, whatever its velocity; then the gate closes again')
+    m.w32(m.sym['bnc_own'], 0)
+    check(m.pad_event(3, 100) and m.pad_event(0xA1, 20, mode=4), 'gate, idle: note-ons pass')
+    note('the pad-event gate')
 
 
 def filter_checks(img, man):
     m = boot(img, man)
     m.load_pad(0, 4800)
     for kind, a1, a2 in ((EV_KEY, KEY_REC, 0), (EV_KEY_UP, KEY_REC, 0), (EV_ENCODER, 0, 1), (EV_KNOB, 1, 64),
-                         (EV_PAD, 0, 100), (EV_PAD_UP, 0, 0), (0x13, 0, 0), (0x23, 0xD, 0), (8, 0, 0)):
+                         (EV_PAD, 0, 100), (EV_PAD_UP, 0, 0), (0x13, 0, 0), (0x23, 0xD, 0), (8, 0, 0),
+                         (EV_KEY, KEY_VALUE, 0)):
         r, passed = m.event(kind, a1, a2)
         check(passed and r == 0x55, f'idle: event type {kind:#x} goes to DOOM OS\'s filter and its result comes back')
-    cond = []
     for name, setup in (('RESAMPLE not held', lambda mm: None),
                         ('SHIFT held', lambda mm: mm.keys.add(KEY_SHIFT)),
                         ('recorder in standby', lambda mm: mm.uc.mem_write(REC_STATE, b'\x01')),
@@ -717,7 +964,6 @@ def filter_checks(img, man):
             mm.keys.add(KEY_RESAMPLE)
         mm.press_keys()
         r, passed = mm.event(EV_PAD, pad, 100)
-        cond.append(name)
         check(passed and r == 0x55 and mm.u('state') == U_IDLE, f'no gesture when {name}: the pad goes on to DOOM OS')
     mg = boot(img, man)
     mg.load_pad(0, 4800)
@@ -726,7 +972,7 @@ def filter_checks(img, man):
     check(r == 1 and not passed and mg.u('state') == U_SETUP and mg.popup() == 'BOUNCE A-1>A-2\nNO TAIL',
           f'gesture: RESAMPLE held + sample pad: setup popup, the pad is not played ({mg.popup()!r})')
     for kind, a1, a2 in ((EV_KEY, 0x16, 0), (EV_KEY_UP, 0x16, 0), (EV_KNOB, 3, 30), (EV_PAD, 3, 90), (EV_PAD_UP, 3, 0),
-                         (0x12, 3, 50), (EV_ENCODER, 1, 1)):
+                         (0x12, 3, 50), (EV_ENCODER, 1, 1), (EV_KEY_UP, KEY_VALUE, 0)):
         r, passed = mg.event(kind, a1, a2)
         check(r == 1 and not passed and mg.u('state') == U_SETUP and not [x for x in mg.log if x[0] == 'post'],
               f'setup: event {kind:#x}/{a1:#x} is swallowed and changes nothing')
@@ -739,6 +985,20 @@ def filter_checks(img, man):
         mg.ui(1)
         seen.append(mg.popup().split('\n')[1])
     check(seen == ['TAIL', 'LOOP', 'LOOP', 'TAIL', 'NO TAIL', 'NO TAIL'], f'VALUE: NO TAIL / TAIL / LOOP, clamped ({seen})')
+    # the target: VALUE pressed steps TO PAD -> REPLACE -> TO PAD; SHIFT + VALUE steps, clamped; the mode stays
+    mg.turn(1)
+    seen = []
+    for act in ('press', 'press', 'shift+', 'shift+', 'shift-', 'shift-', 'turn+'):
+        if act == 'press':
+            mg.tap(KEY_VALUE)
+        else:
+            mg.turn(1 if act[-1] == '+' else -1, shift=act.startswith('shift'))
+        mg.ui(1)
+        seen.append(mg.popup())
+    check(seen == ['REPLACE A-1\nTAIL', 'BOUNCE A-1>A-2\nTAIL', 'REPLACE A-1\nTAIL', 'REPLACE A-1\nTAIL',
+                   'BOUNCE A-1>A-2\nTAIL', 'BOUNCE A-1>A-2\nTAIL', 'BOUNCE A-1>A-2\nLOOP'],
+          f'target: VALUE pressed toggles TO PAD / REPLACE, SHIFT + VALUE steps and stops at the ends, VALUE alone the '
+          f'mode ({seen})')
     mg.tap(KEY_EXIT)
     mg.ui(1)
     check(mg.u('state') == U_IDLE and mg.popup() == 'BOUNCE CANCELLED\nNOTHING CHANGED' and
@@ -796,6 +1056,14 @@ def filter_checks(img, man):
     me.gesture(13)
     me.ui(1)
     check(me.popup() == 'BOUNCE A-14>A-1\nNO TAIL', f'after the source, wrapping inside its bank ({me.popup()!r})')
+    # protected banks are never a destination: the source's own bank, then bank B, skipped
+    mq = boot(img, man)
+    mq.load_pad(0, 4800)
+    mq.protect(0)
+    mq.protect(1)
+    mq.gesture(0)
+    mq.ui(1)
+    check(mq.popup() == 'BOUNCE A-1>C-1\nNO TAIL', f'protected banks A and B: the destination is C-1 ({mq.popup()!r})')
     mp = boot(img, man)
     mp.load_pad(0, 4800)
     mp.gesture(0)
@@ -829,8 +1097,8 @@ def runs(img, man):
     check(m.gate_calls == [], f'the stock gate never ran from REC to the end of the run ({m.gate_calls[:3]})')
     check(m.r32(FEED_ON) == 1 and m.settings[0x24] == 3 and m.settings[0x59] == 0 and m.settings[0x1A] == -1 and
           m.settings[0x1B] == 12000, 'after the run: feed enable, REC length, END Snap, destination, REC BPM restored')
-    name = bytes(m.uc.mem_read(SMPL + 1 * 24 + 0x6CFC, 24)).split(b'\0')[0].decode('ascii')
-    check(m.saves == 1 and name.startswith('A1 L77 M77 P61.') and name.endswith(' D0') and len(name) <= 23,
+    name = m.name(1)
+    check(m.saves >= 1 and name.startswith('A1 L77 M77 P61.') and name.endswith(' D0') and len(name) <= 23,
           f'the pad is named with the run ({name}) and saved')
     sets = [x for x in m.log if x[0] == 'set']
     check(sets[:4] == [('set', 0x24, 6, 0), ('set', 0x59, 0, 0), ('set', 0x1B, 9000, -1), ('set', 0x1A, 1, 0)],
@@ -839,7 +1107,12 @@ def runs(img, man):
     check(posts == [5, 0x2A, 0x14, 0x17, 5, 0x18, 0xD],
           f'commands: sound off, seq sound off, standby, start, sound off, stop, save ({[hex(x) for x in posts]})')
     trig = [x for x in m.log if x[0] == 'trigger']
-    check(trig == [('trigger', 0, 127, 1)], 'the source is triggered once at velocity 127, mode 1')
+    rings = [x for x in m.log if x[0] == 'ring']
+    check(trig == [('trigger', 0, 127, 1)] and rings == [('ring', 0, 4, 127)],
+          f'the source is triggered once at velocity 127, mode 1: the stock pad note posts it through the gate '
+          f'({rings})')
+    ok, got = neutral_ok(m, 1)
+    check(ok, f'the bounced pad: printed settings neutral, BUS FX Assign DRY ({got})')
     results.append(('NO TAIL one-shot', m.u('r_l'), m.u('r_est'), m.u('r_meas')))
 
     # the same with an echo on the return: the window is still the RX stream, the tail is cut
@@ -886,7 +1159,7 @@ def runs(img, man):
 
     # LOOP, a looped pad with a loop point: pass 2 from the loop point, including pass 1's echo
     m, pcm, res = native_case('LOOP', LOOP, 2, n=5000, loop=1, lp=1200, echo=(700, 0.5))
-    w = check_take(m, 'LOOP, loop point 1200', None, 77, LOOP, 3800)
+    check_take(m, 'LOOP, loop point 1200', None, 77, LOOP, 3800)
     check(m.a('f0') == m.a('t0') + 5000, 'LOOP: F0 = T0 + one pass')
     check(m.pad_get(0x6B, 1) != 0 and m.pad_get(0x6B, 0) != 0, 'LOOP: the bounced pad loops; the source still loops')
     m.gesture(0)
@@ -897,7 +1170,6 @@ def runs(img, man):
     # LOOP of a one-shot: LOOP on for the run, back off before the stop
     m, pcm, res = native_case('LOOP one-shot', LOOP, 2, n=5000, echo=(1000, 0.4))
     check_take(m, 'LOOP of a one-shot', None, 77, LOOP, 5000)
-    loops = [x for x in m.log if x[0] == 'trigger']
     check(m.pad_get(0x6B, 0) == 0 and m.pad_get(0x6B, 1) != 0,
           'LOOP of a one-shot: the source is a one-shot again, the bounce loops')
 
@@ -909,12 +1181,13 @@ def runs(img, man):
 
     # NO TAIL of a pitched one-shot: the window is the voice's own length
     m = boot(img, man, seed=3)
-    pcm = pcm_burst(5000, 11)
     played = pcm_burst(4321, 12)                     # what the pitched voice delivers
     m.load_pad(0, 5000, p73=5)
     m.voice = Voice(m, 0, played, 0, 4321, 0, 1)
     res = run_bounce(m, 0, 0)
     check_take(m, 'NO TAIL, pitched one-shot', played, 77, NO_TAIL, 4321)
+    check(m.pad_get(P_PITCH, 1) == 0 and m.pad_get(P_PITCH, 0) == 5, 'pitched one-shot: the bounce is at PITCH 0, '
+                                                                       'the source keeps +5')
 
     # the boot's calibration: a soft start after a calibrated run uses the onset L
     m = boot(img, man, d=-1, p=66, L=73, seed=5)
@@ -930,12 +1203,12 @@ def runs(img, man):
     run_bounce(m, 2, 0)
     check(m.u('r_est') == 73 and m.u('r_l') == 73, f'calibration: a later soft start uses 73 (est {m.u("r_est")})')
     check(m.take[73:73 + 9000] == soft, 'calibration: that take is frame-exact')
-    name = bytes(m.uc.mem_read(SMPL + 3 * 24 + 0x6CFC, 24)).split(b'\0')[0].decode('ascii')
+    name = m.name(3)
     check(name.startswith('A3 L73C M-- P'), f'calibration: the name marks the boot\'s L and no onset ({name})')
 
-    # NO TAIL of a looped pad at its own rate: exactly one pass; the bounce loops too
+    # NO TAIL of a looped pad at its own rate: exactly one pass; the bounce loops from the source's own loop point
     m, pcm, res = native_case('NO TAIL loop', NO_TAIL, 0, n=5000, loop=1, lp=1000)
-    check_take(m, 'NO TAIL, a looped pad', pcm[:5000], 77, NO_TAIL, 5000)
+    check_take(m, 'NO TAIL, a looped pad', pcm[:5000], 77, NO_TAIL, 5000, lp_frames=1000)
     check(m.pad_get(0x6B, 1) != 0 and m.pad_get(0x6B, 0) != 0, 'NO TAIL of a loop: both pads loop')
 
     # a source in bank B (the current bank)
@@ -1004,6 +1277,331 @@ def runs(img, man):
     return results
 
 
+def settings_checks(img, man):
+    """The bounced pad's settings, read back through the stock getter."""
+    def source(**kw):
+        m = boot(img, man, seed=kw.pop('seed', 31))
+        pcm = pcm_burst(3000, 41)
+        loop = kw.pop('loop', 0)
+        lp = kw.pop('lp', None)
+        m.load_pad(0, 3000, loop=loop, lp=lp)
+        for pid, v in kw.items():
+            m.pad_set(int(pid[1:], 16), v, 0)
+        m.voice = Voice(m, 0, pcm, 0, 3000, lp or 0, 1)
+        return m, pcm
+
+    perf = dict(p6d=3, p7b=6, p70=0x26, p6a=0)          # MUTE GROUP 3, Roll 6, Polyphonic (bit 5 + stretch 3), GATE off
+    printed = dict(p69=90, p78=30, p7a=2, p7d=40, p7e=55, p7f=20, p77=0)
+    m, pcm = source(**perf, **printed)
+    src_before = {pid: m.pad_get(pid, 0) for pid in range(0x69, 0x80)}
+    res = run_bounce(m, 0, 1)                            # TAIL (a printed source at its own rate)
+    got = {pid: m.pad_get(pid, 1) for pid in (P_MUTE, P_ROLL, P_POLY, P_GATE)}
+    check(res['popup'] == 'BOUNCED A-1\nON A-2' and got == {P_MUTE: 3, P_ROLL: 6, P_POLY: 0x26, P_GATE: 0},
+          f'performance settings copied: MUTE GROUP 3, Roll 6, Polyphonic 0x26, GATE off ({got})')
+    ok, neutral = neutral_ok(m, 1)
+    check(ok, f'printed settings neutral: VOLUME 127, PAN 64, BUS FX DRY, envelope 0/100/0 ... ({neutral})')
+    check(m.pad_get(P_VINYL, 1) == 1 and m.pad_get(P_SYNC, 1) == 0 and m.pad_get(P_LINK, 1) == 0,
+          'no TEMPO SYNC: VINYL MODE the stock default (on), PAD LINK off')
+    check({pid: m.pad_get(pid, 0) for pid in range(0x69, 0x80)} == src_before, 'the source\'s settings are untouched')
+    # GATE switched on clears the poly bit (the stock setter's rule); the bounce gets what the source has
+    m, pcm = source(p6a=0, p70=0x20, seed=32)
+    m.pad_set(P_GATE, 1, 0)
+    run_bounce(m, 0, 1)
+    check(m.pad_get(P_POLY, 0) == 0 and m.pad_get(P_POLY, 1) == 0 and m.pad_get(P_GATE, 1) == 1,
+          'GATE switched on cleared the source\'s poly bit (stock); the bounce: GATE on, poly off, as the source')
+    # TEMPO SYNC: copied with its VINYL MODE (sync needs VINYL off)
+    m, pcm = source(p6e=1, p77=0, seed=33)
+    res = run_bounce(m, 0, 1)
+    check(m.pad_get(P_SYNC, 1) == 1 and m.pad_get(P_VINYL, 1) == 0 and res['setup_text'] == 'BOUNCE A-1>A-2\nTAIL',
+          f'TEMPO SYNC copied with VINYL MODE off ({m.pad_get(P_SYNC, 1)}, {m.pad_get(P_VINYL, 1)})')
+    # NO TAIL of a loop with its loop-point flag: the bounce keeps both
+    m, pcm = source(loop=1, lp=500, p72=1, seed=34)
+    res = run_bounce(m, 0, 0)
+    check(m.pad_get(P_LOOP, 1) == 1 and m.pad_get(P_TOP, 1) == 1 and m.pad_get(P_LP, 1) == m.u('r_start') + 500,
+          'NO TAIL of a loop: LOOP on, the source\'s loop flag (0x72) and loop point offset kept')
+    # TAIL of a loop: one pass, no loop
+    m, pcm = source(loop=1, lp=500, p72=1, seed=35)
+    run_bounce(m, 0, 1)
+    check(m.pad_get(P_LOOP, 1) == 0 and m.pad_get(P_TOP, 1) == 0 and m.pad_get(P_LP, 1) == m.u('r_start'),
+          'TAIL of a loop: the bounce plays once (LOOP off, loop point = START)')
+    note('the bounced pad\'s settings')
+
+
+def replace_checks(img, man):
+    def setup(seed=41, n=3000, **kw):
+        m = boot(img, man, seed=seed)
+        pcm = pcm_burst(n, seed)
+        m.load_pad(0, n, **kw)
+        m.voice = Voice(m, 0, pcm, 0, n, 0, 1)
+        return m, pcm
+
+    # REPLACE: the bounce on the source pad, the original on the scratch pad
+    m, pcm = setup()
+    m.pad_set(P_LINK, 4, 0)
+    m.load_pad(9, 4000, tag='linked')
+    m.pad_set(P_LINK, 4, 9)
+    orig = m.record(0)
+    res = run_bounce(m, 0, 0, target=T_REPLACE)
+    posts = [x[1] for x in m.log if x[0] == 'post']
+    check(res['setup_text'] == 'REPLACE A-1\nNO TAIL' and res['popup'] == 'REPLACED A-1\nORIG ON A-2',
+          f'REPLACE: setup and done popups ({res["setup_text"]!r}, {res["popup"]!r})')
+    check(posts == [5, 0x2A, 0x14, 0x17, 5, 0xD, 0x18, 0xD, 0x40D, 0xD] and ('exchange', 0, 1) in m.log,
+          f'REPLACE: standby .. stop, save, then the stock exchange 0x40d(A-1, A-2), save ({[hex(p) for p in posts]})')
+    check(m.voice.link_at_trigger == 0, 'during the run the source is out of its PAD LINK group: the pad alone plays')
+    check(m.record(1)[1:] == orig[1:] and m.files[1]['tag'] == ('pad', 0, 3000),
+          'after the exchange the scratch pad holds the original: its file, name and block')
+    check(m.pad_get(P_LINK, 1) == 0 and m.pad_get(P_LINK, 0) == 4,
+          'PAD LINK: the bounce takes the source\'s group 4, the parked original leaves it')
+    a1 = m.record(1)[0]
+    o1 = bytearray(orig[0])
+    o1[0x11C - 0xD0:0x11C - 0xD0 + 4] = struct.pack('<I', 0)
+    check(a1 == bytes(o1), 'the original\'s parameter record moved whole, PAD LINK aside')
+    check(m.files[0]['tag'][0] == 'take' and m.pad_get(0x67, 0) == 384 + 77 and m.name(0).startswith('A1 L77'),
+          'the source pad plays the bounce: its file, exact START, the run\'s name')
+    ok, got = neutral_ok(m, 0)
+    check(ok and m.pad_get(0x6A, 0) == 1, f'the bounce on the source pad: printed settings neutral ({got})')
+    check(m.r32(TARGET_VALUES + 4) == 0xFFFFFFFF and m.param_saves >= 1,
+          'the fence: the recorder target is none again; the exchange saved the pads')
+    recs = m.undos()
+    check(len(recs) == 1 and recs[0]['pad'] == 0 and recs[0]['keep'] == 1 and recs[0]['link'] == 4 and
+          recs[0]['len_keep'] == 3000, f'an UNDO record: bounce on A-1, original on A-2, PAD LINK 4 ({recs})')
+    # UNDO: the gesture on the bounced pad offers it first
+    m.ui(300)
+    m.gesture(0)
+    m.ui(1)
+    check(m.popup() == 'UNDO BOUNCE?\nORIG ON A-2' and m.u('target') == T_UNDO,
+          f'the gesture on the bounced pad: UNDO BOUNCE? first ({m.popup()!r})')
+    seen = []
+    for d in (1, -1):
+        m.turn(d)
+        m.ui(1)
+        seen.append(m.popup())
+    m.tap(KEY_VALUE)
+    m.ui(1)
+    seen.append(m.popup())
+    m.tap(KEY_VALUE)
+    m.ui(1)
+    seen.append(m.popup())
+    m.tap(KEY_VALUE)
+    m.ui(1)
+    seen.append(m.popup())
+    check(seen == ['UNDO BOUNCE?\nORIG ON A-2', 'UNDO BOUNCE?\nORIG ON A-2', 'BOUNCE A-1>A-3\nNO TAIL',
+                   'REPLACE A-1\nNO TAIL', 'UNDO BOUNCE?\nORIG ON A-2'],
+          f'in UNDO VALUE alone changes nothing; VALUE pressed: a new bounce of it (A-3 free), REPLACE, UNDO ({seen})')
+    m.log = []
+    m.tap(KEY_REC)
+    for _ in range(40):
+        m.ui(1)
+    posts = [x[1] for x in m.log if x[0] == 'post']
+    check(m.popup() == 'UNDONE A-1\nBOUNCE ON A-2' and posts == [5, 0x40D, 0xD],
+          f'UNDO: sound off, the exchange again, save ({m.popup()!r}, {[hex(p) for p in posts]})')
+    check(m.record(0) == orig, 'UNDO is bit-exact: the original\'s file, parameter record (PAD LINK 4 again), name and '
+                               'block are back on A-1')
+    check(m.files[1]['tag'][0] == 'take' and m.pad_get(P_LINK, 1) == 0 and m.undos() == [],
+          'after UNDO the bounce stays on A-2, unlinked; the record is gone')
+    m.gesture(0)
+    m.ui(1)
+    check(m.popup() == 'BOUNCE A-1>A-3\nNO TAIL', f'no second UNDO: the gesture is a new bounce again ({m.popup()!r})')
+    m.tap(KEY_EXIT)
+    m.ui(300)
+
+    # a record that no longer fits: the scratch pad was replaced since
+    m, pcm = setup(seed=42)
+    run_bounce(m, 0, 0, target=T_REPLACE)
+    m.load_pad(1, 2222, tag='another')
+    m.ui(300)
+    m.gesture(0)
+    m.ui(1)
+    check(m.popup() == 'REPLACE A-1\nNO TAIL' and m.u('targets') == 3 and m.u('dst') == 2 and m.undos() == [],
+          f'the pad holding the original changed: no UNDO, the record is dropped; the setup starts on the target '
+          f'used last ({m.popup()!r})')
+    m.tap(KEY_EXIT)
+    # ... or changes between the gesture and REC
+    m, pcm = setup(seed=43)
+    run_bounce(m, 0, 0, target=T_REPLACE)
+    m.ui(300)
+    m.gesture(0)
+    m.ui(1)
+    m.load_pad(1, 2222, tag='another')
+    m.log = []
+    m.tap(KEY_REC)
+    m.ui(5)
+    check(m.popup() == 'CANNOT UNDO\nPADS CHANGED' and not [x for x in m.log if x[0] == 'post'],
+          f'a pad changed before REC: CANNOT UNDO, nothing posted ({m.popup()!r})')
+    # the recorder target already holds the fence's value (a stock standby that never started on pad 16)
+    m, pcm = setup(seed=40)
+    orig = m.record(0)
+    run_bounce(m, 0, 0, target=T_REPLACE)
+    m.ui(300)
+    m.w32(TARGET_VALUES + 4, 15)
+    m.gesture(0)
+    m.ui(1)
+    m.tap(KEY_REC)
+    for _ in range(40):
+        m.ui(1)
+    check(m.popup() == 'UNDONE A-1\nBOUNCE ON A-2' and m.u('fence') == 14 and m.record(0) == orig and
+          m.r32(TARGET_VALUES + 4) == 0xFFFFFFFF,
+          f'a stale target value 15: the fence writes 14, the UNDO completes ({m.popup()!r})')
+
+    # a source in a protected bank: no REPLACE
+    m, pcm = setup(seed=44)
+    m.protect(0)
+    res = run_bounce(m, 0, 0, target=T_REPLACE)
+    check(res['popup'] == 'BANK PROTECTED\nNOTHING CHANGED' and not [x for x in m.log if x[0] == 'post'] and
+          res['setup_text'] == 'REPLACE A-1\nNO TAIL' and m.u('dst') == 16,
+          f'REPLACE from a protected bank: BANK PROTECTED, nothing posted ({res["popup"]!r})')
+    # TO PAD from a protected bank works when the source needs no change
+    m, pcm = setup(seed=45)
+    m.protect(0)
+    res = run_bounce(m, 0, 0)
+    check(res['popup'] == 'BOUNCED A-1\nON B-1', f'TO PAD from a protected bank: into bank B ({res["popup"]!r})')
+    # ... and refuses when the run would have to change it (LOOP for a one-shot)
+    m, pcm = setup(seed=46)
+    m.protect(0)
+    res = run_bounce(m, 0, 2)
+    check(res['popup'] == 'BANK PROTECTED\nNOTHING CHANGED' and m.pad_get(P_LOOP, 0) == 0,
+          'LOOP of a one-shot in a protected bank: BANK PROTECTED, the source unchanged')
+
+    # the exchange fails (the renames do not happen): no UNDO record, the failure shown
+    m, pcm = setup(seed=47)
+    orig = m.record(0)
+    m.swap_fail = 'rename'
+    res = run_bounce(m, 0, 0, target=T_REPLACE)
+    check(res['popup'] == 'SWAP FAILED\nCHECK A-1 A-2' and m.undos() == [] and m.files[0]['tag'] == ('pad', 0, 3000),
+          f'the files did not move: SWAP FAILED, no UNDO record ({res["popup"]!r})')
+    # SMPL TASK stalls before the exchange: the fence never lands, 10 s
+    m, pcm = setup(seed=48)
+    m.stall = True
+    res = run_bounce(m, 0, 0, target=T_REPLACE, budget=12000)
+    check(res['popup'] == 'SWAP FAILED\nCHECK A-1 A-2' and m.undos() == [] and m.u('state') == U_IDLE and
+          ('cmd', 0x40D, 0, 1) in m.queue,
+          f'the exchange never confirmed within 10 s: SWAP FAILED, the pads to be checked ({res["popup"]!r})')
+    # EXIT while swapping is ignored
+    m, pcm = setup(seed=49)
+    res = run_bounce(m, 0, 0, target=T_REPLACE, exit_at=(U_SWAP,))
+    check(res['popup'] == 'REPLACED A-1\nORIG ON A-2', 'EXIT while the pads are swapped: ignored, the replace completes')
+    # eight records at most; a REPLACE of a replaced pad keeps the newest
+    m = boot(img, man, seed=50)
+    for p in range(0, 10):
+        pcm = pcm_burst(2000 + p, 60 + p)
+        m.load_pad(16 + p, 2000 + p)
+    for p in range(0, 10):
+        pcm = pcm_burst(2000 + p, 60 + p)
+        m.voice = Voice(m, 16 + p, pcm, 0, 2000 + p, 0, 1)
+        m.take, m.finalized = [], []
+        m.project[0] = 1
+        run_bounce(m, p, 0, target=T_REPLACE)
+        m.ui(300)
+    recs = m.undos()
+    check(len(recs) == 8 and sorted(r['pad'] for r in recs) == list(range(18, 26)),
+          f'ten REPLACEs: the last eight can be undone ({sorted(r["pad"] for r in recs)})')
+    note('REPLACE and UNDO')
+
+
+def leak_checks(img, man):
+    def setup(seed=61):
+        m = boot(img, man, seed=seed)
+        pcm = pcm_burst(3000, seed)
+        m.load_pad(0, 3000)
+        m.voice = Voice(m, 0, pcm, 0, 3000, 0, 1)
+        return m, pcm
+
+    # EXT SOURCE on with music on the input: off for the run, the take clean, on again afterwards
+    m, pcm = setup()
+    m.settings[0x25] = 1
+    m.fx['input'] = 3000
+    res = run_bounce(m, 0, 0)
+    check(res['popup'] == 'BOUNCED A-1\nON A-2' and m.take[77:77 + 3000] == pcm and m.settings[0x25] == 1,
+          'EXT SOURCE on, music on the input: muted for the run, the take frame-exact, EXT SOURCE back on')
+    sets = [(x[2]) for x in m.log if x[0] == 'set' and x[1] == 0x25]
+    check(sets == [0, 1], f'EXT SOURCE through the stock setter: off at REC, on at the end ({sets})')
+    # switched on during the take (a MIDI note, the remote): the take is discarded
+    m, pcm = setup(seed=62)
+
+    def ext_on(mm, i):
+        if mm.u('state') == U_RUN and mm.a('fed') > 500 and not mm.settings.get(0x25):
+            mm.settings[0x25] = 1
+    res = run_bounce(m, 0, 0, during=ext_on)
+    posts = [x[1] for x in m.log if x[0] == 'post']
+    check(res['popup'] == 'INPUT TURNED ON\nNOTHING CHANGED' and 0x1A in posts and 0x18 not in posts and
+          m.settings[0x25] == 1 and m.status[1] == 0,
+          f'EXT SOURCE switched on during the take: muted again, the take discarded, EXT SOURCE left on '
+          f'({res["popup"]!r})')
+    # ... during the silence wait: muted again, the bounce goes on
+    m, pcm = setup(seed=63)
+
+    def ext_on_wait(mm, i):
+        if mm.u('state') == U_SILENCE and i == 40:
+            mm.settings[0x25] = 1
+    res = run_bounce(m, 0, 0, during=ext_on_wait)
+    check(res['popup'] == 'BOUNCED A-1\nON A-2' and m.take[77:77 + 3000] == pcm and m.settings[0x25] == 1,
+          'EXT SOURCE switched on during the silence wait: muted again, a clean bounce, on afterwards')
+    # MIDI notes through the stock MIDI dispatcher during the take: dropped; the same note when idle plays
+    m, pcm = setup(seed=64)
+    m.load_pad(5, 2000, tag='midi')
+    midi = []
+
+    def send(mm, status, d1, d2):
+        mm.uc.mem_write(MSG, bytes([0, status, d1, d2]) + bytes(4))
+        before = len(mm.ring)
+        mm.call(MIDI_DISPATCH, MSG)
+        return mm.ring[before:]
+
+    def notes(mm, i):
+        if mm.u('state') == U_RUN and not midi:
+            midi.append(send(mm, 0x90, 36 + 5, 100))     # channel 1, the note of pad A-6
+            midi.append(send(mm, 0x80, 36 + 5, 0))
+    prep = midi_prep(m)
+    res = run_bounce(m, 0, 0, during=notes)
+    check(prep and res['popup'] == 'BOUNCED A-1\nON A-2' and midi and midi[0] == [] and m.take[77:77 + 3000] == pcm and
+          m.u('dropped') >= 1,
+          f'MIDI note-on during the take (stock dispatcher, channel 1): dropped at the gate, the take clean '
+          f'({midi}, {m.u("dropped")} dropped)')
+    after = send(m, 0x90, 36 + 5, 100)
+    check(prep and len(after) == 1 and after[0][1] == 5 and after[0][3] == 100,
+          f'the same MIDI note when idle: through the gate onto the pad-event ring ({after})')
+    # FIXED VELOCITY: the run's own trigger carries another velocity and still passes
+    m, pcm = setup(seed=65)
+    m.project[0xF5] = 1
+    m.project[0xDC] = 90
+    res = run_bounce(m, 0, 0)
+    rings = [x for x in m.log if x[0] == 'ring']
+    check(res['popup'] == 'BOUNCED A-1\nON A-2' and rings == [('ring', 0, 4, 90)] and m.take[77:77 + 3000] == pcm,
+          f'FIXED VELOCITY 90: the trigger passes the gate with velocity 90 ({rings})')
+    # a pattern or the looper starting during the run: the take is discarded
+    for name, start, text in (('pattern', lambda mm: mm.uc.mem_write(SEQ_PLAY, b'\x01'), 'STOP PATTERN FIRST'),
+                              ('looper', lambda mm: mm.uc.mem_write(LOOPER_ON, b'\x01'), 'STOP LOOPER FIRST')):
+        m, pcm = setup(seed=66)
+
+        def go(mm, i, start=start):
+            if mm.u('state') == U_RUN and mm.a('fed') > 200:
+                start(mm)
+        res = run_bounce(m, 0, 0, during=go)
+        posts = [x[1] for x in m.log if x[0] == 'post']
+        check(res['popup'] == text and 0x1A in posts and 0x18 not in posts and m.status[1] == 0,
+              f'a {name} starting during the take: {text}, the take discarded')
+    # PAD LINK: the source alone is recorded, its group back afterwards (and saved)
+    m, pcm = setup(seed=67)
+    m.pad_set(P_LINK, 2, 0)
+    res = run_bounce(m, 0, 0)
+    check(res['popup'] == 'BOUNCED A-1\nON A-2' and m.voice.link_at_trigger == 0 and m.pad_get(P_LINK, 0) == 2 and
+          m.pad_get(P_LINK, 1) == 0,
+          'PAD LINK 2: out of the group while the pad is triggered, back to 2 after; TO PAD leaves the bounce unlinked')
+    note('the input, MIDI and other sounds kept out of the take')
+
+
+def midi_prep(m):
+    """What the stock MIDI note-on path needs for a sample-pad note: page RESAMPLE, no MIDI clock wait."""
+    m.w32(0x80245B18, 0xFFFFFFFF)                    # the note-on handler runs only while this is negative
+    m.uc.mem_write(0x82E10370 + 0x685, b'\x00')      # MIDI thru level below 6
+    for addr, value in ((0x800D6380, 0x0E), (0x8004CC78, 0), (0x800D9360, 0), (0x800D61F0, 0), (0x800C06E0, 1)):
+        m.uc.hook_add(UC_HOOK_CODE, lambda uc, a, s, v: m._ret(v), value, begin=addr, end=addr)
+    # the pad of a note: the stock note map (0x8005ec50), here note 36 + k -> pad k of bank A
+    m.uc.hook_add(UC_HOOK_CODE, lambda uc, a, s, _: m._ret(uc.reg_read(ar.UC_ARM_REG_R1) - 36), None,
+                  begin=0x8005EC50, end=0x8005EC50)
+    return True
+
+
 def failure_checks(img, man):
     def setup(**kw):
         m = boot(img, man, seed=9)
@@ -1012,9 +1610,10 @@ def failure_checks(img, man):
         m.voice = Voice(m, 0, pcm, 0, 3000, 0, 1)
         return m
 
-    def restored(m, label):
+    def restored(m, label, dst_empty=True):
         check(m.r8(REC_STATE) == 0 and m.r32(FEED_ON) == 1 and m.settings[0x24] == 3 and m.settings[0x59] == 0 and
-              m.settings[0x1B] == 12000 and m.settings[0x1A] == -1 and m.status[1] == 0 and m.u('pinned') == 0,
+              m.settings[0x1B] == 12000 and m.settings[0x1A] == -1 and (m.status[1] == 0 or not dst_empty) and
+              m.u('pinned') == 0 and m.u('ext_pin') == 0 and m.r32(m.sym['bnc_own']) == 0,
               f'{label}: recorder idle, feed enable and settings restored, the destination stays empty')
 
     for state, label in ((U_STANDBY, 'standby'), (U_SILENCE, 'silence wait'), (U_RUN, 'recording')):
@@ -1026,6 +1625,10 @@ def failure_checks(img, man):
         restored(m, f'EXIT during {label}')
         check(0x18 not in posts[posts.index(0x14) + 1:] if state == U_RUN else True,
               f'EXIT during {label}: the take is discarded (0x1a), never finalized')
+    m = setup()
+    res = run_bounce(m, 0, 0, exit_at=(U_RUN,), target=T_REPLACE)
+    check(res['popup'] == 'BOUNCE CANCELLED\nNOTHING CHANGED' and not [x for x in m.log if x[0] == 'exchange'],
+          'EXIT during a REPLACE take: cancelled, no exchange')
     m = setup()
     res = run_bounce(m, 0, 2, exit_at=(U_RUN,))
     check(m.pad_get(0x6B, 0) == 0, 'EXIT during a LOOP run of a one-shot: the source\'s LOOP is back off')
@@ -1064,11 +1667,60 @@ def failure_checks(img, man):
     res = run_bounce(m, 0, 0)
     check(res['popup'] == 'BOUNCE FAILED', 'the finalize leaves the pad empty: BOUNCE FAILED')
     m = setup()
+    m.load_ok = False
+    res = run_bounce(m, 0, 0, target=T_REPLACE)
+    check(res['popup'] == 'BOUNCE FAILED' and not [x for x in m.log if x[0] == 'exchange'],
+          'REPLACE whose take did not load: BOUNCE FAILED, no exchange')
+    m = setup()
     m.project[0xFB] = 1
     res = run_bounce(m, 0, 0)
     check(res['popup'] == 'BOUNCED A-1\nON A-2' and m.project[0xFB] == 1 and
           ('pset', 0xFB, 0) in m.log and m.pad_get(0x67, 1) == 384 + 77,
           'zero-cross snapping on: off while START is set, back on afterwards; START exact')
+    # the standby cannot open its temp file (no card, card full): state stays idle
+    m = setup()
+
+    def no_standby(mm, i):
+        if mm.u('state') == U_STANDBY:
+            mm.queue = [q for q in mm.queue if q != ('cmd', 0x14, 0, 0)]
+    res = run_bounce(m, 0, 0, during=no_standby)
+    check(res['popup'] == 'BOUNCE FAILED', f'standby never starts (no temp file): BOUNCE FAILED after 3 s')
+    restored(m, 'no standby')
+    # the stock recorder ends the take itself
+    for err, partial, text, label in ((-0x3E, True, 'STORAGE FULL\nPART ON A-2', 'the card full (drain -0x3e)'),
+                                      (-0x79, True, 'BOUNCE FAILED\nPART ON A-2', 'a full ring (-0x79)'),
+                                      (-0x80, False, 'STORAGE FULL\nNOTHING CHANGED', 'no space, nothing kept')):
+        for target in (T_PAD, T_REPLACE):
+            m = setup()
+            m.load_pad(0, 3000, loop=1)
+            orig = m.record(0)
+            m.pad_set(P_LINK, 3, 0)
+            orig = m.record(0)
+            hit = []
+
+            def stop(mm, i, err=err, partial=partial):
+                if mm.u('state') == U_RUN and mm.a('fed') > 600 and not hit:
+                    hit.append(mm.a('fed'))
+                    mm.stock_stop(err, partial)
+            res = run_bounce(m, 0, 1, during=stop, target=target)
+            posts = [x[1] for x in m.log if x[0] == 'post']
+            fed_after = m.a('fed')
+            check(res['popup'] == text and 0x18 not in posts and 0x1A not in posts and
+                  not [x for x in m.log if x[0] == 'exchange'],
+                  f'{label}, {"REPLACE" if target else "TO PAD"}: {text!r}, no stop or cancel posted, no exchange '
+                  f'({res["popup"]!r})')
+            check(fed_after <= hit[0] + 64 and m.record(0) == orig and m.u('loop_pin') == 0 and m.u('link_pin') == 0,
+                  f'{label}: the module stops writing at once; the source as it was (LOOP, PAD LINK 3 back)')
+            restored(m, label, dst_empty=not partial)
+    # the ring full while the module writes the take's very last frames: the stock stop wins, no REC_STOP on top
+    m = setup()
+    m.overrun_at = 77 + 3000 + 32
+    res = run_bounce(m, 0, 0)
+    posts = [x[1] for x in m.log if x[0] == 'post']
+    check(res['popup'] == 'BOUNCE FAILED\nPART ON A-2' and 0x18 not in posts and m.finalized and
+          m.finalized[0]['err'] == -0x79,
+          f'the writer fills its ring on the last frames: the stock finalize keeps the take, no REC_STOP on top '
+          f'({res["popup"]!r})')
     note('refusals, EXIT and failures')
 
 
@@ -1077,7 +1729,7 @@ def cost_checks(img, man):
     pcm = pcm_burst(4000, 41)
     m.load_pad(0, 4000)
     m.voice = Voice(m, 0, pcm, 0, 4000, 0, 1)
-    lo, hi = man['blob_base'], man['blob_base'] + man['blob_size']
+    lo, hi = man['blob_base'], man['bss'][0]
     count = [0]
 
     def tick(uc, address, size, data):
@@ -1089,6 +1741,9 @@ def cost_checks(img, man):
         count[0] = 0
         m.tx(); m.rx()
         idle.append(count[0])
+    count[0] = 0
+    m.pad_event(3, 100)
+    gate_idle = count[0]
     m.uc.hook_del(h)
     m.gesture(0)
     m.ui(1)
@@ -1123,8 +1778,9 @@ def cost_checks(img, man):
     soft.uc.hook_del(h)
     print(f'  module cost per TX+RX block pair: idle {max(idle)}, bouncing up to {max(busy)} instructions, '
           f'{max(slow)} with no onset in the first 100 ms (a block is 1.33 ms, about 800,000 cycles at 600 MHz; '
-          f'the engine writer is stubbed)')
+          f'the engine writer is stubbed); the gate adds {gate_idle} per pad event when idle')
     check(max(idle) < 60, 'idle: under 60 instructions per block pair')
+    check(gate_idle < 40, 'idle: the gate adds under 40 instructions per pad event')
     check(max(busy) < 4000 and max(slow) < 10000,
           'bouncing: under 4,000 instructions per block pair, 10,000 while looking for a late onset (about 1% of a '
           'block)')
@@ -1137,8 +1793,13 @@ def main():
     parent = Path(man['parent_app1']).read_bytes()
     static_checks(out, man, img, parent)
     bridge_checks(img, parent, man)
+    interface_checks(img, man)
+    gate_checks(img, man)
     filter_checks(img, man)
     r = runs(img, man)
+    settings_checks(img, man)
+    replace_checks(img, man)
+    leak_checks(img, man)
     failure_checks(img, man)
     cost_checks(img, man)
     print(json.dumps(dict(runs=r, cases=cases[0])))

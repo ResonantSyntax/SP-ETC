@@ -1,26 +1,39 @@
-/* Bounce in place, stage 2: record a sample pad through its effects into an empty pad, frame-exact.
+/* Bounce in place, stage 3: record a sample pad through its effects, frame-exact, onto an empty pad
+ * (TO PAD) or in its place (REPLACE, through the stock pad exchange), with UNDO.
  *
  * Gesture (RESAMPLE page, recorder idle): hold RESAMPLE and tap a pad that holds a sample. A setup
- * popup names the source, the destination (the first empty pad after the source in its bank, then
- * the other banks A..J) and the mode; VALUE picks NO TAIL / TAIL / LOOP, REC starts, EXIT backs out.
+ * popup names the target and the mode. The scratch pad is the first empty pad after the source in its
+ * bank, then the other banks A..J (protected banks are skipped). VALUE picks NO TAIL / TAIL / LOOP;
+ * pressing VALUE, or SHIFT + VALUE, picks TO PAD / REPLACE (and UNDO, offered first on a pad this
+ * session replaced); REC starts, EXIT backs out.
  *
  * The run (UI task, from the popup tick, bnc_ui):
- *   1. pin REC length (settings 0x24) to FREE and END Snap (0x59) off, set the destination as the
- *      stock pad handler does, post ALL SOUND OFF and SEQ SOUND OFF, post standby (0x14);
+ *   1. pin REC length (settings 0x24) to FREE and END Snap (0x59) off, set REC BPM and the destination
+ *      as the stock pad handler does, switch EXT SOURCE (0x25) off (the stock setter sends input
+ *      volume 0 to the effects chip), take the source out of its PAD LINK group, post ALL SOUND OFF and
+ *      SEQ SOUND OFF, post standby (0x14);
  *   2. own the take: from then on the RX bridge clears the feed's enable word (0x805917c4) before
  *      each feed call, so the stock recorder gate never runs and only this module writes the take
- *      (every stock standby sets the word back to 1);
+ *      (every stock standby sets the word back to 1); the pad-event gate (0x800bef10) drops every pad
+ *      note-on except the run's own trigger (MIDI notes, rolls, the sequencer);
  *   3. wait for silence: RX and TX below about -72 dBFS for 200 ms, at most 10 s;
  *   4. post REC_START (0x17), then trigger the source pad;
  *   5. the audio side (bnc_tx after the mixer, bnc_rx after the recorder feed) finds T0, the TX frame
  *      that starts the source voice's first block, and writes RX frames from F0 = T0 (+ one pass in
- *      LOOP mode) to the engine's stereo writer: file frame k is RX frame F0 + k;
+ *      LOOP mode) to the engine's stereo writer: file frame k is RX frame F0 + k. It writes only while
+ *      the stock gate itself would (sub-state 2, error word 0): when the stock recorder ends the take on
+ *      its own (storage full, ring overrun), the module stops at once and lets the stock finalize run;
  *   6. the round trip L is the onset-measured value when it lies within 6 frames of the estimate
  *      (modulo 64), else the estimate: this boot's last onset-calibrated L, else 138.5 minus the
  *      eDMA phase averaged over the silence wait, the candidate nearest 75 (bounce probe T1);
  *   7. post REC_STOP (0x18); after the stock finalize, set START = F0 + L, END = START + length and
- *      the loop point = START through the stock pad setter (the stock finalize snaps START), name the
- *      pad with the run's numbers, save, and restore everything pinned.
+ *      the loop point through the stock pad setter (the stock finalize snaps START), copy the source's
+ *      performance settings and set the printed ones neutral, name the pad with the run's numbers, save,
+ *      and restore everything pinned;
+ *   8. REPLACE: post the stock exchange (0x40d) of the source and the scratch pad, then a recorder
+ *      target write as a fence (the same command ring, FIFO); when the fence lands, check that the two
+ *      pads swapped their samples, move PAD LINK from the parked original to the bounce, save, and
+ *      remember the pair for UNDO (RAM only). UNDO is the same exchange again.
  *
  * Windows, RX frames from F0: NO TAIL [L, L + one pass), LOOP [L, L + loop pass) with F0 one pass
  * after T0, TAIL [L, last frame above -72 dBFS], ended once the voice has stopped and 250 ms are
@@ -50,6 +63,8 @@ typedef unsigned char u8;
 #define VOICE_PAD 0x14274u
 #define REC 0x82E0E71Cu                                 /* CSampleRec */
 #define REC_STATE (REC + 0x39u)
+#define REC_SUB (REC + 0x24Eu)                          /* audio-side sub-state: 2 = capture */
+#define REC_ERR (REC + 0x250u)                          /* error word: the stock gate writes only while it is 0 */
 #define REC_ENGINE (REC + 0x254u)
 #define FEED_ON 0x805917C4u                             /* the feed calls the recorder gate when set */
 #define SETTINGS 0x82E01144u
@@ -78,6 +93,7 @@ typedef unsigned char u8;
 #define F_PADGET 0x800DC6B9u    /* pad get (obj, id, pad) */
 #define F_PADSET 0x800DA721u    /* pad set (obj, id, value, pad) */
 #define F_PADNAME 0x800CFA29u   /* pad name (obj, pad, text): 23 characters */
+#define F_PROTECT 0x8001AA79u   /* the pad setter's protect test (obj, id, pad): true = it refuses */
 #define F_TSET 0x800D48E9u      /* recorder target set (obj, id, value, 0), through the command ring */
 #define F_SYSGET 0x800DA011u    /* system parameter get (obj, id, -1) */
 #define F_POST 0x800E25C1u      /* post a SMPL TASK command (cmd, a1, a2) */
@@ -98,6 +114,7 @@ typedef s32 (*fn4_t)(u32, u32, u32, u32);
 #define KEY_RESAMPLE 0x1C
 #define KEY_EXIT 0x22
 #define KEY_SHIFT 0x2A
+#define KEY_VALUE 0x31          /* VALUE pressed */
 #define CMD_ALL_SOUND_OFF 5
 #define CMD_SAVE 0xD
 #define CMD_STANDBY 0x14
@@ -105,6 +122,7 @@ typedef s32 (*fn4_t)(u32, u32, u32, u32);
 #define CMD_STOP 0x18
 #define CMD_CANCEL 0x1A
 #define CMD_SEQ_SOUND_OFF 0x2A
+#define CMD_EXCHANGE 0x40D      /* 0x800a6c30(gSmplMgr, a, b, 2): swap two pads' files and parameters */
 #define EV_KEY 5
 #define EV_KEY_UP 6
 #define EV_ENCODER 7
@@ -114,19 +132,41 @@ typedef s32 (*fn4_t)(u32, u32, u32, u32);
 #define EV_PAD_MORE 0x12
 #define PAGE_RESAMPLE 0x0E
 #define NONE 0xFFFFFFFFu
+#define S_EXT_SOURCE 0x25
 
 /* pad parameters; START, END and the loop point in frames of the file's data */
 #define P_STATUS 0x64
+#define P_CHANNELS 0x65
+#define P_LENGTH 0x66           /* frames in the file's data */
 #define P_START 0x67
 #define P_END 0x68
+#define P_VOLUME 0x69           /* 0..127 */
+#define P_GATE 0x6A
 #define P_LOOP 0x6B
-#define P_SYNC 0x6E
+#define P_MUTE 0x6D             /* MUTE GROUP 0..10 */
+#define P_SYNC 0x6E             /* TEMPO SYNC */
+#define P_POLY 0x70             /* Polyphonic: bit 5 poly one-shot, bits 1-2 the stretch (VARI) mode */
 #define P_LOOPPOINT 0x71
-#define P_PITCH 0x73
-#define P_FINE 0x74
-#define P_REVERSE 0x75
-#define P_SPEED 0x76
+#define P_TOP 0x72              /* a loop flag (label "TOP"); the setter turns LOOP on with it */
+#define P_PITCH 0x73            /* semitones */
+#define P_FINE 0x74             /* 1/100 semitone */
+#define P_REVERSE 0x75          /* PLAY: bit 0 reverse */
+#define P_SPEED 0x76            /* 1/100 % */
+#define P_VINYL 0x77            /* VINYL MODE */
+#define P_PAN 0x78              /* 13..115, 64 centre */
+#define P_LINK 0x79             /* PAD LINK group 0..10 */
+#define P_BUS 0x7A              /* BUS FX Assign: 0 DRY, 1 BUS 1 (the stock default), 2 BUS 2 ... */
+#define P_ROLL 0x7B
+#define P_ATTACK 0x7D
+#define P_HOLD 0x7E             /* the envelope's hold, 1..100 % */
+#define P_RELEASE 0x7F
 #define SPEED_100 10000
+/* the stock defaults of a new sample (0x800cfa68), which are also the neutral values */
+#define VOLUME_DEFAULT 127
+#define PAN_CENTRE 64
+#define HOLD_DEFAULT 100
+#define VINYL_DEFAULT 1
+#define BUS_DRY 0
 
 /* --- tuning --- */
 #define TX_ONSET 2048           /* about -48 dBFS of the 20-bit stems (bounce probe, T1) */
@@ -151,14 +191,23 @@ typedef s32 (*fn4_t)(u32, u32, u32, u32);
 #define WAIT_SILENCE_MS 10000
 #define WAIT_VOICE_MS 1000
 #define WAIT_FINAL_MS 20000
+#define WAIT_SWAP_MS 10000
 #define REFRESH_MS 250
 #define POPUP_MS 1000
 #define DONE_MS 2500
+#define FENCE 15                /* recorder target pad written after an exchange (14 if 15 is there already) */
+#define UNDOS 8
+/* the recorder's error word after it ended a take on its own */
+#define ERR_WRITE (-0x3E)       /* a buffer write failed or the 16-minute budget ran out (drain 0x800ea308) */
+#define ERR_BUDGET (-0x78)
+#define ERR_SPACE (-0x80)       /* under 1 MB free (0x800c2448) */
 
 enum { NO_TAIL, TAIL, LOOP, MODES };
+enum { T_PAD, T_REPLACE, T_UNDO, TARGETS };
 enum { A_IDLE, A_SILENCE, A_ARMED, A_RUN, A_DONE };
-enum { U_IDLE, U_SETUP, U_STANDBY, U_SILENCE, U_RECSTART, U_VOICE, U_RUN, U_FINAL, U_CANCEL };
-enum { M_NONE, M_DONE, M_NO_EMPTY, M_PATTERN, M_LOOPER, M_RINGING, M_FAILED, M_CANCELLED };
+enum { U_IDLE, U_SETUP, U_STANDBY, U_SILENCE, U_RECSTART, U_VOICE, U_RUN, U_FINAL, U_CANCEL, U_SWAP, U_STOCKSTOP };
+enum { M_NONE, M_DONE, M_NO_EMPTY, M_PATTERN, M_LOOPER, M_RINGING, M_FAILED, M_CANCELLED, M_REPLACED, M_UNDONE,
+       M_SWAP_FAILED, M_STORAGE, M_CUT, M_INPUT, M_PROTECTED, M_NO_UNDO };
 
 struct aud {
     u32 tx_blocks, rx_blocks;   /* blocks since boot */
@@ -182,8 +231,15 @@ struct aud {
     u32 last_loud;              /* RX frame + 1 of the last frame above RX_QUIET (TAIL) */
     u32 win;                    /* the window's length, 0 = not known yet */
     u32 rx_now;                 /* RX frames seen */
-    u32 fail;
+    u32 fail;                   /* 1: the kept blocks were overwritten; 2: the stock recorder ended the take */
     s16 hist[HIST_BLOCKS * FRAMES * 2];
+};
+
+/* A REPLACE this session: the bounce sits on pad, the original on keep; both pads' sample sizes, so a
+ * pad changed since is noticed; the original's PAD LINK (0 while it is parked). */
+struct undo {
+    u32 used, pad, keep, len_pad, ch_pad, len_keep, ch_keep;
+    s32 link;
 };
 
 struct ui {
@@ -204,10 +260,27 @@ struct ui {
     /* the last finished run */
     s32 r_l, r_est, r_meas, r_p16, r_d;
     u32 r_start, r_end, r_len, r_mode, r_exact;
+    /* stage 3 */
+    u32 target, targets, last_target;
+    u32 scratch;                /* the empty pad a bounce records into, NONE if there is none */
+    u32 lp_off;                 /* the source's loop point after its START, frames */
+    u32 ext_pin;                /* EXT SOURCE was on: switched off for the run */
+    s32 saved_ext;
+    u32 link_pin;               /* the source's PAD LINK was set: 0 for the run */
+    s32 link_src;
+    u32 swap_kind, swap_a, swap_b;              /* the exchange in flight: a takes b's sample and b a's */
+    u32 want_len_a, want_ch_a, want_len_b, want_ch_b;
+    u32 fence;                  /* the value the fence writes */
+    u32 undo_slot, undo_next;
+    u32 partial;                /* the stock recorder ended the take on its own and left it on the scratch pad */
+    s32 err;                    /* the recorder's error word then */
+    u32 dropped;                /* pad note-ons the gate dropped */
+    struct undo undo[UNDOS];
 };
 
 EXPORT volatile struct aud bnc_aud;
 EXPORT volatile u32 bnc_own;    /* the recorder is this module's: the RX bridge clears the feed enable first */
+EXPORT volatile u32 bnc_expect; /* the run's own trigger is on its way through the pad-event gate */
 EXPORT volatile struct ui bnc_ui_state;
 EXPORT char bnc_text[64];
 
@@ -218,12 +291,21 @@ EXPORT char bnc_text[64];
 #define LOUD(x, t) ((u32)((s32)(x) + (t)) > 2u * (t))
 #define LOUD2(p, t) (LOUD((p)[0], t) || LOUD((p)[1], t))
 
-static s32 get_setting(u32 id) { return CALL3(F_GET, SETTINGS, id, 0); }
-static void set_setting(u32 id, s32 v, s32 flag) { CALL4(F_SET, SETTINGS, id, v, flag); }
-static s32 pad_get(u32 id, u32 pad) { return CALL3(F_PADGET, SMPL, id, pad); }
-static void pad_set(u32 id, s32 v, u32 pad) { CALL4(F_PADSET, SMPL, id, v, pad); }
-static void post(u32 cmd) { CALL3(F_POST, cmd, 0, 0); }
-static u32 occupied(u32 pad) { return CALL3(F_PGET, PROJECT, P_STATUS, pad) != 0; }
+/* The stock calls, out of line: one call site each keeps the module small. */
+#define OUTLINE __attribute__((noinline))
+static OUTLINE s32 get_setting(u32 id) { return CALL3(F_GET, SETTINGS, id, 0); }
+static OUTLINE void set_setting(u32 id, s32 v, s32 flag) { CALL4(F_SET, SETTINGS, id, v, flag); }
+static OUTLINE s32 pad_get(u32 id, u32 pad) { return CALL3(F_PADGET, SMPL, id, pad); }
+static OUTLINE void pad_set(u32 id, s32 v, u32 pad) { CALL4(F_PADSET, SMPL, id, v, pad); }
+static OUTLINE s32 project_get(u32 id, u32 idx) { return CALL3(F_PGET, PROJECT, id, idx); }
+static OUTLINE void post3(u32 cmd, u32 a1, u32 a2) { CALL3(F_POST, cmd, a1, a2); }
+static OUTLINE void target_set(u32 id, s32 v) { CALL4(F_TSET, TARGET, id, v, 0); }
+static void post(u32 cmd) { post3(cmd, 0, 0); }
+static void save_pads(void) { post3(CMD_SAVE, 1, 0); }
+static OUTLINE u32 occupied(u32 pad) { return project_get(P_STATUS, pad) != 0; }
+static OUTLINE u32 is_protected(u32 pad) { return CALL3(F_PROTECT, SMPL, P_LINK, pad) != 0; }
+static u32 pad_len(u32 pad) { return (u32)pad_get(P_LENGTH, pad); }
+static u32 pad_channels(u32 pad) { return (u32)pad_get(P_CHANNELS, pad); }
 /* the stock key getter's own test (0x800d9f2c), read directly: the kits route the getter itself */
 static u32 key_held(u32 key) { return (V8(KEY_BITS + (key >> 3)) >> (key & 7)) & 1; }
 
@@ -355,6 +437,13 @@ static void write_frames(const volatile s16 *src, u32 n) {
     A.fed += n;
 }
 
+/* The stock recorder is ending the take on its own (the stock gate would write no more). */
+static void stock_ended(void) {
+    A.fail = 2;
+    BARRIER();
+    A.phase = A_DONE;
+}
+
 #define HIST_FRAMES (HIST_BLOCKS * FRAMES)
 #define HIST(fr) (&A.hist[((fr) % HIST_FRAMES) * 2])
 
@@ -381,6 +470,10 @@ EXPORT void bnc_rx(void) {
     A.rx_now = top;
     if (phase != A_RUN) {
         read_phase();
+        return;
+    }
+    if (V8(REC_SUB) != 2 || V32(REC_ERR) != 0) {    /* the stock gate's own conditions (0x1baa4) */
+        stock_ended();
         return;
     }
     if (!A.l_est) {                         /* the first RX block after T0 */
@@ -455,6 +548,10 @@ EXPORT void bnc_rx(void) {
     }
     if (next >= base && next < end)
         write_frames(cap + 2 * (next - base), end - next);
+    if (V32(REC_ERR) != 0) {                /* the writer found its ring full (0x8017e5b0) */
+        stock_ended();
+        return;
+    }
     if (A.stop && A.f0 + A.fed >= A.stop) {
         u32 engine = V32(REC_ENGINE);
         V32(engine + 0x208) = NONE;         /* "no first sound": the stock trims leave START */
@@ -462,6 +559,24 @@ EXPORT void bnc_rx(void) {
         BARRIER();
         A.phase = A_DONE;
     }
+}
+
+/* The pad-event dispatcher's gate (0x800bef10, whatever task posts the event: UI, MIDI, sequencer).
+ * While a bounce owns the recorder only the run's own trigger may start a voice: every other pad
+ * note-on (byte 0 the pad, 0..0xa1; byte 3 the velocity 1..127) is dropped. Note-offs pass. The
+ * trigger is recognised by its pad, not its velocity: FIXED VELOCITY (project 0xf5) replaces it. */
+EXPORT u32 bnc_gate(const volatile u8 *ev) {
+    if (!bnc_own)
+        return 1;
+    u32 pad = ev[0], vel = ev[3];
+    if (pad > 0xA1 || vel - 1u >= 127u)
+        return 1;
+    if (bnc_expect && pad == A.pad) {
+        bnc_expect = 0;
+        return 1;
+    }
+    U.dropped++;
+    return 0;
 }
 
 /* ---------------------------------------------------------------------------------------------
@@ -503,33 +618,59 @@ static char *put_pad(char *o, u32 pad) {        /* A-1 .. J-16 */
 
 static const char *const MODE_TEXT[MODES] = {"NO TAIL", "TAIL", "LOOP"};
 
-static void final_text(u32 msg) {
-    char *o = bnc_text;
-    switch (msg) {
-    case M_DONE:
-        o = put_pad(put(o, "BOUNCED "), U.src);
-        o = put_pad(put(o, "\nON "), U.dst);
-        break;
-    case M_NO_EMPTY: o = put(o, "NO EMPTY PAD"); break;
-    case M_PATTERN: o = put(o, "STOP PATTERN FIRST"); break;
-    case M_LOOPER: o = put(o, "STOP LOOPER FIRST"); break;
-    case M_RINGING: o = put(o, "FX STILL RINGING"); break;
-    case M_CANCELLED: o = put(o, "BOUNCE CANCELLED\nNOTHING CHANGED"); break;
-    default: o = put(o, "BOUNCE FAILED"); break;
+/* Popup texts: '\1' the source pad, '\2' the destination (or the pad that holds the original), '\3' where a
+ * take the stock recorder ended itself went, '\4' NOTHING CHANGED. */
+static const char *const MSG_TEXT[] = {
+    [M_DONE] = "BOUNCED \1\nON \2",
+    [M_NO_EMPTY] = "NO EMPTY PAD",
+    [M_PATTERN] = "STOP PATTERN FIRST",
+    [M_LOOPER] = "STOP LOOPER FIRST",
+    [M_RINGING] = "FX STILL RINGING",
+    [M_FAILED] = "BOUNCE FAILED",
+    [M_CANCELLED] = "BOUNCE CANCELLED\n\4",
+    [M_REPLACED] = "REPLACED \1\nORIG ON \2",
+    [M_UNDONE] = "UNDONE \1\nBOUNCE ON \2",
+    [M_SWAP_FAILED] = "SWAP FAILED\nCHECK \1 \2",
+    [M_STORAGE] = "STORAGE FULL\n\3",
+    [M_CUT] = "BOUNCE FAILED\n\3",
+    [M_INPUT] = "INPUT TURNED ON\n\4",
+    [M_PROTECTED] = "BANK PROTECTED\n\4",
+    [M_NO_UNDO] = "CANNOT UNDO\nPADS CHANGED",
+};
+
+static char *put_text(char *o, const char *s) {
+    for (; *s; s++) {
+        if (*s == 1)
+            o = put_pad(o, U.src);
+        else if (*s == 2)
+            o = put_pad(o, U.dst);
+        else if (*s == 3 && U.partial)
+            o = put_pad(put(o, "PART ON "), U.dst);
+        else if (*s == 3 || *s == 4)
+            o = put(o, "NOTHING CHANGED");
+        else
+            *o++ = *s;
     }
-    *o = 0;
+    return o;
+}
+
+static void final_text(u32 msg) {
+    *put_text(bnc_text, MSG_TEXT[msg < sizeof MSG_TEXT / sizeof MSG_TEXT[0] && MSG_TEXT[msg] ? msg : M_FAILED]) = 0;
 }
 
 static void progress_text(void) {
-    char *o = put(bnc_text, "BOUNCE ");
-    o = put_pad(o, U.src);
-    *o++ = '>';
-    o = put_pad(o, U.dst);
-    *o++ = '\n';
+    char *o = bnc_text;
+    if (U.target == T_UNDO) {
+        *put_text(o, U.state == U_SETUP ? "UNDO BOUNCE?\nORIG ON \2" : "UNDO \1\nSWAPPING") = 0;
+        return;
+    }
+    o = put_text(o, U.target == T_REPLACE ? "REPLACE \1\n" : "BOUNCE \1>\2\n");
     if (U.state == U_SETUP) {
         o = put(o, U.modes == 1u << TAIL ? "TAIL ONLY" : MODE_TEXT[U.mode]);
     } else if (U.state <= U_SILENCE) {
         o = put(o, "WAIT SILENCE");
+    } else if (U.state == U_SWAP) {
+        o = put(o, "SWAPPING");
     } else {
         o = put(o, MODE_TEXT[U.mode]);
         *o++ = ' ';
@@ -546,7 +687,10 @@ static void progress_text(void) {
             *o++ = 's';
         } else {
             u32 total = U.mode == LOOP ? U.len1 + U.len2 : A.win ? A.win : U.len1;
-            u32 pct = finished ? 100 : total ? (u32)((unsigned long long)done * 100 / total) : 0;
+            if (done > total)
+                done = total;
+            /* 32-bit: done x 100 fits up to 42,949,672 frames (15 min) */
+            u32 pct = finished ? 100 : !total ? 0 : total > 40000000u ? done / (total / 100) : done * 100 / total;
             o = put_uint(o, pct > 100 ? 100 : pct);
             *o++ = '%';
         }
@@ -563,18 +707,68 @@ static u32 pattern_running(void) { return V8(SEQ_PLAY) != 0 || V32(SEQ_RUN) != 0
 static u32 looper_running(void) { return V8(LOOPER_ON) != 0; }
 static u32 target_pad(void) { return V32(TARGET_VALUES + 4); }
 
-/* The first empty pad after the source in its bank, then banks A..J. */
+/* The first empty pad after the source in its bank, then banks A..J; never in a protected bank. */
 static u32 find_empty(u32 src) {
     u32 bank = src / 16;
-    for (u32 i = 1; i < 16; i++) {
-        u32 p = bank * 16 + (src + i) % 16;
-        if (!occupied(p))
-            return p;
+    if (!is_protected(bank * 16))
+        for (u32 i = 1; i < 16; i++) {
+            u32 p = bank * 16 + (src + i) % 16;
+            if (!occupied(p))
+                return p;
+        }
+    for (u32 b = 0; b < BANKS; b++) {
+        if (b == bank || is_protected(b * 16))
+            continue;
+        for (u32 p = b * 16; p < b * 16 + 16; p++)
+            if (!occupied(p))
+                return p;
     }
-    for (u32 p = 0; p < BANKS * 16; p++)
-        if (p / 16 != bank && !occupied(p))
-            return p;
     return NONE;
+}
+
+/* --- UNDO records (RAM) --- */
+static u32 undo_valid(u32 i) {
+    volatile struct undo *r = &U.undo[i];
+    return r->used && occupied(r->pad) && occupied(r->keep) && pad_len(r->pad) == r->len_pad &&
+           pad_channels(r->pad) == r->ch_pad && pad_len(r->keep) == r->len_keep && pad_channels(r->keep) == r->ch_keep;
+}
+
+static u32 undo_for(u32 pad) {
+    for (u32 i = 0; i < UNDOS; i++)
+        if (U.undo[i].used && U.undo[i].pad == pad) {
+            if (undo_valid(i))
+                return i;
+            U.undo[i].used = 0;
+        }
+    return NONE;
+}
+
+static void forget(u32 pad) {           /* every record that involves the pad */
+    for (u32 i = 0; i < UNDOS; i++)
+        if (U.undo[i].pad == pad || U.undo[i].keep == pad)
+            U.undo[i].used = 0;
+}
+
+static void remember(u32 pad, u32 keep, s32 link) {
+    forget(pad);
+    forget(keep);
+    u32 i = 0;
+    while (i < UNDOS && U.undo[i].used)
+        i++;
+    if (i == UNDOS) {                   /* all used: the oldest goes */
+        i = U.undo_next;
+        U.undo_next = (i + 1) % UNDOS;
+    }
+    volatile struct undo *r = &U.undo[i];
+    r->pad = pad;
+    r->keep = keep;
+    r->len_pad = pad_len(pad);
+    r->ch_pad = pad_channels(pad);
+    r->len_keep = pad_len(keep);
+    r->ch_keep = pad_channels(keep);
+    r->link = link;
+    BARRIER();
+    r->used = 1;
 }
 
 /* What the source allows: NO TAIL and LOOP need an exact length. */
@@ -587,6 +781,7 @@ static void study(u32 pad) {
         lp = start;
     U.len1 = end > start ? (u32)(end - start) : 0;
     U.len2 = end > lp ? (u32)(end - lp) : 0;
+    U.lp_off = (u32)(lp - start);
     U.modes = U.native ? 7u : U.loop_src ? 1u << TAIL : (1u << NO_TAIL) | (1u << TAIL);
     u32 m = U.last_mode;
     if (m >= MODES || !(U.modes & (1u << m)))
@@ -601,21 +796,42 @@ static void enter(u32 state) {
     U.refresh = 1;
 }
 
-/* Undo whatever the run pinned; then the popup. */
-static void finish(u32 msg) {
-    A.phase = A_IDLE;
-    bnc_own = 0;
-    V32(FEED_ON) = 1;
+/* The destination follows the target: UNDO names the pad that holds the original. */
+static void aim(void) {
+    U.dst = U.target == T_UNDO ? U.undo[U.undo_slot].keep : U.scratch;
+}
+
+/* The source's settings back as they were: the run's LOOP and PAD LINK changes. The LOOP setter saves
+ * the pads itself; after PAD LINK the pads are saved here, so the disk never keeps the run's value. */
+static void restore_source(void) {
     if (U.loop_pin) {
         pad_set(P_LOOP, (s32)U.loop_src, U.src);
         U.loop_pin = 0;
     }
+    if (U.link_pin) {
+        pad_set(P_LINK, U.link_src, U.src);
+        U.link_pin = 0;
+        save_pads();
+    }
+}
+
+/* Undo whatever the run pinned; then the popup. */
+static void finish(u32 msg) {
+    A.phase = A_IDLE;
+    bnc_own = 0;
+    bnc_expect = 0;
+    V32(FEED_ON) = 1;
+    restore_source();
     if (U.pinned) {
         set_setting(0x24, U.saved_len, 0);
         set_setting(0x59, U.saved_snap, 0);
         set_setting(0x1B, U.saved_bpm, -1);
         set_setting(0x1A, -1, 0);
         U.pinned = 0;
+    }
+    if (U.ext_pin) {                        /* EXT SOURCE back on: the stock setter sends the input level */
+        set_setting(S_EXT_SOURCE, U.saved_ext, 0);
+        U.ext_pin = 0;
     }
     U.msg = msg;
     enter(U_IDLE);
@@ -635,6 +851,32 @@ static void abandon(u32 msg) {
     enter(U_CANCEL);
 }
 
+/* The stock recorder ended the take itself (storage full, ring overrun): it finalizes what it has into
+ * the scratch pad. Nothing is posted; the source's settings come back before that finalize saves. */
+static void stock_stopped(void) {
+    A.phase = A_IDLE;
+    restore_source();
+    post(CMD_ALL_SOUND_OFF);
+    enter(U_STOCKSTOP);
+}
+
+/* The stock exchange of pads a and b, then a recorder target write behind it in the same command ring:
+ * when that write lands, the exchange (its renames, reloads and save) is done. */
+static void begin_swap(u32 kind, u32 a, u32 b) {
+    U.swap_kind = kind;
+    U.swap_a = a;
+    U.swap_b = b;
+    U.want_len_a = pad_len(b);
+    U.want_ch_a = pad_channels(b);
+    U.want_len_b = pad_len(a);
+    U.want_ch_b = pad_channels(a);
+    bnc_own = 1;                            /* no pad starts while the files move */
+    U.fence = target_pad() == FENCE ? FENCE - 1 : FENCE;    /* a value the target does not hold yet */
+    post3(CMD_EXCHANGE, a, b);
+    target_set(1, (s32)U.fence);
+    enter(U_SWAP);
+}
+
 /* REC in the setup popup: check, pin, standby into the destination. */
 static void start_run(void) {
     if (pattern_running()) {
@@ -646,23 +888,40 @@ static void start_run(void) {
         return;
     }
     if (V8(REC_STATE) != 0 || CALL3(F_SYSGET, SYSPRM, 0x5C, NONE) != 0 || V32(TARGET_VALUES + 0xC) == 0 ||
-        !occupied(U.src) || occupied(U.dst)) {
+        U.dst == NONE || !occupied(U.src) || occupied(U.dst)) {
         finish(M_FAILED);                   /* busy, ROUTING not Mix, a mono recorder, pads changed */
         return;
     }
+    u32 want = U.mode == LOOP ? 1 : U.mode == TAIL ? 0 : U.loop_src;   /* LOOP: two passes; TAIL: one */
+    s32 link = pad_get(P_LINK, U.src);
+    if (is_protected(U.dst) ||
+        ((U.target == T_REPLACE || want != U.loop_src || link) && is_protected(U.src))) {
+        finish(M_PROTECTED);                /* the stock setter would refuse the changes */
+        return;
+    }
     U.last_mode = U.mode;
+    U.last_target = U.target;
     U.saved_len = get_setting(0x24);
     U.saved_snap = get_setting(0x59);
     U.saved_bpm = get_setting(0x1B);
     U.pinned = 1;
     set_setting(0x24, 6, 0);                                     /* REC length FREE: no bar limit */
     set_setting(0x59, 0, 0);                                     /* END Snap off */
-    set_setting(0x1B, CALL3(F_PGET, PROJECT, 0x21 + U.src / 16, NONE), -1);   /* REC BPM: the bank's */
+    set_setting(0x1B, project_get(0x21 + U.src / 16, NONE), -1);   /* REC BPM: the bank's */
     set_setting(0x1A, (s32)U.dst, 0);
-    CALL4(F_TSET, TARGET, 7, 0, 0);
-    CALL4(F_TSET, TARGET, 1, U.dst % 16, 0);
-    CALL4(F_TSET, TARGET, 0, U.dst / 16, 0);
-    u32 want = U.mode == LOOP ? 1 : U.mode == TAIL ? 0 : U.loop_src;   /* LOOP: two passes; TAIL: one */
+    target_set(7, 0);
+    target_set(1, U.dst % 16);
+    target_set(0, U.dst / 16);
+    U.saved_ext = get_setting(S_EXT_SOURCE);
+    if (U.saved_ext) {                      /* the input off: nothing on it reaches the take */
+        set_setting(S_EXT_SOURCE, 0, 0);
+        U.ext_pin = 1;
+    }
+    U.link_src = link;
+    if (link) {                             /* the pad alone: its PAD LINK group does not play along */
+        pad_set(P_LINK, 0, U.src);
+        U.link_pin = 1;
+    }
     if (want != U.loop_src) {
         U.loop_pin = 1;
         pad_set(P_LOOP, (s32)want, U.src);
@@ -673,6 +932,36 @@ static void start_run(void) {
     post(CMD_SEQ_SOUND_OFF);
     post(CMD_STANDBY);
     enter(U_STANDBY);
+}
+
+/* REC in the UNDO popup: the same exchange again. */
+static void start_undo(void) {
+    u32 i = U.undo_slot;
+    if (pattern_running()) {
+        finish(M_PATTERN);
+        return;
+    }
+    if (looper_running()) {
+        finish(M_LOOPER);
+        return;
+    }
+    if (V8(REC_STATE) != 0) {
+        finish(M_FAILED);
+        return;
+    }
+    if (i >= UNDOS || U.undo[i].pad != U.src || !undo_valid(i)) {
+        if (i < UNDOS)
+            U.undo[i].used = 0;
+        finish(M_NO_UNDO);
+        return;
+    }
+    if (is_protected(U.undo[i].pad) || is_protected(U.undo[i].keep)) {
+        finish(M_PROTECTED);
+        return;
+    }
+    U.last_target = T_UNDO;
+    post(CMD_ALL_SOUND_OFF);
+    begin_swap(T_UNDO, U.undo[i].pad, U.undo[i].keep);
 }
 
 static void arm(void) {
@@ -690,12 +979,33 @@ static void arm(void) {
     A.rx_now = 0;
     BARRIER();
     A.phase = A_ARMED;
+    bnc_expect = 1;                         /* the one note-on the gate lets through */
     CALL3(F_TRIGGER, U.src, 127, 1);
+    bnc_expect = 0;
 }
 
-/* After the stock finalize: the exact window, the pad's name, a save. */
+/* The bounced pad's settings. The stock finalize has given it every new sample's defaults (0x800cfa68).
+ * Performance settings come from the source; the printed ones are already in the take and go neutral.
+ * Polyphonic first: the stock setter clears its poly bit when GATE or LOOP go on, as the stock UI does. */
+static const u8 COPIED[] = {P_POLY, P_GATE, P_MUTE, P_ROLL, P_SYNC};
+static const u16 NEUTRAL[][2] = {
+    {P_VOLUME, VOLUME_DEFAULT}, {P_PAN, PAN_CENTRE}, {P_PITCH, 0}, {P_FINE, 0}, {P_SPEED, SPEED_100},
+    {P_REVERSE, 0}, {P_BUS, BUS_DRY}, {P_ATTACK, 0}, {P_HOLD, HOLD_DEFAULT}, {P_RELEASE, 0},
+    {P_LINK, 0},                            /* REPLACE gives it the source's group after the exchange */
+};
+
+static void pad_settings(u32 src, u32 dst) {
+    for (u32 i = 0; i < sizeof COPIED; i++)
+        pad_set(COPIED[i], pad_get(COPIED[i], src), dst);
+    /* TEMPO SYNC needs VINYL MODE off: copied with it; without it the stock default */
+    pad_set(P_VINYL, pad_get(P_SYNC, src) ? pad_get(P_VINYL, src) : VINYL_DEFAULT, dst);
+    for (u32 i = 0; i < sizeof NEUTRAL / sizeof NEUTRAL[0]; i++)
+        pad_set(NEUTRAL[i][0], NEUTRAL[i][1], dst);
+}
+
+/* After the stock finalize: the exact window, the settings, the pad's name, a save. */
 static u32 settle(void) {
-    u32 dst = U.dst, info = FILE_INFO + dst * 36, engine = V32(REC_ENGINE);
+    u32 src = U.src, dst = U.dst, info = FILE_INFO + dst * 36, engine = V32(REC_ENGINE);
     s32 channels = (s32)V32(info + 8), offset = (s32)V32(info + 0xC), data = (s32)V32(engine + 0x1C0);
     U.r_l = A.l;
     U.r_est = A.l_est;
@@ -706,23 +1016,32 @@ static u32 settle(void) {
     U.r_len = A.win;
     if (channels != 2 || data < offset)
         return 0;
+    forget(dst);                            /* a record that still names this pad is stale */
     u32 start = (u32)(data - offset) / 4 + (u32)A.l, end = start + A.win;
-    s32 zero_cross = CALL3(F_PGET, PROJECT, 0xFB, NONE);
+    u32 loops = U.mode == LOOP || (U.mode == NO_TAIL && U.loop_src);
+    /* NO TAIL of a loop: it loops from its own loop point, as the source does */
+    u32 lp = U.mode == NO_TAIL && U.loop_src && U.lp_off < A.win ? start + U.lp_off : start;
+    s32 zero_cross = project_get(0xFB, NONE);
     if (zero_cross)                         /* the setter would move START to a zero crossing */
         CALL4(F_PSET, PROJECT, 0xFB, 0, NONE);
     pad_set(P_START, (s32)start, dst);
     pad_set(P_END, (s32)end, dst);
-    pad_set(P_LOOPPOINT, (s32)start, dst);
-    if (U.mode == LOOP || (U.mode == NO_TAIL && U.loop_src))
-        pad_set(P_LOOP, 1, dst);
+    pad_set(P_LOOPPOINT, (s32)lp, dst);
     if (zero_cross)
         CALL4(F_PSET, PROJECT, 0xFB, zero_cross, NONE);
+    pad_settings(src, dst);
+    if (loops) {
+        pad_set(P_LOOP, 1, dst);
+        if (U.mode == NO_TAIL)
+            pad_set(P_TOP, pad_get(P_TOP, src), dst);
+    }
     U.r_start = start;
     U.r_end = end;
-    U.r_exact = (u32)pad_get(P_START, dst) == start && (u32)pad_get(P_END, dst) == end;
+    U.r_exact = (u32)pad_get(P_START, dst) == start && (u32)pad_get(P_END, dst) == end &&
+                (u32)pad_get(P_LOOPPOINT, dst) == lp;
     char name[48], *o = name;                        /* the run's numbers, for the hardware test */
-    *o++ = (char)('A' + U.src / 16);
-    o = put_uint(o, U.src % 16 + 1);
+    *o++ = (char)('A' + src / 16);
+    o = put_uint(o, src % 16 + 1);
     o = put_int(put(o, " L"), A.l);
     if (A.cached)
         *o++ = 'C';
@@ -734,12 +1053,59 @@ static u32 settle(void) {
     *o = 0;
     CALL3(F_PADNAME, SMPL, dst, name);
     V32(SMPL + 0x1C) = 1;
-    CALL3(F_POST, CMD_SAVE, 1, 0);
+    save_pads();
     return U.r_exact;
+}
+
+/* The exchange's fence landed: did the two pads swap their samples? */
+static void swap_done(void) {
+    u32 a = U.swap_a, b = U.swap_b;
+    target_set(1, -1);        /* the recorder target back to none */
+    if (!occupied(a) || !occupied(b) || pad_len(a) != U.want_len_a || pad_channels(a) != U.want_ch_a ||
+        pad_len(b) != U.want_len_b || pad_channels(b) != U.want_ch_b) {
+        forget(a);
+        forget(b);
+        finish(M_SWAP_FAILED);
+        return;
+    }
+    u32 msg;
+    if (U.swap_kind == T_REPLACE) {
+        pad_set(P_LINK, 0, b);              /* the original, parked: out of the link group */
+        pad_set(P_LINK, U.link_src, a);     /* the bounce takes its place */
+        remember(a, b, U.link_src);
+        msg = M_REPLACED;
+    } else {
+        u32 i = U.undo_slot;
+        pad_set(P_LINK, U.undo[i].link, a); /* the original's group back */
+        pad_set(P_LINK, 0, b);              /* the bounce stays beside it, unlinked */
+        U.undo[i].used = 0;
+        msg = M_UNDONE;
+    }
+    save_pads();
+    finish(msg);
 }
 
 static void tick(void) {
     u32 state = V8(REC_STATE), in_state = U.ms - U.since;
+    if (U.state >= U_STANDBY && U.state <= U_RUN) {     /* the run owns the recorder: nothing else may sound */
+        if (pattern_running()) {
+            abandon(M_PATTERN);
+            return;
+        }
+        if (looper_running()) {
+            abandon(M_LOOPER);
+            return;
+        }
+        if (get_setting(S_EXT_SOURCE)) {    /* switched on during the run (a MIDI note, the remote) */
+            set_setting(S_EXT_SOURCE, 0, 0);
+            U.saved_ext = 1;
+            U.ext_pin = 1;
+            if (U.state >= U_RECSTART) {
+                abandon(M_INPUT);
+                return;
+            }
+        }
+    }
     switch (U.state) {
     case U_SETUP:
         if (V16(PAGE_ID) != PAGE_RESAMPLE)
@@ -783,14 +1149,13 @@ static void tick(void) {
             enter(U_RUN);
         break;
     case U_RUN:
-        if (state != 2 || A.fail) {
+        if (A.fail == 1) {
             abandon(M_FAILED);
+        } else if (state != 2 || A.fail == 2) {
+            stock_stopped();
         } else if (A.phase == A_DONE) {
             post(CMD_ALL_SOUND_OFF);
-            if (U.loop_pin) {               /* the source's LOOP back before the project is saved */
-                pad_set(P_LOOP, (s32)U.loop_src, U.src);
-                U.loop_pin = 0;
-            }
+            restore_source();               /* the source's settings back before the project is saved */
             set_setting(0x59, 0, 0);
             post(CMD_STOP);
             s32 diff = off64(A.l_meas, A.l_est);
@@ -805,9 +1170,30 @@ static void tick(void) {
         if (state == 0 && target_pad() == NONE) {
             u32 ok = occupied(U.dst) && settle();
             U.runs++;
-            finish(ok ? M_DONE : M_FAILED);
+            if (ok && U.target == T_REPLACE)
+                begin_swap(T_REPLACE, U.src, U.dst);
+            else
+                finish(ok ? M_DONE : M_FAILED);
         } else if (in_state > WAIT_FINAL_MS) {
             finish(M_FAILED);
+        }
+        break;
+    case U_STOCKSTOP:                       /* the stock finalize ends by clearing the target pad */
+        if ((state == 0 && target_pad() == NONE) || in_state > WAIT_FINAL_MS) {
+            s32 err = (s32)V32(REC_ERR);
+            U.err = err;
+            U.partial = occupied(U.dst);
+            finish(err == ERR_WRITE || err == ERR_BUDGET || err == ERR_SPACE ? M_STORAGE : M_CUT);
+        }
+        break;
+    case U_SWAP:
+        if (target_pad() == U.fence) {
+            swap_done();
+        } else if (in_state > WAIT_SWAP_MS) {
+            target_set(1, -1);
+            forget(U.swap_a);
+            forget(U.swap_b);
+            finish(M_SWAP_FAILED);
         }
         break;
     case U_CANCEL:
@@ -833,10 +1219,33 @@ EXPORT void bnc_ui(u32 elapsed) {
             U.msg = M_NONE;
             show(DONE_MS);
         }
-    } else if (U.state != U_CANCEL && (U.refresh || U.ms - U.shown >= REFRESH_MS)) {
+    } else if (U.state != U_CANCEL && U.state != U_STOCKSTOP && (U.refresh || U.ms - U.shown >= REFRESH_MS)) {
         U.refresh = 0;
         progress_text();
         show(POPUP_MS);
+    }
+}
+
+/* The targets in the order the popup offers them. */
+static const u8 TARGET_ORDER[TARGETS] = {T_UNDO, T_PAD, T_REPLACE};
+
+static void step_target(s32 dir, u32 wrap) {
+    u32 at = 0;
+    while (TARGET_ORDER[at] != U.target)
+        at++;
+    for (u32 n = 0; n < TARGETS; n++) {
+        if (dir > 0 ? at + 1 >= TARGETS : at == 0) {
+            if (!wrap)
+                return;
+            at = dir > 0 ? 0 : TARGETS - 1;
+        } else {
+            at = dir > 0 ? at + 1 : at - 1;
+        }
+        if (U.targets & (1u << TARGET_ORDER[at])) {
+            U.target = TARGET_ORDER[at];
+            aim();
+            return;
+        }
     }
 }
 
@@ -846,9 +1255,9 @@ EXPORT s32 bnc_event(u32 page, const volatile s16 *ev) {
     if (U.state == U_IDLE) {
         if (type != EV_PAD || a1 < 0 || a1 >= 16 || V8(REC_STATE) != 0 || !key_held(KEY_RESAMPLE) ||
             key_held(KEY_SHIFT) || get_setting(0x36) != 1 || CALL1(F_MODAL, page) ||
-            CALL3(F_PGET, PROJECT, 0xBF, NONE) == 1 || CALL3(F_PGET, PROJECT, 0xDD, NONE) == 1)
+            project_get(0xBF, NONE) == 1 || project_get(0xDD, NONE) == 1)
             return CALL2(DOOM_FILTER, page, ev);
-        u32 src = (u32)CALL3(F_PGET, PROJECT, 0, NONE) * 16 + (u32)a1;
+        u32 src = (u32)project_get(0, NONE) * 16 + (u32)a1;
         if (src >= BANKS * 16 || !occupied(src))
             return CALL2(DOOM_FILTER, page, ev);        /* an empty pad: the stock destination pick */
         U.src = src;
@@ -856,12 +1265,20 @@ EXPORT s32 bnc_event(u32 page, const volatile s16 *ev) {
             U.msg = M_PATTERN;
         } else if (looper_running()) {
             U.msg = M_LOOPER;
-        } else if ((U.dst = find_empty(src)) == NONE) {
-            U.msg = M_NO_EMPTY;
         } else {
-            U.msg = M_NONE;
-            study(src);
-            enter(U_SETUP);
+            u32 undo = undo_for(src), dst = find_empty(src);
+            if (dst == NONE && undo == NONE) {
+                U.msg = M_NO_EMPTY;
+            } else {
+                U.msg = M_NONE;
+                study(src);
+                U.scratch = dst;
+                U.undo_slot = undo;
+                U.targets = (dst != NONE ? (1u << T_PAD) | (1u << T_REPLACE) : 0) | (undo != NONE ? 1u << T_UNDO : 0);
+                U.target = undo != NONE ? T_UNDO : U.last_target < T_UNDO ? U.last_target : T_PAD;
+                aim();
+                enter(U_SETUP);
+            }
         }
         return 1;
     }
@@ -873,20 +1290,30 @@ EXPORT s32 bnc_event(u32 page, const volatile s16 *ev) {
             else if (U.state < U_FINAL)
                 abandon(M_CANCELLED);
         } else if (a1 == KEY_REC && U.state == U_SETUP) {
-            start_run();
+            if (U.target == T_UNDO)
+                start_undo();
+            else
+                start_run();
+        } else if (a1 == KEY_VALUE && U.state == U_SETUP) {
+            step_target(1, 1);
+            U.refresh = 1;
         }
         return 1;
     }
     if (type == EV_ENCODER) {
         if (U.state == U_SETUP && a1 == 0 && a2) {
-            u32 m = U.mode;
-            for (;;) {
-                if (a2 > 0 ? m + 1 >= MODES : m == 0)
-                    break;
-                m = a2 > 0 ? m + 1 : m - 1;
-                if (U.modes & (1u << m)) {
-                    U.mode = m;
-                    break;
+            if (key_held(KEY_SHIFT)) {
+                step_target(a2 > 0 ? 1 : -1, 0);
+            } else if (U.target != T_UNDO) {
+                u32 m = U.mode;
+                for (;;) {
+                    if (a2 > 0 ? m + 1 >= MODES : m == 0)
+                        break;
+                    m = a2 > 0 ? m + 1 : m - 1;
+                    if (U.modes & (1u << m)) {
+                        U.mode = m;
+                        break;
+                    }
                 }
             }
             U.refresh = 1;
