@@ -114,7 +114,8 @@ STUBS = {
     # under them go to a card model keyed by path; the loader, the save, SMPL CHARGE TASK and voices are not here
     0x800DECD8: 'unlink', 0x800100D0: 'rename', 0x800DEC60: 'open',
     0x800CFB20: 'loadpad', 0x800CF218: 'savepads', 0x800D7478: 'nop', 0x800D8998: 'zero',
-    0x800D8A70: 'nop', 0x800D8960: 'nop', 0x80095BD0: 'nop', 0x800D8628: 'zero', 0x800D84F0: 'nop', 0x800D88C8: 'nop',
+    0x800D8A70: 'nop', 0x800D8960: 'nop', 0x80095BD0: 'nop', 0x800D8628: 'zero', 0x800D84F0: 'nop',
+    0x800D88C8: 'charged',          # a pad's mark cleared: its range charged (0x800d7508 clears it after the charge)
     # the looper's tasks (RTOS): locks, 10 ms waits, task creation and wake-ups; the recorder's MARK mode
     0x800DED08: 'nop', 0x800DECF8: 'nop', 0x408C: 'nop', 0x80097490: 'nop', 0xF38C: 'nop', 0x800C2638: 'nop',
     0x8001D938: 'nop',
@@ -286,6 +287,7 @@ class Machine:
         self.post_times = []
         self.mixer_calls = []
         self.finalized = []
+        self.charges = []                               # (pad, START, END, loop point) at each charge request
         self.saves = 0
         self.param_saves = 0
         self.ring = []
@@ -447,6 +449,11 @@ class Machine:
             value = self._load(r0)
         elif name == 'savepads':
             self.param_saves += 1
+        elif name == 'charged':                         # 0x800d88c8(pad): the mark cleared, the range now charged
+            if r0 < 161:
+                info = FILE_INFO + r0 * 36
+                self.charges.append((r0, self.r32(info + 0x18), self.r32(info + 0x1C), self.r32(info + 0x20)))
+                self.uc.mem_write(info + 0x14, b'\x00')
         self._ret(value)
 
     def _trigger(self, uc, address, size, _):
@@ -679,6 +686,11 @@ class Machine:
                 self.call(PADNAME, SMPL, d, TEXT)
                 base = SMPL + d * 0xAC
                 self.w32(base + 0xD4, self.r32(base + 0xD4) + 12)    # the stock zero-cross adjust moves START
+                rng = (self.r32(base + 0xD4), self.r32(base + 0xD8), self.r32(base + 0xD4))
+                info = FILE_INFO + d * 36
+                for k, v in enumerate(rng):                 # the finalize's end: 0x800d8b40(pad, START, END, START),
+                    self.w32(info + 0x18 + 4 * k, v)        # 0x800d6390, 0x800d7508: the take charged with its range
+                self.charges.append((d,) + rng)
             self.settings[0x59] = 0
             self.w32(TARGET_VALUES + 4, 0xFFFFFFFF)
 
@@ -875,11 +887,25 @@ def check_take(m, label, src_frames, L, mode, win, lp_frames=None):
           f'({m.pad_get(0x67, d)}..{m.pad_get(0x68, d)})')
     want_lp = start + (lp_frames or 0)
     check(m.pad_get(0x71, d) == want_lp, f'{label}: loop point = START + {lp_frames or 0} ({m.pad_get(0x71, d)})')
+    check_charge(m, label, d)
     window = take[L:L + win]
     check(len(window) == win, f'{label}: the take covers the window ({len(take)} frames)')
     if src_frames is not None:
         check(window == src_frames, f'{label}: dry, the window is the source\'s own frames')
     return window
+
+
+def check_charge(m, label, pad):
+    """Playback reads the pad's charge, made from its range when it was charged: the finalize charges the take with
+    its own range; the setters only store a new range and mark it; 0x800d7508 charges marked pads again. The
+    bounce's last charge must hold its final START, END and loop point."""
+    base = SMPL + pad * 0xAC
+    final = (m.r32(base + 0xD4), m.r32(base + 0xD8), m.r32(base + 0xFC))
+    info = FILE_INFO + pad * 36
+    charged = [c[1:] for c in m.charges if c[0] == pad]
+    check(charged and charged[-1] == final == (m.r32(info + 0x18), m.r32(info + 0x1C), m.r32(info + 0x20)),
+          f'{label}: the pad was last charged with its final START, END and loop point, so it plays START..END and '
+          f'loops at END (charged {charged[-1] if charged else None}, final {final})')
 
 
 def neutral_ok(m, pad):

@@ -113,6 +113,9 @@ typedef unsigned char u8;
 #define F_TRIGGER 0x800CDBD1u   /* pad note (global pad, velocity, 1) */
 #define F_MODAL 0x800CE421u     /* page modal state */
 #define F_POPUP 0x800D3FF1u     /* popup (text, ms) */
+#define F_RANGE_DIRTY 0x800D6391u /* mark a pad's range (its file information +0x18..+0x20) for a new charge (pad) */
+#define F_CHARGE_DIRTY 0x800D7509u /* charge every marked pad again from its range, as the finalize does (gSmplMgr) */
+#define SMPL_MGR 0x80591800u
 
 typedef s32 (*fn1_t)(u32);
 typedef s32 (*fn2_t)(u32, u32);
@@ -1060,6 +1063,13 @@ static u32 settle(void) {
         if (U.mode == NO_TAIL)
             pad_set(P_TOP, pad_get(P_TOP, src), dst);
     }
+    /* Playback reads the pad's charge (SMPL CHARGE's cache entry: the head of the file, the length to stream on,
+     * the loop's length), made from its range when it was charged. The setters only store the new range and mark it
+     * (0x800d8b40). The stock finalize charged the take with its own range before this window was set, so charge
+     * the pad again from the window, as the finalize itself ends (0x800d6390, 0x800d7508): else the bounce plays
+     * the take's length from its new START, L + 32 frames past END (in LOOP mode, into the next pass). */
+    CALL1(F_RANGE_DIRTY, dst);
+    CALL1(F_CHARGE_DIRTY, SMPL_MGR);
     U.r_start = start;
     U.r_end = end;
     U.r_exact = (u32)pad_get(P_START, dst) == start && (u32)pad_get(P_END, dst) == end &&

@@ -11,7 +11,36 @@ fix). It supersedes stage 2 (bounce-2-test1, which never ran on the unit) on the
 plus the pad-event dispatcher and, since bounce-3-test2, the RESAMPLE page's tick. Stage 1 is the
 bounce probe ([BOUNCE_PROBE.md](BOUNCE_PROBE.md)).
 
-**bounce-3-test2** follows the first hardware run of bounce-3-test1 (2026-10-19), which found three
+**bounce-3-test3** follows the hardware run of bounce-3-test2 (2026-10-19). A LOOP bounce played
+with LOOP off clicked at its end, because the end held a little of the loop's beginning.
+
+- **The bounce played on past its END.** Playback does not read START and END directly. It reads
+  the pad's charge: SMPL CHARGE's cache entry, charged by `0x800d84f0` from the pad's range at
+  that moment. The entry holds up to 80 KB from START, the rest of END − START to stream, and
+  END − the loop point as the loop's length. The stock setters only store a new range and mark
+  it (`0x800d8b40`); `0x800d7508` charges marked pads again. The stock finalize ends that way:
+  the take's range, the mark, the charge. test2 then set START, END and the loop point and
+  charged nothing. The bounce kept the take's charge and played the take's length from its new
+  START, which ends L + 32 frames past END. In LOOP mode those frames are the next pass's first
+  frames: a click with LOOP off, and with LOOP on every loop L + 32 frames too long, drifting
+  against the source. test3 marks the pad and charges it again (`0x800d6390`, `0x800d7508`)
+  after the window and the settings, as the finalize does.
+- **Evidence,** in the full-firmware emulator (dm-404), which runs the real voice, charge and
+  recorder code:
+  - A stock-recorded noise sample on A-1 sounds for END − START frames and loops at exactly
+    END − the loop point (correlation 1.0).
+  - Its LOOP bounce on test2, with L 8, sounds for END − START + 39 frames and loops 40 frames
+    too long (L + 32). Its range is marked and never charged (file information +0x14 = 1).
+    With L 74 the overrun was 106.
+  - On test3 the bounce sounds for END − START and loops at exactly END − the loop point, and the
+    mark is cleared.
+  - The Unicorn checks now record the pad's charge where the stock code makes it, and every
+    whole run checks that the bounce's last charge is its final window. On test2 all 14 fail.
+  - REPLACE and UNDO were not affected: the stock exchange reloads both pads, which charges them
+    afresh. A REPLACE in LOOP mode on test2 sounds for END − START and loops at END − the loop
+    point in dm-404.
+
+**bounce-3-test2** followed the first hardware run of bounce-3-test1 (2026-10-19), which found three
 bugs:
 
 - **After a TO PAD bounce the effects stopped and the SP jumped to bank A.** The RESAMPLE page's
@@ -343,7 +372,8 @@ count both and call `bnc_tx` after the mixer and `bnc_rx` after the feed.
 
 The file holds L frames of silence before START (plus the stock 384-frame pre-roll before that)
 and up to 32 frames after END; a take is never shorter than 1,000 frames (the stock pad loader's
-minimum). Only the window plays.
+minimum). Only the window plays: after setting it the run charges the pad from it, as the
+finalize does. test2 did not, and its bounce played into those frames.
 
 ## What changes
 
@@ -365,6 +395,8 @@ minimum). Only the window plays.
   0x17 start, 0x18 stop, 0x1a cancel, 5 and 0x2a sound off, 0xd save) and the exchange (0x40d),
   and writes the recorder target (`0x800d48e8`) for the destination and the exchange's fence.
 - It sets the destination as the stock pad handler does: settings 0x1a, recorder target 0/1/7.
+- After the stock finalize it sets the window and the settings through the stock pad setter, then
+  marks the pad and charges it again (`0x800d6390`, `0x800d7508`), as the finalize itself ends.
 - It pins and restores on every path: REC length (settings 0x24, to FREE), END Snap (0x59, off),
   EXT SOURCE (0x25, off), and on the source LOOP and PAD LINK. REC BPM (0x1b) is not touched (see
   above).
@@ -381,7 +413,7 @@ minimum). Only the window plays.
   module's state, so its zeros take no flash. APP1 stays below the kit PCM planning boundary
   (`0x60376000`). The builder checks that no row overlaps the slot and that nothing in the input
   refers to it.
-- **Guards:** every patched site is checked against its exact v9.46 contents. 99 spans the module
+- **Guards:** every patched site is checked against its exact v9.46 contents. 109 spans the module
   calls or relies on are checked byte for byte (SHA-256 in the builder), plus 21 jump-table
   entries. Stage 3 adds the pad-event dispatcher and its ring, the pad note and the note-on's PAD
   LINK loop, command 0x40d and the exchange with its file and parameter swaps, the whole pad getter
@@ -392,7 +424,9 @@ minimum). Only the window plays.
   TASK's commands, the looper's audio input and output. It also adds SMPL TASK's queue put, pop and
   loop, behind the REPLACE fence, and behind the tick bridge the RESAMPLE page's tick, its two
   vtable entries (the tick's only callers), its state handler and after-recording routine, the bus
-  effect off, the RESAMPLE exit and its restore. The jump-table entry
+  effect off, the RESAMPLE exit and its restore. bounce-3-test3 adds the pad's charge: the
+  finalize's end, the range setter, the mark and its clearing, `0x800d7508` and the charge entry
+  functions under it. The jump-table entry
   for settings get 0x1b (REC BPM) is gone with the module's REC BPM read. All are stock 5.52 bytes
   in v9.46 except the four marked v9.46 (the start fix and DOOM OS's filter).
 - **Branch scan:** no direct branch anywhere in the ITCM or SDRAM code lands inside a patched
@@ -412,12 +446,12 @@ python synth/build_bounce.py out/kits-v946-final/SP404MKII_APP1.bin out/bounce -
 python synth/test_bounce.py out/bounce
 ```
 
-bounce-3-test2 is APP1 `26f594db…11bf` (3,103,856 bytes). It comes out the same on the published
+bounce-3-test3 is APP1 `8995fd25…8927` (3,103,888 bytes). It comes out the same on the published
 v9.46 (`7b5fbcb4…684a`) and on a clean rebuild of every stage from stock 5.52 (v9.5 `d0919e40…`,
 v9.6 `1b2d50e0…`, kits `88384c3c…`, start fix `7b5fbcb4…684a`), and two builds are byte-identical.
-(bounce-3-test1 was `59e061cf…221d`, 3,103,744 bytes. Two earlier test2 builds were never handed
-over: `571589da…20aa`, before the third bug was known, and `9e438a84…0373`, the first fix, which
-skipped only the after-recording routine.)
+(bounce-3-test2 was `26f594db…11bf`, 3,103,856 bytes; bounce-3-test1 `59e061cf…221d`, 3,103,744
+bytes. Two earlier test2 builds were never handed over: `571589da…20aa`, before the third bug was
+known, and `9e438a84…0373`, the first fix, which skipped only the after-recording routine.)
 
 ## Checks (emulator)
 
@@ -451,8 +485,11 @@ for real:
 Modelled:
 
 - SMPL TASK's recorder commands, at the dispatcher's entry: standby, REC_START, the finalize
-  (with a stock-like snap of START), cancel, sound off; a busy task (the queue's pop holds the
-  exchange);
+  (with a stock-like snap of START, ending with the take charged with its range), cancel, sound
+  off; a busy task (the queue's pop holds the exchange);
+- the pad's charge, recorded where the stock code makes it: in the finalize, and where
+  `0x800d7508` clears a pad's mark (the real `0x800d7508`, range setter and mark run; the cache
+  entry and its card reads do not);
 - the pad-event ring (a note-on there starts the source's voice); the card under the file swap,
   at its file calls (unlink, rename (FatFs: not onto an existing name), open), keyed by path; the
   pad loader and the parameter save; a failed rename;
@@ -468,7 +505,7 @@ Modelled:
   system parameter stores;
 - the screen: drawing returns at once.
 
-The checks (467 cases):
+The checks (491 cases):
 
 - **Static:** only the header, the six sites and the appended tail differ from v9.46. The
   scatter table is v9.46's rows plus a copy row and a zero-fill row; APP1 ends below the PCM
@@ -509,7 +546,8 @@ The checks (467 cases):
   one-shot), TAIL (an echo, a looped pad, never quiet), LOOP (a loop point, a one-shot), L ±, D −1
   / 0 / +1, the boot's calibration, bank B, the popups, a tail still ringing at REC, END Snap; the
   commands posted, the settings pinned and restored, the stock gate never running, the name and
-  the save.
+  the save; the bounce's last charge is its final START, END and loop point (on test2 each of these
+  fails: the last charge was the take's).
 - **The bounced pad's settings,** read back through the stock getter: performance settings
   copied, printed ones neutral, VINYL MODE with and without TEMPO SYNC, the poly bit under GATE,
   LOOP, loop point and the 0x72 flag per mode, PAD LINK; the source untouched.
@@ -575,6 +613,8 @@ Not checked by the emulator, which is what the hardware test is for:
 - the looper's real timing and its level trigger on the unit's input;
 - that input volume 0 silences every input path the effects chip mixes;
 - the stock finalize and exchange themselves on the card, the project reload;
+- the charge's card reads and the voice reading the charge (dm-404 runs them: there test3's LOOP
+  bounce sounds for END − START and loops at END − the loop point, test2's for L + 32 more);
 - MIDI from a real port, the screen, popups' lengths and LEDs;
 - which of the page tick's two vtable entries the page's draw calls, and how often (the emulator
   runs the tick every 16 ms through both);

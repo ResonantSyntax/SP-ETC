@@ -51,7 +51,7 @@ HERE = Path(__file__).resolve().parent
 FLASH, COPY, ZERO = 0x60080000, 0x600800E4, 0x60080100   # scatter rows: copy, zero fill
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
 PUBLISHED_V946 = '7b5fbcb4c3ce1e8782fef4b5803be74c7d14eddf25a1b53682abe00c9ed3684a'
-REVISION = 'bounce-3-test2'
+REVISION = 'bounce-3-test3'
 SLOT = 0x5000                       # reserved: [base, base + SLOT)
 SLOT_CEILING = 0x83FED000           # the CPU meter test build's slot, then the start fix at 0x83FEF000
 BRIDGES = {'tx': 0x00, 'rx': 0x30, 'ui': 0x80, 'gate': 0xC0, 'tick': 0x100}
@@ -292,6 +292,32 @@ GUARDS = [
      'RESAMPLE page vtable +0xcc: tick(page, 1)'),
     (0x80223538, 0x80223540, '167ae5e09de5a73e3df3c6d1e1408691c36ef7b2ad8f820aa7810bb880929c04',
      'RESAMPLE page vtable +0xcc, +0xd0 = 0x8012d4e9, 0x8012ce69: the tick\'s only callers'),
+    # bounce-3-test3: the pad's charge, which playback reads, made again from the window as the finalize ends
+    (0x8017F4C0, 0x8017F51A, '364d13603e31ace4bf1c59261ee340d8a3a06ea8c6ed9067f1b18e5a472d8d87',
+     'the finalize\'s end: new-sample defaults (0x800cfa68), name, 0x800d8b40(pad, START, END, START), '
+     '0x800d6390(pad), 0x800d7508(gSmplMgr): the take is charged with its own range'),
+    (0x800D8B40, 0x800D8B90, '6a19622302007bfd61a6ccf78912c48c3c155bf255b5121af6b2422ef62c79ae',
+     'the range setter (pad, start, end, loop point): file information +0x18/+0x1c/+0x20, the marked byte +0x14 '
+     "when one changes (the pad setter's START, END, loop point and PLAY cases, the finalize, the zero-cross "
+     'adjust 0x80017200 and SMPL TASK call it); it charges nothing'),
+    (0x800D6390, 0x800D63A6, '8620bbd299ece9fc618c5bff32a6c8d82dec76e2a329b42c015b48d3a3b737a2',
+     'mark a pad\'s range for a new charge: file information +0x14 = 1'),
+    (0x800D7508, 0x800D7562, '51de26ad13216de84918ef89d2bf8fbecb43012bae1c75907399906f21b49e21',
+     'charge every marked pad again: for each marked pad with a charge entry (0x800d8998), the entry freed '
+     '(0x800d8a70), a new one (0x800d8628) charged (0x800d84f0(entry, 1)); then the mark cleared (0x800d88c8)'),
+    (0x800D88B0, 0x800D88C4, '0a2ad26112b20015199847784a791c676afc923ea81f026442584494977f97e8',
+     'the mark: file information +0x14'),
+    (0x800D88C8, 0x800D88DE, 'bc286ed37811f5dddc5a156cbf4ced706437047243fbe5a5c02ac753e0d30bbf',
+     'the mark cleared'),
+    (0x800D8998, 0x800D8A6E, '9f93d86df0b0f3e56f11f6f2153a1445ca416215255b44c65dc9a6124c10055e',
+     'the pad\'s charge entry (161 of 0x68 bytes at 0x80b08cb8), if any'),
+    (0x800D8A70, 0x800D8A7C, '781d4929f92b424a51985f40c162e0947014411b3ad6c5c5ff77663a78641bff',
+     'a charge entry freed'),
+    (0x800D8628, 0x800D88AC, '508cb41b4de538055a8b5d441739f59708ac318833988f1924f503f145700cd6',
+     'the pad\'s charge entry, or a free one with its 80 KB buffers'),
+    (0x800D84F0, 0x800D8628, 'ae1cc6f81ab9b9f7c17629d6e204642627bef76b03ad1a429504e27bd224385c',
+     'charge an entry not yet charged from the pad\'s range: up to 80 KB from START, the rest of END - START to '
+     'stream, the loop point and END - loop point; an entry already charged is left as it is'),
     (0x8012CBB0, 0x8012CCBA, '80436add6ca79917021f3d14659c5d782cdc8cd26b77404f7fe0720b01b07ce1',
      'after-recording routine: the recorder idle (0x82e0e755 = 0) after a tick that saw state 2, +0x1aa0 clear -> '
      'BUS 1/2 effects off (0x800bb140), [0x805925b4] = the stock pad handler\'s destination bank [0x80245a48] '
@@ -540,8 +566,12 @@ def build(inp: Path, out: Path, zig: Path, base: int):
         parent_app1=str(inp), parent_sha256=parent_sha, parent_is_published_v946=parent_sha == PUBLISHED_V946,
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
         if parent_manifest.exists() else None,
-        replaces='bounce-3-test1 (its five sites, plus the RESAMPLE page tick site)',
-        changes=['the looper refuses or ends a bounce only while it plays, records, overdubs or waits for a '
+        replaces='bounce-3-test2 (the same six sites)',
+        changes=["the bounced pad is charged again from its window after its settings, as the stock finalize ends "
+                 "(0x800d6390, 0x800d7508): bounce-3-test2 kept the take's charge, so it played the take's length from "
+                 "its new START, L + 32 frames past END (in LOOP mode the next pass's beginning, a click with LOOP off, "
+                 "each loop L + 32 frames long)"],
+        changes_test2=['the looper refuses or ends a bounce only while it plays, records, overdubs or waits for a '
                  'level (phase +0x101), no longer whenever MARK Function = LOOPER (+0x39 = enabled)',
                  "the RESAMPLE page's tick (0x8012db58) no longer sees a bounce's standby, take or cancel: after a "
                  "take its after-recording routine (0x8012cbb0) switched the BUS 1/2 effects off, made the stock "
