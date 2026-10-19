@@ -7,11 +7,49 @@ frame. **TO PAD** puts the result on the first empty pad and leaves the original
 swaps them back.
 
 This is a test build on the published Sound Generator + Kits v9.46 (kits plus the RESAMPLE start
-fix). It supersedes stage 2 (bounce-2-test1, which never ran on the unit) on the same sites, plus
-one more. Stage 1 is the bounce probe ([BOUNCE_PROBE.md](BOUNCE_PROBE.md)).
+fix). It supersedes stage 2 (bounce-2-test1, which never ran on the unit) on the same four sites,
+plus the pad-event dispatcher and, since bounce-3-test2, the RESAMPLE page's tick. Stage 1 is the
+bounce probe ([BOUNCE_PROBE.md](BOUNCE_PROBE.md)).
 
-**bounce-3-test2** follows the first hardware run of bounce-3-test1 (2026-10-19):
+**bounce-3-test2** follows the first hardware run of bounce-3-test1 (2026-10-19), which found three
+bugs:
 
+- **After a TO PAD bounce the effects stopped and the SP jumped to bank A.** The RESAMPLE page's
+  tick (`0x8012db58`, run by the page on every screen refresh) compares the recorder's state with
+  the state it saw last time (page `+0x1a90`). When it changes, the tick runs the page's state
+  handler (`0x8012dcb0`) and then its after-recording routine (`0x8012cbb0`). When the recorder
+  goes idle after a take, the routine finishes a stock RESAMPLE. It switches the BUS 1 and BUS 2
+  effects off (`0x800bb140`, system parameter 0x276) so the new pad does not play through them a
+  second time, and makes the stock pad handler's destination current. Then it waits 300 ms and
+  leaves RESAMPLE for the main screen (`0x8012d438`). A bounce records with the stock recorder on
+  the RESAMPLE page, so the routine ran after every bounce. A bounce never goes through the stock
+  pad handler, so that destination was stale. It is −1 until a stock RESAMPLE picks a pad, and
+  the RESAMPLE exit's restore (`0x80134990`) turns −1 into bank A. The state handler did more for a
+  bounce: after a standby that ended without a take (EXIT in the silence wait) it switched END Snap
+  off, and after any take or standby it stopped every sound and the looper (`0x800dd030`: ALL
+  SOUND OFF and LOOPER TASK command 9, the looper's stop `0x8001f820`) and changed the RESAMPLE
+  screen's state (settings 0x32).
+
+  test2 adds a sixth site at the start of the tick. From REC until the first tick after the run
+  with the recorder idle, the tick bridge gives the page the recorder's current state as the state
+  it saw last time. The tick then sees no change from a bounce's standby, take or cancel, and runs
+  neither the handler nor the routine for it. A stock RESAMPLE still ends as stock. A first fix
+  only skipped the routine while the bounce owned the recorder. That was not enough. On EXIT during
+  a take the module lets go of the recorder within a millisecond, and the next tick, up to 16 ms
+  later, still saw the take end. In the emulator, with the image's own global objects built and the
+  page tick running every 16 ms, test1 ends a bounce of C-1 in bank C with BUS 1/2 off, RESAMPLE left
+  and bank A current, as on the unit. The first fix still did that on EXIT during the take, and
+  turned END Snap off on EXIT in the silence wait. test2 changes none of them on any path checked.
+  (The checks of test1 missed it: until test2 they did not run the page tick during a take.)
+- **REC BPM is no longer touched.** test1 set REC BPM (settings 0x1b) to the bank's stored tempo
+  for the run and set it back afterwards. REC BPM is the SP's tempo: the stock tempo setter
+  (`0x80019820`) writes it, and its own setter retunes the sequencer and the effects chip (system
+  parameter 0x275). When the stored tempo differed from the playing tempo, the take ran at the
+  stored one, and a tempo message went to the chip each way. Either way the run left two stock
+  flags set: `0x80592360`, which the stock RESAMPLE pad handler checks before it takes REC BPM from
+  the bank for a bar-length take, and `0x833b80f8`. A stock RESAMPLE with REC length FREE does not
+  set REC BPM. test2 leaves it alone, so the bounce renders at the tempo you hear, and ORIGINAL BPM
+  is still that tempo.
 - **MARK Function = LOOPER refused every bounce** (`STOP LOOPER FIRST` with the looper stopped).
   The module read `0x82e0b71c + 0x39`, which is the looper's *enable* flag: the MARK Function
   setter (system parameter 0x141 = 2) sets it through `0x8001c1a8` whether anything plays or not.
@@ -25,9 +63,15 @@ one more. Stage 1 is the bounce probe ([BOUNCE_PROBE.md](BOUNCE_PROBE.md)).
   so after EXIT or a refusal the next gesture came back on TO PAD. In test2 the target and the
   mode are kept as soon as they are picked. Check the popup's first line before pressing REC.
 - The timing matched: L = M on every take, P 65 on that boot.
+- The pad name's edited flag is left to the stock name function, which sets the byte at
+  `SMPL + 0x1c` itself. test1 also wrote it as a 32-bit word, over the three bytes after it.
 
-Emulator-checked only otherwise; the hardware test is
-`analysis/kit_pr1_audit/release/bounce-3-test2/HARDWARE_TEST.md`.
+test2 also runs a whole-state audit in the emulator ([Checks](#checks-emulator)). A bounce runs
+on the image's own global objects. Every write, every page request, every bank or pad change and
+every byte to the effects chip is logged. Every parameter is read before and after, and the
+objects are diffed byte for byte. Each difference has to be on an allowlist with a reason, and a
+stock RESAMPLE of the same pad runs alongside for comparison. Emulator-checked only otherwise; the
+hardware test is `analysis/kit_pr1_audit/release/bounce-3-test2/HARDWARE_TEST.md`.
 
 Background: the bounce-in-place study, `analysis/bounce_in_place/REPORT.md` (§2–§4, §7, §9),
 outside this repository.
@@ -173,7 +217,8 @@ effects (BUS 3/4), before the output volume. Only the pad itself sounds:
 ### The bounced pad's settings
 
 The stock finalize gives the new pad the same settings as any new resample (`0x800cfa68`), and
-ORIGINAL BPM as any resample sets it (REC BPM, which the run sets to the source bank's tempo).
+ORIGINAL BPM as any resample sets it: REC BPM, which is the SP's tempo during the run (the run
+leaves it alone).
 Then the run sets the exact window and the settings below, through the stock pad setter, and
 saves. Each parameter's meaning was read in the stock code first: the setter's conversion
 (`0x8001a570`) for ranges and units, the per-voice update (`0x800a2c98`) and the renderer for what
@@ -309,17 +354,25 @@ minimum). Only the window plays.
 | `0x8006b950` | popup tick (UI task, every 1 ms), first four instructions | jump to the ui bridge: `bnc_ui`, the four instructions, back to `0x8006b95c` |
 | `0x800bef10` | pad-event dispatcher: `ldrb r1, [r0]; cmp r1, #0xa0; bhi 0x800bef1c; b.w 0x80018590` | jump to the gate bridge: `bnc_gate(event)`; 0 returns to the caller (the event is dropped), else the four instructions |
 | `0x80223474` | RESAMPLE page vtable +8 (the page's event filter) = DOOM OS's `0x6031c8f9` | `bnc_event`, which hands every event it does not take to DOOM OS's filter |
+| `0x8012db58` | the RESAMPLE page's tick (vtable +0xcc and +0xd0): `push {r4-r7, lr}; sub sp, #4; mov r6, r1; mov r5, r0; bl 0x800ce420` | jump to the tick bridge: the push and frame, `bnc_tick(page)`, the moves and the modal test, on to `0x8012db64` (new in test2) |
 
 - The audio bridges use no stack, so the mixer and the feed run at their stock depth. The gate
-  bridge pushes two words around one call; idle, it adds 20 instructions to a pad event.
+  bridge pushes two words around one call; idle, it adds 20 instructions to a pad event. The tick
+  bridge keeps the tick's stack frame and pushes two words around one call; it adds about 20
+  instructions to each page tick (once per screen refresh).
 - The run itself goes in the popup tick, from the UI task, the same context as the stock
   RESAMPLE page's handlers. It posts the stock recorder commands (`0x800e25c0`: 0x14 standby,
   0x17 start, 0x18 stop, 0x1a cancel, 5 and 0x2a sound off, 0xd save) and the exchange (0x40d),
   and writes the recorder target (`0x800d48e8`) for the destination and the exchange's fence.
 - It sets the destination as the stock pad handler does: settings 0x1a, recorder target 0/1/7.
 - It pins and restores on every path: REC length (settings 0x24, to FREE), END Snap (0x59, off),
-  REC BPM (0x1b, the source bank's tempo), EXT SOURCE (0x25, off), and on the source LOOP and
-  PAD LINK.
+  EXT SOURCE (0x25, off), and on the source LOOP and PAD LINK. REC BPM (0x1b) is not touched (see
+  above).
+- From REC until the first page tick after the run with the recorder idle, `bnc_tick` writes the
+  recorder's state into the RESAMPLE page's last-seen state (`+0x1a90`) before the tick reads it. The
+  tick's state handler and after-recording routine therefore never run for a bounce, and the end of
+  a bounce's take or cancel leaves the bus effects, the current bank and pad, the RESAMPLE mode and
+  screen, END Snap and the page as they were. At any other time the tick runs exactly as in v9.46.
 - It triggers the source through the stock pad note (`0x800cdbd0`, velocity 127, mode 1); the gate
   lets that one note through by its pad, whatever velocity FIXED VELOCITY gives it.
 - **Memory:** the bridges and the module (`bounce.c`, Zig 0.13.0 `-Os`) go in a 20 KB slot at
@@ -328,8 +381,8 @@ minimum). Only the window plays.
   module's state, so its zeros take no flash. APP1 stays below the kit PCM planning boundary
   (`0x60376000`). The builder checks that no row overlaps the slot and that nothing in the input
   refers to it.
-- **Guards:** every patched site is checked against its exact v9.46 contents. 90 spans the module
-  calls or relies on are checked byte for byte (SHA-256 in the builder), plus 22 jump-table
+- **Guards:** every patched site is checked against its exact v9.46 contents. 99 spans the module
+  calls or relies on are checked byte for byte (SHA-256 in the builder), plus 21 jump-table
   entries. Stage 3 adds the pad-event dispatcher and its ring, the pad note and the note-on's PAD
   LINK loop, command 0x40d and the exchange with its file and parameter swaps, the whole pad getter
   and setter with its conversions and protect test, the new-sample defaults, the envelope page, the
@@ -337,8 +390,11 @@ minimum). Only the window plays.
   the EXT SOURCE setter case with the input volume. bounce-3-test2 adds the looper: the MARK
   Function setter case and its jump-table entry, enable, disable and the disable's stop, the LOOPER
   TASK's commands, the looper's audio input and output. It also adds SMPL TASK's queue put, pop and
-  loop, behind the REPLACE fence. All are stock 5.52 bytes in v9.46 except the four marked v9.46
-  (the start fix and DOOM OS's filter).
+  loop, behind the REPLACE fence, and behind the tick bridge the RESAMPLE page's tick, its two
+  vtable entries (the tick's only callers), its state handler and after-recording routine, the bus
+  effect off, the RESAMPLE exit and its restore. The jump-table entry
+  for settings get 0x1b (REC BPM) is gone with the module's REC BPM read. All are stock 5.52 bytes
+  in v9.46 except the four marked v9.46 (the start fix and DOOM OS's filter).
 - **Branch scan:** no direct branch anywhere in the ITCM or SDRAM code lands inside a patched
   span.
 - **Cost (emulator):** about 50 instructions per TX+RX block pair when idle; up to about 2,600
@@ -356,10 +412,12 @@ python synth/build_bounce.py out/kits-v946-final/SP404MKII_APP1.bin out/bounce -
 python synth/test_bounce.py out/bounce
 ```
 
-bounce-3-test2 is APP1 `571589da…20aa` (3,103,808 bytes). It comes out the same on the published
+bounce-3-test2 is APP1 `26f594db…11bf` (3,103,856 bytes). It comes out the same on the published
 v9.46 (`7b5fbcb4…684a`) and on a clean rebuild of every stage from stock 5.52 (v9.5 `d0919e40…`,
 v9.6 `1b2d50e0…`, kits `88384c3c…`, start fix `7b5fbcb4…684a`), and two builds are byte-identical.
-(bounce-3-test1 was `59e061cf…221d`, 3,103,744 bytes.)
+(bounce-3-test1 was `59e061cf…221d`, 3,103,744 bytes. Two earlier test2 builds were never handed
+over: `571589da…20aa`, before the third bug was known, and `9e438a84…0373`, the first fix, which
+skipped only the after-recording routine.)
 
 ## Checks (emulator)
 
@@ -379,7 +437,16 @@ for real:
   that drive keys, the encoder and pads through it;
 - the looper: the MARK Function setter, the looper's boot init, the LOOPER TASK's commands, its
   level-trigger option and its audio input;
-- the popup function and the page's vtable.
+- the popup function and the page's vtable;
+- in the tick bridge checks and the whole-state audit, the image's own global objects: the boot's
+  70 static constructors run (the RTOS pool under them as a bump allocator, object creation as an
+  id, critical sections as nothing); the settings, project, system, sequencer and pad setters and
+  getters; DOOM OS's page filter; the RESAMPLE page object, made by its registry handler as on page
+  entry; the UI task's 1 ms tick (`0x8003c5f0`, with the stock popup tick behind the module's
+  bridge) and its event queue, drained through the stock dispatcher; the RESAMPLE page's tick every
+  16 ms through its two vtable entries, with its state handler, its after-recording routine, the
+  bus effect off, the RESAMPLE exit and the restore; SMPL TASK's queue loop. The effects chip's
+  UARTs (LPUART1–8) are logged byte by byte.
 
 Modelled:
 
@@ -397,11 +464,13 @@ Modelled:
 - the effects chip: RX = the record mix L frames later, optionally with gain, an echo, noise, or
   music on the input while EXT SOURCE is on;
 - the eDMA positions (reads jitter by one frame), the recorder engine's writer (it keeps the
-  take, and can fill its ring), and the settings, project and system parameter stores.
+  take, and can fill its ring), and, outside the real-object checks, the settings, project and
+  system parameter stores;
+- the screen: drawing returns at once.
 
-The checks (412 cases):
+The checks (467 cases):
 
-- **Static:** only the header, the five sites and the appended tail differ from v9.46. The
+- **Static:** only the header, the six sites and the appended tail differ from v9.46. The
   scatter table is v9.46's rows plus a copy row and a zero-fill row; APP1 ends below the PCM
   planning boundary; every guard holds.
 - **Bridges, against the parent's own instructions:** the mixer's arguments and stack depth; the
@@ -462,6 +531,37 @@ The checks (412 cases):
   stock recorder ending the take itself (the card full, a full ring, no space; TO PAD and
   REPLACE; with and without a partial take), including a ring that fills on the take's last
   frames.
+- **The tick bridge, on the real global objects, against the parent:** a take has just ended (the
+  page's last tick saw state 2, the recorder idle). On the parent, and with no bounce, the page's
+  next tick runs the stock routine: BUS 1/2 off, the stock pad handler's destination current,
+  RESAMPLE left, with the same writes on both. With a bounce holding the page, the tick does
+  nothing: effects on, bank C, RESAMPLE mode, END Snap on, no state handler, no page request,
+  nothing to the chip. That holds while the bounce owns the recorder, once its run is over with the
+  recorder idle, and once its run is over with its cancel not yet taken. The page is let go on the
+  first tick with the run over and the recorder idle.
+- **The whole-state audit, on the real global objects:** TO PAD, REPLACE, EXIT during the take and
+  EXIT in the silence wait, every key through the UI task's dispatcher. Each starts in bank C with
+  BUS 1 and BUS 2 effects on and END Snap on. The page's tick runs every 16 ms through both its
+  vtable entries, and is seen to run in standby and while recording. Logged: every settings,
+  project, system, pad and sequencer write, every page request, every bank or pad change and every
+  byte to the effects chip's UARTs. Every settings, project and system parameter and every pad
+  parameter is read through the stock getters before and after. The global objects
+  (`0x82df0000`–`0x82e50000`, `0x80590000`–`0x805a0000`, `0x80240000`–`0x80250000`,
+  `0x833b8000`–`0x833b9000`) are diffed byte for byte. Nothing goes to the effects chip. BUS 1/2
+  keep their effects, and bank C, the RESAMPLE mode and page, END Snap and the screen state stay.
+  Every write and every changed parameter or byte must be on an allowlist with its reason:
+  - the run's pads: the destination; with REPLACE also the source, and the current pad's views of
+    it, since the source is the current pad;
+  - the edited and change flags that the stock name function and pad setter raise;
+  - project 0xef and 0x98 (the source played through the stock pad note);
+  - recorder target 0, the queues' indices, the input meter, the key records, the popup and the
+    panel refresh flags.
+
+  A stock RESAMPLE of the same pad, through the stock page handlers, ends with BUS 1/2 off, the
+  new pad current and RESAMPLE left, on a fresh boot and right after the TO PAD bounce. The audit fails on bounce-3-test1 as the unit did: BUS 1/2
+  off, bank A, RESAMPLE left, REC BPM written and two flags left set. It also fails on the first
+  fix, which skipped only the routine: EXIT during the take ends the same way, and EXIT in the
+  silence wait turns END Snap off.
 - **Cost:** instructions in the module per block pair, idle and bouncing, and per pad event.
 
 On the final image every kit suite passes (the kits manifest pointed at this APP1), and the start
@@ -476,4 +576,8 @@ Not checked by the emulator, which is what the hardware test is for:
 - that input volume 0 silences every input path the effects chip mixes;
 - the stock finalize and exchange themselves on the card, the project reload;
 - MIDI from a real port, the screen, popups' lengths and LEDs;
+- which of the page tick's two vtable entries the page's draw calls, and how often (the emulator
+  runs the tick every 16 ms through both);
+- the stock finalize's own writes (ORIGINAL BPM = REC BPM is read in its code; the emulator models
+  the finalize);
 - CPU headroom on the unit.

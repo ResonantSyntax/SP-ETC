@@ -9,10 +9,11 @@
  * the next setup as soon as they are picked.
  *
  * The run (UI task, from the popup tick, bnc_ui):
- *   1. pin REC length (settings 0x24) to FREE and END Snap (0x59) off, set REC BPM and the destination
- *      as the stock pad handler does, switch EXT SOURCE (0x25) off (the stock setter sends input
- *      volume 0 to the effects chip), take the source out of its PAD LINK group, post ALL SOUND OFF and
- *      SEQ SOUND OFF, post standby (0x14);
+ *   1. pin REC length (settings 0x24) to FREE and END Snap (0x59) off, set the destination as the stock
+ *      pad handler does, switch EXT SOURCE (0x25) off (the stock setter sends input volume 0 to the
+ *      effects chip), take the source out of its PAD LINK group, post ALL SOUND OFF and SEQ SOUND OFF,
+ *      post standby (0x14). REC BPM (0x1b) is left alone: with REC length FREE it does not shape the take,
+ *      and its setter retunes the sequencer and the effects chip (system parameter 0x275);
  *   2. own the take: from then on the RX bridge clears the feed's enable word (0x805917c4) before
  *      each feed call, so the stock recorder gate never runs and only this module writes the take
  *      (every stock standby sets the word back to 1); the pad-event gate (0x800bef10) drops every pad
@@ -35,6 +36,13 @@
  *      target write as a fence (the same command ring, FIFO); when the fence lands, check that the two
  *      pads swapped their samples, move PAD LINK from the parked original to the bounce, save, and
  *      remember the pair for UNDO (RAM only). UNDO is the same exchange again.
+ *
+ * The RESAMPLE page never sees a run: from REC until the first page tick with the run over and the recorder
+ * idle, the tick bridge (0x8012db58, bnc_tick) gives the page the recorder's state as the state its tick last
+ * saw. The tick acts only on a change of that state, and for a stock RESAMPLE its actions end the recording:
+ * the state handler (0x8012dcb0: RECORDING popup, END Snap off after a standby, every sound and the looper
+ * stopped, the screen state) and the after-recording routine (0x8012cbb0: BUS 1/2 effects off, the stock pad
+ * handler's destination made current, RESAMPLE left for the main screen). None of that is for a bounce.
  *
  * Windows, RX frames from F0: NO TAIL [L, L + one pass), LOOP [L, L + loop pass) with F0 one pass
  * after T0, TAIL [L, last frame above -72 dBFS], ended once the voice has stopped and 250 ms are
@@ -82,7 +90,8 @@ typedef unsigned char u8;
 #define LOOPER_PHASE (LOOPER + 0x101u)                  /* what it does: see looper_running() */
 #define LOOPER_GO (LOOPER + 0x102u)                     /* stopped: an overdub starts on the next audio block */
 #define PAGE_ID 0x80245880u
-#define KEY_BITS 0x80592448u                            /* key held: bit (key & 7) of [KEY_BITS + key / 8] */
+#define PAGE_LAST_STATE 0x1A90u                         /* RESAMPLE page object: the recorder state at its last tick */
+#define KEY_BITS 0x80592448u                           /* key held: bit (key & 7) of [KEY_BITS + key / 8] */
 #define POPUP_TIMER 0x805922B4u
 #define TX3_SADDR 0x400E9060u
 #define RX_DADDR 0x400E9090u
@@ -253,7 +262,7 @@ struct ui {
     u32 loop_src, loop_pin;     /* the source's LOOP, and whether the run changed it */
     u32 len1, len2;             /* frames: one pass, a loop pass (from the loop point) */
     u32 native;
-    s32 saved_len, saved_snap, saved_bpm;
+    s32 saved_len, saved_snap;
     u32 pinned;
     u32 msg;                    /* a popup to show when idle */
     u32 waits;                  /* a recorder command is pending (cancel) */
@@ -284,6 +293,7 @@ struct ui {
 
 EXPORT volatile struct aud bnc_aud;
 EXPORT volatile u32 bnc_own;    /* the recorder is this module's: the RX bridge clears the feed enable first */
+EXPORT volatile u32 bnc_page;   /* the RESAMPLE page's tick is not to see the recorder's states (bnc_tick) */
 EXPORT volatile u32 bnc_expect; /* the run's own trigger is on its way through the pad-event gate */
 EXPORT volatile struct ui bnc_ui_state;
 EXPORT char bnc_text[64];
@@ -842,7 +852,6 @@ static void finish(u32 msg) {
     if (U.pinned) {
         set_setting(0x24, U.saved_len, 0);
         set_setting(0x59, U.saved_snap, 0);
-        set_setting(0x1B, U.saved_bpm, -1);
         set_setting(0x1A, -1, 0);
         U.pinned = 0;
     }
@@ -920,11 +929,9 @@ static void start_run(void) {
     U.last_target = U.target;
     U.saved_len = get_setting(0x24);
     U.saved_snap = get_setting(0x59);
-    U.saved_bpm = get_setting(0x1B);
     U.pinned = 1;
     set_setting(0x24, 6, 0);                                     /* REC length FREE: no bar limit */
     set_setting(0x59, 0, 0);                                     /* END Snap off */
-    set_setting(0x1B, project_get(0x21 + U.src / 16, NONE), -1);   /* REC BPM: the bank's */
     set_setting(0x1A, (s32)U.dst, 0);
     target_set(7, 0);
     target_set(1, U.dst % 16);
@@ -945,6 +952,7 @@ static void start_run(void) {
     }
     A.phase = A_IDLE;
     bnc_own = 1;                            /* from here on only this module writes the take */
+    bnc_page = 1;                           /* and the RESAMPLE page's tick sees none of the run */
     post(CMD_ALL_SOUND_OFF);
     post(CMD_SEQ_SOUND_OFF);
     post(CMD_STANDBY);
@@ -1068,8 +1076,7 @@ static u32 settle(void) {
     o = put_uint(o, (((u32)A.p16 & 15) * 10 + 8) >> 4);
     o = put_int(put(o, " D"), A.d);
     *o = 0;
-    CALL3(F_PADNAME, SMPL, dst, name);
-    V32(SMPL + 0x1C) = 1;
+    CALL3(F_PADNAME, SMPL, dst, name);      /* it marks the pads edited (the byte at SMPL + 0x1c) itself */
     save_pads();
     return U.r_exact;
 }
@@ -1220,6 +1227,19 @@ static void tick(void) {
     default:
         break;
     }
+}
+
+/* The RESAMPLE page's tick (0x8012db58, from the page; the page object in r0), before it reads the recorder:
+ * while the run holds the page, the state the tick last saw (page + 0x1a90) is the recorder's own, so the tick
+ * finds no change and neither its state handler nor its after-recording routine runs for the run. The page is
+ * let go on the first tick with the run over and the recorder idle, so the tick never sees the run end. */
+EXPORT void bnc_tick(u32 page) {
+    if (!bnc_page)
+        return;
+    u32 state = V8(REC_STATE);
+    V32(page + PAGE_LAST_STATE) = state;
+    if (!bnc_own && state == 0)
+        bnc_page = 0;
 }
 
 /* The popup tick (UI task, every millisecond, before the stock tick). */

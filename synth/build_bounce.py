@@ -5,7 +5,7 @@ A stage applied to the published Sound Generator + Kits v9.46 image (kits plus t
 fix). It supersedes stage 2 (bounce-2-test1): the same four sites, bridged to the stage 3 bounce.c,
 plus the pad-event dispatcher. See BOUNCE.md.
 
-Five sites change, each checked against its exact v9.46 contents:
+Six sites change, each checked against its exact v9.46 contents:
   0x0001d090  audio task, TX block: mov.w r1,#0x1000; mov r0,r5; bl mixer
               -> tx bridge: the same mixer call, then bnc_tx, then back to 0x1d09a
   0x0001d0c2  audio task, RX block: mov.w r1,#0x800; bl feed; b loop
@@ -18,6 +18,14 @@ Five sites change, each checked against its exact v9.46 contents:
                  recorder), 1 runs the four displaced instructions
   0x80223474  RESAMPLE page (0xe) vtable slot +8, the page's event filter: DOOM OS's 0x6031c8f9
               -> bnc_event, which hands every event it does not use to DOOM OS's filter
+  0x8012db58  the RESAMPLE page's tick (from the page, every screen refresh): push; sub sp; mov; mov;
+              bl modal
+              -> tick bridge: the push and frame, bnc_tick(page), then the moves and the modal test and
+                 on to 0x8012db64. While a bounce holds the page (from REC to the first tick after it with
+                 the recorder idle), bnc_tick gives the page the recorder's state as the one its tick last
+                 saw, so the tick's state handler (0x8012dcb0) and after-recording routine (0x8012cbb0:
+                 BUS 1/2 effects off, the stock pad handler's destination current, the main screen) do not
+                 run for a bounce's standby, take or cancel. A stock RESAMPLE ends as stock.
 The two audio bridges use no stack, so the mixer and the feed run at their stock depth. Stock code
 and data the module reads, calls or relies on are checked byte for byte (GUARDS, TABLE_GUARDS). The
 bridges and the module (Zig 0.13.0, -Os) go in a new boot copy row in a 20 KB slot at 0x83FE8000,
@@ -46,19 +54,22 @@ PUBLISHED_V946 = '7b5fbcb4c3ce1e8782fef4b5803be74c7d14eddf25a1b53682abe00c9ed368
 REVISION = 'bounce-3-test2'
 SLOT = 0x5000                       # reserved: [base, base + SLOT)
 SLOT_CEILING = 0x83FED000           # the CPU meter test build's slot, then the start fix at 0x83FEF000
-BRIDGES = {'tx': 0x00, 'rx': 0x30, 'ui': 0x80, 'gate': 0xC0}
-CODE_OFFSET = 0x100                 # the C module links after the bridges
+BRIDGES = {'tx': 0x00, 'rx': 0x30, 'ui': 0x80, 'gate': 0xC0, 'tick': 0x100}
+CODE_OFFSET = 0x140                 # the C module links after the bridges
 PCM_BANK = 0x60376000               # build_arp_kit.py's flash planning boundary for kit PCM
-FUNCTIONS = ('bnc_tx', 'bnc_rx', 'bnc_ui', 'bnc_event', 'bnc_estimate', 'bnc_gate')
-EXPORTS = FUNCTIONS + ('bnc_aud', 'bnc_ui_state', 'bnc_text', 'bnc_own', 'bnc_expect')
+FUNCTIONS = ('bnc_tx', 'bnc_rx', 'bnc_ui', 'bnc_event', 'bnc_estimate', 'bnc_gate', 'bnc_tick')
+EXPORTS = FUNCTIONS + ('bnc_aud', 'bnc_ui_state', 'bnc_text', 'bnc_own', 'bnc_expect', 'bnc_page')
 FEED_ON = 0x805917C4                # the recorder feed calls the gate while this word is set
 MIXER, FEED, TX_BACK, LOOP, TICK_REST = 0x1C2D0, 0x1CA80, 0x1D09A, 0x1D05C, 0x8006B95C
 RING, DISPATCH_HIGH = 0x80018590, 0x800BEF1C   # the pad-event ring put; the dispatcher's path for 0xa1+
+MODAL, PAGE_TICK_REST = 0x800CE420, 0x8012DB64   # the page modal test; the RESAMPLE page's tick after it
 SITES = {
     'tx': (0x1D090, 10, ['mov.w r1, #0x1000', 'mov r0, r5', 'bl #0x1c2d0']),
     'rx': (0x1D0C2, 10, ['mov.w r1, #0x800', 'bl #0x1ca80', 'b #0x1d05c']),
     'ui': (0x8006B950, 12, ['push {r4, r5, r6, lr}', 'movw r4, #0x22ac', 'movt r4, #0x8059', 'ldr r1, [r4, #8]']),
     'gate': (0x800BEF10, 10, ['ldrb r1, [r0]', 'cmp r1, #0xa0', 'bhi #0x800bef1c', 'b.w #0x80018590']),
+    'tick': (0x8012DB58, 12, ['push {r4, r5, r6, r7, lr}', 'sub sp, #4', 'mov r6, r1', 'mov r5, r0',
+                              'bl #0x800ce420']),
 }
 VTABLE_SLOT, DOOM_FILTER = 0x80223474, 0x6031C8F9     # RESAMPLE page vtable 0x8022346c, +8
 # Code and data the module and bridges rely on: (start, end, SHA-256 of the v9.46 runtime bytes, what it
@@ -177,7 +188,8 @@ GUARDS = [
      'looper enabled: [0x82e0b71c + 0x39] (the feed records into the looper while it is set)'),
     (0x8012CFE8, 0x8012D344, 'e3695b3a54d0b90f92da73e94080df10a565d20183a4f6b06fc9cae4be897a5b',
      'RESAMPLE pad handler: an occupied pad (status 0x64) plays unless project 0xbf/0xdd is 1 or the page is '
-     'modal; an empty pad becomes the destination: REC BPM 0x1b from project 0x21 + bank, settings 0x1a, '
+     'modal; an empty pad becomes the destination: REC BPM 0x1b from project 0x21 + bank (only with a bar '
+     'REC length and [0x80592360] clear), settings 0x1a, '
      'target 7 = 0, 1 = pad, 0 = bank, standby 0x14(0); Resample_Routing = system param 0x5c'),
     (0x6031C8F8, 0x6031C9A8, 'c3c66d467d9349e7a4cd28da79f776f2aab969f6c04da222f35232ce19e18179',
      'v9.46 (DOOM OS ED5E): the page event filter (page, event); events it does not take go to 0x800a80a9; it '
@@ -261,11 +273,41 @@ GUARDS = [
     (0x801947C0, 0x80194890, 'a2139db2a6c6eb3e9b77df005d5b1e424b36ca27babcb5d687e0f196c5ecc5a2',
      'SMPL TASK queue loop: pops in order; 0xa4 -> the command dispatcher 0x8004d8b8 (the exchange runs inside '
      'it), 0xa8 -> the target store 0x800fb000'),
+    # bounce-3-test2: the RESAMPLE page's tick, which the tick bridge keeps from seeing a bounce, and what it
+    # would have run
+    (0x8012DB58, 0x8012DCA4, '8a8a5fb0bfa74d8e2310f130373336f730b540b6df47e65311222f854390a3c8',
+     'RESAMPLE page tick (page, refresh): returns while the page is modal; then reads the recorder state '
+     '0x82e0e755 and +0x1a90 = the state at its last tick; on a change (or refresh != 0) the state handler '
+     '0x8012dcb0, then the after-recording routine 0x8012cbb0; +0x1a90 = the state; settings 0x34 = idle; '
+     'the tick site'),
+    (0x8012DCB0, 0x8012DE22, '94638b4abdfd4c59d0c321bdcedd646fc04fd7ff9ff3d0b56e300d69a8ed2770',
+     'RESAMPLE state handler (page, state): 2 -> settings 0x34 = 0, REC_STOP when no recording time is left; '
+     '1 -> settings 0x34 = 0; 0 -> after state 2 ORIGINAL BPM (pad 0x6f) of settings 0x1a\'s pad = REC BPM, '
+     'settings 0x34 = 1, after a take or standby every sound and the looper stopped (0x800dd030: ALL SOUND OFF, '
+     'LOOPER TASK command 9 = 0x8001f820), after a standby END Snap (0x59) off; the '
+     'screen state (settings 0x32) from the state and settings 0x1a'),
+    (0x8012CE68, 0x8012CE6E, 'cf37588d6543c6f4994c1305e2fe36ea05a9ecd51aa8637ee24b881eb28dd83e',
+     'RESAMPLE page vtable +0xd0: tick(page, 0)'),
+    (0x8012D4E8, 0x8012D4EE, '9c5e90818f3f2660232e5e7863bbe7680cb1377aab2becffbc576740799aa7c8',
+     'RESAMPLE page vtable +0xcc: tick(page, 1)'),
+    (0x80223538, 0x80223540, '167ae5e09de5a73e3df3c6d1e1408691c36ef7b2ad8f820aa7810bb880929c04',
+     'RESAMPLE page vtable +0xcc, +0xd0 = 0x8012d4e9, 0x8012ce69: the tick\'s only callers'),
+    (0x8012CBB0, 0x8012CCBA, '80436add6ca79917021f3d14659c5d782cdc8cd26b77404f7fe0720b01b07ce1',
+     'after-recording routine: the recorder idle (0x82e0e755 = 0) after a tick that saw state 2, +0x1aa0 clear -> '
+     'BUS 1/2 effects off (0x800bb140), [0x805925b4] = the stock pad handler\'s destination bank [0x80245a48] '
+     '(-1 until a stock RESAMPLE picks a pad: the restore then selects bank A) and its pad current, 300 ms wait, '
+     'RESAMPLE left (0x8012d438), page 1'),
+    (0x800BB140, 0x800BB17A, '370ac705d9fdd9a4d31363fe8d475e7e619285b61af48d4c858732a3af3abe28',
+     'bus effect off: system parameter 0x276 [bus] = 0 (0 = no effect, 1..5 the FX buttons, 6 custom)'),
+    (0x8012D438, 0x8012D4D8, '199cacdfbd64cbae6295c2b6c57264bc18dc6d1ce343078f4f67fbf426215005',
+     'RESAMPLE exit: settings 0x36 = 0, STOP, REC_STOP (0x18), settings 0x1a = -1, project 0xdd/0xbf = 0, bank and '
+     'pad restored (0x80134990)'),
+    (0x80134990, 0x801349C2, 'be51cc3d91015b9b4ed0ebd8a0aabfbc9f3930a878054e3fc3c5187d2614be9a',
+     'the restore: project 1 (pad) = [0x805925b0], project 0 (bank) = [0x805925b4]'),
 ]
 # 16-bit jump-table entries: (address, value, what)
 TABLE_GUARDS = [
     (0x800D9526, 359, 'settings get 0x1a -> 0x800d97c0'),
-    (0x800D9528, 363, 'settings get 0x1b -> 0x800d97c8'),
     (0x800D953A, 399, 'settings get 0x24 -> 0x800d9810'),
     (0x800D955E, 463, 'settings get 0x36 -> 0x800d9890'),
     (0x800D95A4, 551, 'settings get 0x59 -> 0x800d9940'),
@@ -310,7 +352,8 @@ PAD_SETTINGS = dict(
             'own offset, else START',
     pad_link='TO PAD: 0. REPLACE: the bounce takes the source\'s group and the parked original leaves it (0); UNDO '
              'puts it back. During the run the source is out of its group, so only the pad itself is recorded',
-    stock_defaults='everything else as the stock finalize leaves any new sample (0x800cfa68), ORIGINAL BPM = REC BPM')
+    stock_defaults='everything else as the stock finalize leaves any new sample (0x800cfa68), ORIGINAL BPM = REC BPM '
+                   '(the SP\'s tempo: the stock tempo setter 0x80019820 writes it; the run leaves it alone)')
 
 
 def sha(b):
@@ -393,6 +436,11 @@ def bridge_sources(sym):
         'gate': ('push {r0, lr}\n' + call(sym['bnc_gate']) + 'mov r12, r0\npop.w {r0, lr}\ncmp.w r12, #0\n'
                  'bne pass\nbx lr\npass:\nldrb r1, [r0]\ncmp r1, #0xa0\nbhi high\n' + jump(RING) + 'high:\n' +
                  jump(DISPATCH_HIGH)),
+        # From 0x8012db58 (bx), r0 = the RESAMPLE page, r1 = its refresh flag, lr = the caller: the displaced push
+        # and frame, bnc_tick(page) with r0 and r1 kept, the displaced moves and modal test (r0 = the page), then
+        # the tick at 0x8012db64 with the test's result in r0.
+        'tick': ('push {r4, r5, r6, r7, lr}\nsub sp, #4\npush {r0, r1}\n' + call(sym['bnc_tick']) +
+                 'pop {r0, r1}\nmov r6, r1\nmov r5, r0\n' + call(MODAL) + jump(PAGE_TICK_REST)),
     }
 
 
@@ -492,9 +540,17 @@ def build(inp: Path, out: Path, zig: Path, base: int):
         parent_app1=str(inp), parent_sha256=parent_sha, parent_is_published_v946=parent_sha == PUBLISHED_V946,
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
         if parent_manifest.exists() else None,
-        replaces='bounce-3-test1 (the same five sites; the looper test fixed)',
+        replaces='bounce-3-test1 (its five sites, plus the RESAMPLE page tick site)',
         changes=['the looper refuses or ends a bounce only while it plays, records, overdubs or waits for a '
-                 'level (phase +0x101), no longer whenever MARK Function = LOOPER (+0x39 = enabled)'],
+                 'level (phase +0x101), no longer whenever MARK Function = LOOPER (+0x39 = enabled)',
+                 "the RESAMPLE page's tick (0x8012db58) no longer sees a bounce's standby, take or cancel: after a "
+                 "take its after-recording routine (0x8012cbb0) switched the BUS 1/2 effects off, made the stock "
+                 "pad handler's last destination current (bank A after a reboot) and left RESAMPLE, and its state "
+                 'handler (0x8012dcb0) switched END Snap off after a cancelled standby',
+                 'REC BPM (settings 0x1b) is no longer set and restored: it retuned the sequencer and the '
+                 'effects chip (system parameter 0x275) and left the stock REC BPM flags set',
+                 'TO PAD / REPLACE and the mode are kept as soon as they are picked',
+                 "the pad name's edited flag is left to the stock name function (no 32-bit write)"],
         pad_settings=PAD_SETTINGS,
         replace=dict(command='0x40d -> 0x800a6c30(gSmplMgr 0x80591800, source, scratch, 2), then a recorder target '
                              'write (param 1 = 15) as the fence; checked: both pads hold samples, sizes swapped',

@@ -24,7 +24,7 @@ settings, project and system parameter stores. No screen, no SD card, no real ti
 the unit.
 
 Checks:
-- static: only the header, the five sites and the appended tail differ from the parent; the
+- static: only the header, the six sites and the appended tail differ from the parent; the
   rows (a copy row and a zero-fill row added); the guards hold on the parent;
 - bridges against the parent's own instructions (mixer arguments and stack depth, the feed's
   capture, meter and gate call, the popup tick's registers, the pad-event dispatcher's paths);
@@ -45,7 +45,13 @@ Checks:
 - leaks: EXT SOURCE, MIDI notes through the stock MIDI dispatcher, the run's own trigger under
   FIXED VELOCITY, a pattern or the looper starting, PAD LINK;
 - refusals, EXIT at every phase and failures (the stock recorder ending a take itself included):
-  nothing changes, everything pinned comes back.
+  nothing changes, everything pinned comes back;
+- on the image's own global objects (the boot's 70 static constructors run; RealMachine): the tick
+  bridge against the parent, and a whole-state audit of TO PAD, REPLACE, EXIT during the take and
+  EXIT in the silence wait, with the RESAMPLE page's tick running: every write, page request, bank
+  or pad change and byte to the effects chip logged, every parameter read before and after, the
+  objects diffed byte for byte, each difference on an allowlist with its reason; a stock RESAMPLE
+  of the same pad alongside.
 """
 import hashlib
 import json
@@ -55,6 +61,7 @@ import sys
 from pathlib import Path
 
 from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_PROT_ALL, UC_HOOK_CODE  # noqa: E402
+from unicorn import UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE, UC_MEM_WRITE  # noqa: E402
 from unicorn import arm_const as ar  # noqa: E402
 
 FLASH, COPY, DECOMPRESS, ZERO = 0x60080000, 0x600800E4, 0x60080088, 0x60080100
@@ -118,12 +125,12 @@ FIELDS_A = ('tx_blocks rx_blocks phase quiet_rx quiet_tx pad mode skip measure a
             'stop have_l cached l l_est l_meas p_n p0 p_sum p16 d tx_onset scan last_nz voice_end last_loud win '
             'rx_now fail').split()
 FIELDS_U = ('state ms since shown refresh src dst mode modes loop_src loop_pin len1 len2 native saved_len saved_snap '
-            'saved_bpm pinned msg waits last_mode cal_l cal_valid runs r_l r_est r_meas r_p16 r_d r_start r_end r_len '
+            'pinned msg waits last_mode cal_l cal_valid runs r_l r_est r_meas r_p16 r_d r_start r_end r_len '
             'r_mode r_exact target targets last_target scratch lp_off ext_pin saved_ext link_pin link_src swap_kind '
             'swap_a swap_b want_len_a want_ch_a want_len_b want_ch_b fence undo_slot undo_next partial err dropped').split()
 UNDO_FIELDS = 'used pad keep len_pad ch_pad len_keep ch_keep link'.split()
 UNDOS = 8
-SIGNED = {'l', 'l_est', 'l_meas', 'p0', 'p_sum', 'p16', 'd', 'saved_len', 'saved_snap', 'saved_bpm', 'cal_l', 'r_l',
+SIGNED = {'l', 'l_est', 'l_meas', 'p0', 'p_sum', 'p16', 'd', 'saved_len', 'saved_snap', 'cal_l', 'r_l',
           'r_est', 'r_meas', 'r_p16', 'r_d', 'saved_ext', 'link_src', 'err'}
 (U_IDLE, U_SETUP, U_STANDBY, U_SILENCE, U_RECSTART, U_VOICE, U_RUN, U_FINAL, U_CANCEL, U_SWAP,
  U_STOCKSTOP) = range(11)
@@ -295,12 +302,21 @@ class Machine:
         self.input_calls = []
         self.sysprm = {0x22: 77}                         # system parameter 0x22: the input level
         for addr, name in STUBS.items():
-            if name not in skip:
+            if name not in skip and addr not in skip:
                 uc.hook_add(UC_HOOK_CODE, self._stub, name, begin=addr, end=addr)
         uc.hook_add(UC_HOOK_CODE, self._mixer, None, begin=MIXER, end=MIXER)
         uc.hook_add(UC_HOOK_CODE, self._popup, None, begin=0x800D3FF0, end=0x800D3FF0)
         uc.hook_add(UC_HOOK_CODE, self._trigger, None, begin=0x800CDBD0, end=0x800CDBD0)
         uc.hook_add(UC_HOOK_CODE, self._unload, None, begin=0x800D9440, end=0x800D9440)
+        self.models()
+        self.rng = random.Random(0)
+        self.dma(61)
+        self.keys = set()
+
+    def models(self):
+        """The modelled side's state: the recorder engine and its writer, the feed enable, the recorder target,
+        the voice slots, the popup and the page."""
+        uc = self.uc
         uc.mem_write(POPUP_STATE, b'\x01')
         self.w32(FEED_ON, 1)
         self.w32(0x82E011A8, 0)                        # settings 0x27 = 0: RX pair 0
@@ -315,9 +331,6 @@ class Machine:
             voice = VOICES + slot * 0x18000
             self.w32(SLOTS + slot * 0x58, voice)
             self.w32(voice + 0x14268, 0)
-        self.rng = random.Random(0)
-        self.dma(61)
-        self.keys = set()
 
     # ---- plumbing ----
     def w32(self, a, v):
@@ -328,6 +341,9 @@ class Machine:
 
     def r8(self, a):
         return self.uc.mem_read(a, 1)[0]
+
+    def r16(self, a):
+        return struct.unpack('<H', self.uc.mem_read(a, 2))[0]
 
     def regs(self, n=4):
         return [self.uc.reg_read(getattr(ar, f'UC_ARM_REG_R{k}')) for k in range(n)]
@@ -769,7 +785,7 @@ class Machine:
         self.ui(2 if self.tx_n % 3 == 0 else 1)
 
     def popup(self):
-        return bytes(self.uc.mem_read(POPUP_TEXT, 64)).split(b'\0')[0].decode('ascii')
+        return bytes(self.uc.mem_read(POPUP_TEXT, 64)).split(b'\0')[0].decode('latin-1')
 
 
 def pcm_burst(n, seed, attack=0, silence=0):
@@ -881,8 +897,8 @@ def static_checks(out, man, img, parent):
         allowed |= set(range(o, o + p['size']))
         check(parent[o:o + p['size']].hex() == p['original_hex'] and img[o:o + p['size']].hex() == p['replacement_hex'],
               f"site {p['address']:#x}: parent bytes and replacement as in the manifest")
-    check(sorted(p['address'] for p in man['patches']) == [0x1D090, 0x1D0C2, 0x8006B950, 0x800BEF10],
-          'the code sites: TX, RX, popup tick, pad-event dispatcher')
+    check(sorted(p['address'] for p in man['patches']) == [0x1D090, 0x1D0C2, 0x8006B950, 0x800BEF10, 0x8012DB58],
+          "the code sites: TX, RX, popup tick, pad-event dispatcher, the RESAMPLE page's tick")
     diff = [i for i in range(len(parent)) if img[i] != parent[i] and i not in allowed]
     check(not diff, f'no other byte of the parent changed ({len(diff)} found)')
     rows_in, rows_out = scatter(parent), scatter(img)
@@ -1202,13 +1218,14 @@ def runs(img, man):
     check(m.u('r_meas') == 77 and m.u('r_est') == 77, 'NO TAIL one-shot: onset L 77 = the estimate (P61 D0)')
     check(m.gate_calls == [], f'the stock gate never ran from REC to the end of the run ({m.gate_calls[:3]})')
     check(m.r32(FEED_ON) == 1 and m.settings[0x24] == 3 and m.settings[0x59] == 0 and m.settings[0x1A] == -1 and
-          m.settings[0x1B] == 12000, 'after the run: feed enable, REC length, END Snap, destination, REC BPM restored')
+          m.settings[0x1B] == 12000 and not [x for x in m.log if x[0] == 'set' and x[1] == 0x1B],
+          'after the run: feed enable, REC length, END Snap, destination restored; REC BPM never written')
     name = m.name(1)
     check(m.saves >= 1 and name.startswith('A1 L77 M77 P61.') and name.endswith(' D0') and len(name) <= 23,
           f'the pad is named with the run ({name}) and saved')
     sets = [x for x in m.log if x[0] == 'set']
-    check(sets[:4] == [('set', 0x24, 6, 0), ('set', 0x59, 0, 0), ('set', 0x1B, 9000, -1), ('set', 0x1A, 1, 0)],
-          f'pinned before standby: REC length FREE, END Snap off, REC BPM = the bank, destination A-2 ({sets[:4]})')
+    check(sets[:3] == [('set', 0x24, 6, 0), ('set', 0x59, 0, 0), ('set', 0x1A, 1, 0)],
+          f'pinned before standby: REC length FREE, END Snap off, destination A-2; REC BPM left alone ({sets[:3]})')
     posts = [x[1] for x in m.log if x[0] == 'post']
     check(posts == [5, 0x2A, 0x14, 0x17, 5, 0x18, 0xD],
           f'commands: sound off, seq sound off, standby, start, sound off, stop, save ({[hex(x) for x in posts]})')
@@ -1720,7 +1737,8 @@ def failure_checks(img, man):
 
     def restored(m, label, dst_empty=True):
         check(m.r8(REC_STATE) == 0 and m.r32(FEED_ON) == 1 and m.settings[0x24] == 3 and m.settings[0x59] == 0 and
-              m.settings[0x1B] == 12000 and m.settings[0x1A] == -1 and (m.status[1] == 0 or not dst_empty) and
+              m.settings[0x1B] == 12000 and not [x for x in m.log if x[0] == 'set' and x[1] == 0x1B] and
+              m.settings[0x1A] == -1 and (m.status[1] == 0 or not dst_empty) and
               m.u('pinned') == 0 and m.u('ext_pin') == 0 and m.r32(m.sym['bnc_own']) == 0,
               f'{label}: recorder idle, feed enable and settings restored, the destination stays empty')
 
@@ -2145,6 +2163,457 @@ def fence_checks(img, man):
     note('the fence through the real queue')
 
 
+# ---- the image with its global objects built ----
+HEAP = 0x32000000
+REAL_CODE = ('get', 'set', 'pget', 'pset', 'sysget', 'doom', 'qput', 'other', 0x800E11D0, 0x800D8B90)
+KERNEL = {0x310C: 1, 0x22A4: 1, 0x32B8: 0}                 # RTOS object creation in the constructors: an id
+SCREEN = (0x8006C088, 0x8006BD48, 0x8015F3A8, 0x800D8020)  # drawing: the display is not built here
+UI_TICK, UI_DRAIN, REGISTRY_F, RS_TICK, RS_AFTER = 0x8003C5F0, 0x800BA228, 0x80053CB8, 0x8012DB58, 0x8012CBB0
+RS_TICK0, RS_TICK1, RS_STATE = 0x8012CE68, 0x8012D4E8, 0x8012DCB0  # the page vtable's +0xd0, +0xcc; the state handler
+PAGE_LAST = 0x1A90                                       # the page object: the recorder state at its last tick
+CTORS, NCTORS = 0x8383A30C, 70
+SETTINGS, PROJECT, SYSPRM_OBJ = 0x82E01144, 0x82E009D0, 0x82DFEED0
+SETTINGS_GET, SETTINGS_SET, PROJECT_GET, PROJECT_SET = 0x800D94D8, 0x800DD0C0, 0x800DDA38, 0x800DED18
+SYSTEM_GET, SYSTEM_SET = 0x800DA010, 0x800DE270
+WATCHED = {SETTINGS_SET: 'settings', PROJECT_SET: 'project', SYSTEM_SET: 'system', PADSET: 'pad', 0x800E11D0: 'seq',
+           0x800DA598: 'page', 0x8001A1C8: 'input volume', 0x800931B8: 'effect'}
+
+
+class RealMachine(Machine):
+    """The image with its global objects built: the boot's 70 static constructors run (the RTOS under them stubbed:
+    its pool by a bump allocator, object creation by an id, critical sections by nothing); the settings, project,
+    system, sequencer, pad and broadcast code, DOOM OS's page filter and the RESAMPLE page object (made by its
+    registry handler, as on page entry) are real; each millisecond the UI task's tick (0x8003c5f0, with the stock
+    popup tick behind the module's bridge) runs, its event queue drains through the stock dispatcher, and every
+    16 ms the RESAMPLE page's tick runs as its draw calls it. The chip's UARTs (LPUART1-8) are logged byte by
+    byte; every settings, project, system, pad and sequencer write, page request and bank or pad change is logged.
+    Modelled as in Machine: the recorder commands and finalize, the card, voices, the effects chip's audio."""
+
+    def __init__(self, img, man=None):
+        super().__init__(img, man, skip=REAL_CODE)
+        uc = self.uc
+        for base, size in ((0xE0000000, 0x100000), (0x40000000, 0xE8000), (0x400EA000, 0x316000), (HEAP, 0x1000000)):
+            uc.mem_map(base, size, UC_PROT_ALL)
+        self.heap = HEAP
+        self.mpatched = self.mprofile()
+        uc.hook_add(UC_HOOK_CODE, self._malloc, None, begin=0x800E2C68, end=0x800E2C68)
+        uc.hook_add(UC_HOOK_CODE, self._value, 0, begin=0x800E2CA8, end=0x800E2CA8)
+        for a, v in KERNEL.items():
+            uc.hook_add(UC_HOOK_CODE, self._value, v, begin=a, end=a)
+        for a in SCREEN:
+            uc.hook_add(UC_HOOK_CODE, self._value, 0, begin=a, end=a)
+        self.uart, self.calls = [], []
+        uc.hook_add(UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, self._uart, None, begin=0x40184000, end=0x401A3FFF)
+        for fn in struct.unpack(f'<{NCTORS}I', bytes(uc.mem_read(CTORS, 4 * NCTORS))):
+            self.call(fn & ~1 | 1, count=50_000_000)
+        self.models()                                    # the modelled side again, over what the constructors set
+        self.load_ok = True
+        self.fx['L'] = 77
+        self.call(SETTINGS_SET | 1, SETTINGS, 0x36, 1, 0)    # RESAMPLE mode, as the page sets it
+        uc.mem_write(EVENT2, struct.pack('<6h', 1, 0, 0, 0, 0, 0))
+        self.call(REGISTRY_F | 1, EVENT2, count=20_000_000)  # the RESAMPLE page object, as on page entry
+        self.page = self.r32(PAGE_PTR)
+        self.w32(PREFILTER, 0xFFFFFFFF)
+        uc.mem_write(KEY_PAIRS, b'\xff' * 0x80)
+        uc.mem_write(PAGE_LIVE, struct.pack('<H', 0x0E))
+        for a, n in WATCHED.items():
+            uc.hook_add(UC_HOOK_CODE, self._watch, n, begin=a, end=a)
+        uc.hook_add(UC_HOOK_MEM_WRITE, self._bank, None, begin=SMPL + 0x14, end=SMPL + 0x1B)
+
+    def mprofile(self):
+        """M-profile special registers (the RTOS's critical sections) in this copy of the code: MSR -> nop.w,
+        MRS -> mov.w rd, #0 (Unicorn's Thumb is A-profile)."""
+        n = 0
+        for base, size in ((0x400, 0x1F800), (0x80000000, 0x240000)):
+            code = bytearray(self.uc.mem_read(base, size))
+            for i in range(0, size - 4, 2):
+                h1, h2 = code[i] | code[i + 1] << 8, code[i + 2] | code[i + 3] << 8
+                if (h1 & 0xFFF0) == 0xF380 and (h2 & 0xFF00) == 0x8800 and 0x10 <= (h2 & 0xFF) <= 0x14:
+                    code[i:i + 4] = bytes.fromhex('aff30080')
+                    n += 1
+                elif h1 == 0xF3EF and (h2 & 0xF000) == 0x8000 and 0x10 <= (h2 & 0xFF) <= 0x14:
+                    code[i:i + 4] = bytes([0x4F, 0xF0, 0x00, (h2 >> 8) & 15])
+                    n += 1
+            self.uc.mem_write(base, bytes(code))
+        return n
+
+    def _malloc(self, uc, a, size, _):
+        n = (uc.reg_read(ar.UC_ARM_REG_R0) + 15) & ~7
+        at = self.heap
+        self.heap += n + 8
+        uc.mem_write(at, bytes(n + 8))
+        self._ret(at + 8)
+
+    def _value(self, uc, a, size, value):
+        self._ret(value)
+
+    def _uart(self, uc, access, address, size, value, _):
+        base, off = address & ~0x3FFF, address & 0x3FFF
+        if access == UC_MEM_WRITE and off == 0x1C:
+            self.uart.append((self.ui_ms, (base - 0x40184000) // 0x4000 + 1, value & 0xFF))
+        elif off == 0x14:
+            uc.mem_write(address, struct.pack('<I', 0x00C00000))    # transmit ready
+
+    def _watch(self, uc, a, size, name):
+        r = [s32(uc.reg_read(getattr(ar, f'UC_ARM_REG_R{k}'))) for k in range(1, 4)]
+        self.calls.append((self.ui_ms, name) + tuple(r))
+
+    def _bank(self, uc, access, address, size, value, _):
+        self.calls.append((self.ui_ms, 'current ' + ('bank' if address < SMPL + 0x18 else 'pad'), value))
+
+    def ui(self, ms=1):
+        self.ui_ms += ms
+        self.call(UI_TICK | 1, ms, count=5_000_000)
+        self.call(UI_DRAIN | 1, count=5_000_000)
+        if self.ui_ms // 16 != (self.ui_ms - ms) // 16 and self.r16(PAGE_ID) == 0x0E and self.page:
+            # every 16 ms (also across a 2 ms step), the page's tick through its vtable entries: +0xd0 (refresh 0),
+            # every fourth time +0xcc (refresh 1)
+            entry = RS_TICK1 if (self.ui_ms // 16) % 4 == 0 else RS_TICK0
+            self.call(entry | 1, self.page, count=20_000_000)
+        due = self.final_due
+        self.settle()
+        if due is not None and self.final_due is None:    # the stock finalize ends with UI events 0xd and 0xc
+            self.call(0x800D9ED1, 0xD)
+            self.call(0x800D9ED1, 0xC)
+
+    def setting(self, sid, idx=0):
+        return s32(self.call(SETTINGS_GET | 1, SETTINGS, sid, idx))
+
+    def system(self, sid, idx=-1):
+        return s32(self.call(SYSTEM_GET | 1, SYSPRM_OBJ, sid, idx))
+
+    def bus_fx(self):
+        return self.system(0x276, 1), self.system(0x276, 2)
+
+    def chip(self):
+        """The UART bytes, grouped into SysEx frames."""
+        frames, cur = [], []
+        for ms, port, b in self.uart:
+            cur.append(b)
+            if b == 0xF7:
+                frames.append((ms, port, bytes(cur).hex()))
+                cur = []
+        return frames + ([(None, None, bytes(cur).hex())] if cur else [])
+
+    def params(self):
+        """Every settings and system parameter, project parameter (and per pad) and pad parameter, read through
+        the stock getters."""
+        out = {}
+        for sid in range(0xAD):
+            out[('settings', sid)] = self.setting(sid)
+        for pid in list(range(2, 0x80)) + list(range(0x80, 0x120)):
+            out[('project', pid)] = s32(self.call(PROJECT_GET | 1, PROJECT, pid, 0xFFFFFFFF))
+        for sid in range(0x2A0):
+            out[('system', sid)] = self.system(sid)
+        for bus in range(5):
+            out[('system', 0x276, bus)] = self.system(0x276, bus)
+        out[('bank',)], out[('pad',)] = self.r32(SMPL + 0x14), self.r32(SMPL + 0x18)
+        for pad in range(160):
+            for pid in range(0x64, 0x80):
+                out[('pad', pid, pad)] = self.pad_get(pid, pad)
+        return out
+
+    def snapshot(self):
+        return {b: bytes(self.uc.mem_read(b, n)) for b, n in AUDIT_REGIONS}
+
+
+AUDIT_REGIONS = ((0x82DF0000, 0x60000), (0x80590000, 0x10000), (0x80240000, 0x10000), (0x833B8000, 0x1000))
+
+
+def raw_diff(a, b):
+    out = []
+    for base in a:
+        x, y = a[base], b[base]
+        i = 0
+        while i < len(x):
+            if x[i] != y[i]:
+                j = i
+                while j < len(x) and x[j] != y[j]:
+                    j += 1
+                out.append((base + i, j - i))
+                i = j
+            else:
+                i += 1
+    return out
+
+
+def scene(m, src=32, fx=(3, 2)):
+    """Bank C current, a one-shot on C-1, BUS 1 and BUS 2 with an effect on, EXT SOURCE off, the UI settled."""
+    m.call(SYSTEM_SET | 1, SYSPRM_OBJ, 0x276, fx[0], 1)
+    m.call(SYSTEM_SET | 1, SYSPRM_OBJ, 0x276, fx[1], 2)
+    m.call(PADSET | 1, SMPL, 0, src // 16, 0)
+    pcm = pcm_burst(3000, 9)
+    m.load_pad(src, 3000)
+    m.voice = Voice(m, src, pcm, 0, 3000, 0, 1)
+    for _ in range(32):
+        m.ui(1)
+    return pcm
+
+
+def tick_bridge_checks(img, parent, man):
+    """The tick bridge, on the real global objects. A take has just ended: the page's last tick saw state 2.
+    On the parent, and on the image with no bounce, the page's next tick runs its state handler and its
+    after-recording routine (BUS 1/2 effects off, the stock pad handler's destination current, RESAMPLE left).
+    While a bounce holds the page (it owns the recorder, or its run is over and the recorder not idle yet) the
+    tick finds no change and does none of that; the page is let go on the first tick with the run over and the
+    recorder idle, and the tick never sees the run end."""
+    res = []
+    for image, mm, hold, own, rec in ((parent, None, None, None, 0), (img, man, 0, 0, 0), (img, man, 1, 1, 0),
+                                      (img, man, 1, 0, 0), (img, man, 1, 0, 2)):
+        m = RealMachine(image, mm)
+        m.call(SYSTEM_SET | 1, SYSPRM_OBJ, 0x276, 3, 1)
+        m.call(SYSTEM_SET | 1, SYSPRM_OBJ, 0x276, 2, 2)
+        m.call(PADSET | 1, SMPL, 0, 2, 0)             # bank C current
+        m.call(SETTINGS_SET | 1, SETTINGS, 0x59, 1, 0)  # END Snap on
+        m.w32(0x80245A48, 1)                          # the stock pad handler's last destination: B-5
+        m.w32(0x80245A44, 4)
+        if hold is not None:
+            m.w32(m.sym['bnc_page'], hold)
+            m.w32(m.sym['bnc_own'], own)
+        m.uc.mem_write(REC_STATE, bytes([rec]))
+        m.calls, m.uart = [], []
+        m.w32(m.page + PAGE_LAST, 2)                  # the page's last tick saw state 2: a take just ended
+        held = []
+        for i in range(40):                           # its next ticks; SMPL TASK takes the queued writes
+            if i == 20:
+                m.uc.mem_write(REC_STATE, b'\x00')    # a pending cancel taken: the recorder idle
+            m.ui(1)
+            held.append(m.r32(m.sym['bnc_page']) if hold is not None else None)
+        res.append(dict(fx=m.bus_fx(), bank=m.r32(SMPL + 0x14), pad=m.r32(SMPL + 0x18), resample=m.setting(0x36),
+                        snap=m.setting(0x59), last=m.r32(m.page + PAGE_LAST), calls=[c[1:] for c in m.calls],
+                        tx=m.chip(), held=held))
+    stock, idle, owned, over, pending = res
+    check(stock['fx'] == (0, 0) and stock['bank'] == 1 and stock['pad'] == 4 and stock['resample'] == 0,
+          f'the stock tick after a take: BUS 1/2 effects off, the stock pad handler\'s destination B-5 current, '
+          f'RESAMPLE left ({stock["fx"]}, bank {stock["bank"]}, pad {stock["pad"]}, 0x36 {stock["resample"]})')
+    check({k: v for k, v in idle.items() if k != 'held'} == {k: v for k, v in stock.items() if k != 'held'},
+          'tick bridge, no bounce: the tick runs exactly as the parent\'s (the same writes, effects, bank, pad, '
+          'RESAMPLE mode, END Snap, chip messages)')
+    for r, label in ((owned, 'a bounce owning the recorder'), (over, 'the run over, the recorder idle'),
+                     (pending, 'the run over, its cancel not yet taken')):
+        acts = [c for c in r['calls'] if c[0] in ('page', 'current bank', 'current pad') or c[:2] in (
+            ('system', 0x276), ('project', 0), ('project', 1), ('settings', 0x36), ('settings', 0x59),
+            ('settings', 0x32), ('pad', 0x6F))]
+        check(r['fx'] == (3, 2) and r['bank'] == 2 and r['resample'] == 1 and r['snap'] == 1 and not acts and
+              r['tx'] == [] and r['last'] == 0,
+              f'tick bridge, {label}: the tick sees no change and does nothing (effects on, bank C, RESAMPLE mode, '
+              f'END Snap on, no state handler, no page request, nothing to the chip) ({r["fx"]}, bank {r["bank"]}, '
+              f'{acts[:3]})')
+    check(owned['held'][-1] == 1 and over['held'][-1] == 0 and pending['held'][19] == 1 and
+          pending['held'][-1] == 0,
+          f'the page is held while the bounce owns the recorder and let go on the first tick with the run over and '
+          f'the recorder idle ({owned["held"][-1]}, {over["held"][-1]}, {pending["held"][19]}, '
+          f'{pending["held"][-1]})')
+    note('the tick bridge against the parent, on the real global objects')
+
+
+# What a bounce may change, and why. Parameter keys (see RealMachine.params) and raw address ranges.
+AUDIT_PARAMS = {
+    ('project', 0xEF): 'the last pad played: the run plays the source through the stock pad note',
+    ('project', 0x98): 'derived from the voice slots (0x80017c00 looks for one holding the current pad): the run '
+                       'plays the source, which leaves its voice slot pointing at it, as tapping the pad does',
+}
+
+
+CURRENT_PAD_VIEW = ('the current pad\'s parameters as the project getter (0x64..0x7f) and system parameter 0x276 '
+                    '(index -1: the effect on the current pad\'s bus) show them: the current pad is the source, '
+                    'which REPLACE replaced')
+
+
+def audit_allowed(addr, pads):
+    """Raw bytes a bounce may change, with the reason. pads: the pads the run writes (its destination; with
+    REPLACE also the source, which the exchange swaps with it)."""
+    for pad in sorted(pads):
+        rec = SMPL + 0xD0 + pad * 0xAC
+        for lo, hi, why in (
+                (rec, rec + 0xAC, "the parameter record of a pad the run writes"),
+                (SMPL + 0x6CFC + pad * 24, SMPL + 0x6CFC + pad * 24 + 24, "the name of a pad the run writes"),
+                (SMPL + 0xF800 + pad * 0x80, SMPL + 0xF800 + pad * 0x80 + 0x80,
+                 "the extended block of a pad the run writes (the stock finalize resets it, the exchange swaps it; "
+                 "the modelled finalize does not reset it)"),
+                (FILE_INFO + pad * 36, FILE_INFO + pad * 36 + 36, "the file information of a pad the run writes")):
+            if lo <= addr < hi:
+                return why
+    for lo, hi, why in (
+            (SMPL + 0x1C, SMPL + 0x1D, 'the pads edited flag (the stock name function sets it)'),
+            (0x80592380, 0x80592381, "the stock pad setter's change flag (0x80018600), raised by its writes of the "
+                                     "destination pad's START, END and loop point, as the stock finalize raises it"),
+            (0x82E00AE0, 0x82E00AE4, 'project 0xef, the last pad played (the run plays the source by the stock '
+                                     'pad note)'),
+            (0x80246E14, 0x80246E18, "recorder target 0: the destination's bank, as the stock destination pick sets it"),
+            (0x805917E0, 0x805917E8, "SMPL TASK's queue: its put and take indices"),
+            (0x805919B0, 0x805919B8, 'the UI event queue: its put and take indices'),
+            (0x8059179C, 0x805917A0, "the input level meter (the stock feed's peaks, 0x1ca80)"),
+            (0x80245884, 0x8024589C, 'the stock key event records (the keys pressed)'),
+            (0x8024589C, 0x802458E8, 'the stock popup state'),
+            (0x802468D8, 0x80246918, 'the popup text'),
+            (0x80592438, 0x8059243C, 'the panel refresh flags (key LEDs)'),
+            (0x8059245C, 0x80592460, 'the panel refresh flags'),
+    ):
+        if lo <= addr < hi:
+            return why
+    return None
+
+
+def audit_run(img, man, target=T_PAD, exit_in=None):
+    """A bounce of C-1 on the real global objects, every key through the UI task's dispatcher: the gesture, VALUE
+    pressed for REPLACE, REC; audio periods until the run is over (EXIT after exit_in = (state, n): n periods in
+    that state), then 3 s more of the UI. Before it: bank C, BUS 1 and BUS 2 with an effect on, END Snap on. The RESAMPLE page's
+    tick runs every 16 ms through its vtable entries (RealMachine.ui); each entry is logged with the recorder's
+    state and the refresh flag."""
+    m = RealMachine(img, man)
+    m.call(SETTINGS_SET | 1, SETTINGS, 0x59, 1, 0)    # END Snap on: the run pins it off and must restore it
+    pcm = scene(m)
+    p0, r0 = m.params(), m.snapshot()
+    m.calls, m.uart = [], []
+    ticks = set()
+    m.uc.hook_add(UC_HOOK_CODE, lambda uc, a, size, _: ticks.add((m.r8(REC_STATE), uc.reg_read(ar.UC_ARM_REG_R1))),
+                  None, begin=RS_TICK, end=RS_TICK)
+    m.dispatch(EV_KEY, KEY_RESAMPLE)
+    m.dispatch(EV_PAD, 0, 100)
+    m.dispatch(EV_PAD_UP, 0, 0)
+    m.dispatch(EV_KEY_UP, KEY_RESAMPLE)
+    m.ui(1)
+    if target == T_REPLACE:
+        m.dispatch(EV_KEY, KEY_VALUE)
+        m.dispatch(EV_KEY_UP, KEY_VALUE)
+        m.ui(1)
+    picked = m.u('target')
+    m.dispatch(EV_KEY, KEY_REC)
+    m.dispatch(EV_KEY_UP, KEY_REC)
+    exited, n = False, 0
+    target1 = m.r32(TARGET_VALUES + 4)
+    for _ in range(6000):
+        m.period()
+        st = m.u('state')
+        if exit_in is not None and not exited and st == exit_in[0]:
+            n += 1
+            if n > exit_in[1]:
+                m.dispatch(EV_KEY, KEY_EXIT)
+                m.dispatch(EV_KEY_UP, KEY_EXIT)
+                exited = True
+        if st == U_IDLE:
+            break
+    for _ in range(3000):
+        m.ui(1)
+    return dict(m=m, pcm=pcm, p0=p0, r0=r0, p1=m.params(), r1=m.snapshot(), picked=picked, ticks=ticks,
+                exited=exited, target1=(s32(target1), s32(m.r32(TARGET_VALUES + 4))))
+
+
+def stock_resample(s, pad):
+    """A stock RESAMPLE through the stock page handlers: the empty pad (bank C) as the destination and standby, REC,
+    the source C-1, REC, the finalize. Returns the recorder's state after the first REC."""
+    s.dispatch(EV_PAD, pad % 16, 100)
+    s.dispatch(EV_PAD_UP, pad % 16, 0)
+    for _ in range(30):
+        s.period()
+    s.dispatch(EV_KEY, KEY_REC)                         # REC: the take starts
+    s.dispatch(EV_KEY_UP, KEY_REC)
+    for _ in range(30):
+        s.period()
+    started = s.r8(REC_STATE)
+    s.dispatch(EV_PAD, 0, 127)                          # the source
+    s.dispatch(EV_PAD_UP, 0, 0)
+    for _ in range(150):
+        s.period()
+    s.dispatch(EV_KEY, KEY_REC)                         # REC: the take stops
+    s.dispatch(EV_KEY_UP, KEY_REC)
+    for _ in range(2000):
+        s.period()
+    return started
+
+
+def audit_checks(img, man):
+    """Whole bounces on the real global objects, against the state before them and against a stock RESAMPLE.
+
+    Logged: every settings, project, system, pad and sequencer write, every page request, every bank or pad
+    change, every byte to the effects chip's UART. Every parameter (settings, project, system, all pads) is read
+    through the stock getters before and after, and the global objects are diffed byte for byte. A difference
+    passes only if it is on the allowlist above, with its reason. TO PAD, REPLACE, EXIT during the take and EXIT
+    in the silence wait; each with the RESAMPLE page's tick running in standby (and while recording)."""
+    refresh = set()
+    for label, target, exit_in in (('TO PAD', T_PAD, None), ('REPLACE', T_REPLACE, None),
+                                   ('EXIT during the take', T_PAD, (U_RUN, 10)),
+                                   ('EXIT in the silence wait', T_PAD, (U_SILENCE, 60))):
+        r = audit_run(img, man, target, exit_in)
+        m, p0, p1 = r['m'], r['p0'], r['p1']
+        dst, src = m.u('dst'), 32
+        if exit_in is None:
+            pads = {dst, src} if target == T_REPLACE else {dst}
+            want = 'REPLACED C-1\nORIG ON C-2' if target == T_REPLACE else 'BOUNCED C-1\nON C-2'
+            check(r['picked'] == target and m.u('runs') == 1 and m.u('r_exact') == 1 and dst == 33 and
+                  m.take[77:77 + 3000] == r['pcm'] and m.popup() == want,
+                  f'audit, {label}: the bounce of C-1 ran, frame-exact, on the real objects ({m.popup()!r})')
+        else:
+            pads = set()
+            check(r['exited'] and m.popup() == 'BOUNCE CANCELLED\nNOTHING CHANGED',
+                  f'audit, {label}: cancelled ({m.popup()!r})')
+        states = {s for s, f in r['ticks']}
+        refresh |= {f for s, f in r['ticks']}
+        check(1 in states and (exit_in is not None and exit_in[0] == U_SILENCE or 2 in states),
+              f'audit, {label}: the RESAMPLE page\'s tick ran during the run (recorder states {sorted(states)})')
+        check(m.chip() == [], f'audit, {label}: nothing to the effects chip ({m.chip()[:2]})')
+        check(m.bus_fx() == (3, 2), f'audit, {label}: BUS 1 and BUS 2 keep their effects ({m.bus_fx()})')
+        check(m.r32(SMPL + 0x14) == 2 and m.setting(0x36) == 1 and m.r16(PAGE_ID) == 0x0E,
+              f'audit, {label}: bank C stays current; RESAMPLE mode and page stay')
+        check(m.setting(0x59) == 1 and m.setting(0x32) == p0[('settings', 0x32)],
+              f'audit, {label}: END Snap back on; the RESAMPLE screen state as before ({m.setting(0x59)}, '
+              f'{p0[("settings", 0x32)]} -> {m.setting(0x32)})')
+        allowed_calls = {('settings', 0x24), ('settings', 0x59), ('settings', 0x1A), ('settings', 0x32),
+                         ('settings', 0x34), ('project', 0xEF)}
+        bad = []
+        for c in m.calls:
+            kind = c[1]
+            if kind in ('settings', 'project') and (kind, c[2]) in allowed_calls:
+                continue
+            if kind == 'pad' and c[4] in pads:
+                continue                              # the run's pads: the take's settings, the exchange
+            if kind == 'seq' and c[2] in (0x7B, 0x37, 0x46):
+                continue                              # the stock pad note and page tick: the tempo recomputed
+            if kind == 'system' and c[2] == 0x275 and c[3] == p0[('system', 0x275)]:
+                continue                              # the tempo written again with its own value
+            bad.append(c)
+        check(not bad, f'audit, {label}: every write during the run is on the allowlist ({bad[:4]})')
+        changed = {k: (p0[k], p1[k]) for k in p0 if p0[k] != p1[k] and not (k[0] == 'pad' and k[2] in pads)}
+        current = p0[('bank',)] * 16 + p0[('pad',)]
+        explained = dict(AUDIT_PARAMS)
+        if current in pads:                           # REPLACE of the current pad: its views changed with it
+            explained.update({k: CURRENT_PAD_VIEW for k in changed if k == ('system', 0x276) or
+                              (k[0] == 'project' and 0x64 <= k[1] < 0x80)})
+        unexplained = {k: v for k, v in changed.items() if k not in explained}
+        check(not unexplained, f'audit, {label}: every settings, project, system and pad parameter but the run\'s '
+                               f'pads\' is as before ({list(unexplained.items())[:6]})')
+        diffs = raw_diff(r['r0'], r['r1'])
+        raw = [(a, n) for a, n in diffs if not audit_allowed(a, pads)]
+        used = sorted({audit_allowed(a, pads) for a, n in diffs} - {None})
+        print(f'   audit, {label}: changed bytes explained by: ' + '; '.join(used))
+        print(f'   audit, {label}: parameters changed besides the run\'s pads: ' +
+              ('; '.join(f'{k} {v}' for k, v in changed.items()) or 'none') + f'; recorder target 1 {r["target1"]}')
+        check(not raw, f'audit, {label}: every changed byte of the global objects is on the allowlist '
+                       f'({[(hex(a), n) for a, n in raw[:8]]})')
+        if label == 'TO PAD':                         # the page let go: a stock RESAMPLE next ends as stock
+            started = stock_resample(m, 34)
+            check(started == 2 and len(m.finalized) == 2 and m.r32(m.sym['bnc_page']) == 0 and
+                  m.bus_fx() == (0, 0) and m.setting(0x36) == 0 and m.r32(SMPL + 0x14) == 2 and
+                  m.r32(SMPL + 0x18) == 34 % 16,
+                  f'audit, a stock RESAMPLE into C-3 after the TO PAD bounce: it ends as stock (BUS 1/2 effects off, '
+                  f'the new pad current, RESAMPLE left) ({m.bus_fx()}, 0x36 {m.setting(0x36)}, pad '
+                  f'{m.r32(SMPL + 0x18)})')
+    check(refresh == {0, 1}, f'audit: the page\'s tick ran through both its entries, refresh 0 and 1 ({refresh})')
+    # the stock RESAMPLE of the same pad, through the stock page handlers: it ends with the stock routine
+    s = RealMachine(img, man)
+    scene(s)
+    s.calls = []
+    dst = 33
+    started = stock_resample(s, dst)
+    check(started == 2 and len(s.finalized) == 1 and s.bus_fx() == (0, 0) and s.setting(0x36) == 0 and
+          s.r32(SMPL + 0x14) == 2 and s.r32(SMPL + 0x18) == dst % 16,
+          f'audit, stock RESAMPLE of the same pad: after the take the stock routine switches BUS 1/2 effects off, '
+          f'makes the new pad current and leaves RESAMPLE (effects {s.bus_fx()}, 0x36 {s.setting(0x36)}, '
+          f'pad {s.r32(SMPL + 0x18)}); the bounce does none of that')
+    note('the whole-state audit against the state before and a stock RESAMPLE')
+
+
 def main():
     out = Path(sys.argv[1])
     man = json.loads((out / 'manifest.json').read_text(encoding='utf-8'))
@@ -2152,6 +2621,7 @@ def main():
     parent = Path(man['parent_app1']).read_bytes()
     static_checks(out, man, img, parent)
     bridge_checks(img, parent, man)
+    tick_bridge_checks(img, parent, man)
     interface_checks(img, man)
     gate_checks(img, man)
     filter_checks(img, man)
@@ -2161,6 +2631,7 @@ def main():
     settings_checks(img, man)
     replace_checks(img, man)
     fence_checks(img, man)
+    audit_checks(img, man)
     leak_checks(img, man)
     failure_checks(img, man)
     cost_checks(img, man)
