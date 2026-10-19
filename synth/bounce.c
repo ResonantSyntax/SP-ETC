@@ -25,9 +25,10 @@
  *      LOOP mode) to the engine's stereo writer: file frame k is RX frame F0 + k. It writes only while
  *      the stock gate itself would (sub-state 2, error word 0): when the stock recorder ends the take on
  *      its own (storage full, ring overrun), the module stops at once and lets the stock finalize run;
- *   6. the round trip L is the onset-measured value when it lies within 6 frames of the estimate
- *      (modulo 64), else the estimate: this boot's last onset-calibrated L, else 138.5 minus the
- *      eDMA phase averaged over the silence wait, the candidate nearest 75 (bounce probe T1);
+ *   6. the round trip L is the estimate: this boot's onset-calibrated L, else 138.5 minus the eDMA
+ *      phase averaged over the silence wait plus 64 D (bounce probe T1's relation). The onset-
+ *      measured value replaces it only within 1 frame (a threshold crossing moves with the attack
+ *      and the levels);
  *   7. post REC_STOP (0x18); after the stock finalize, set START = F0 + L, END = START + length and
  *      the loop point through the stock pad setter (the stock finalize snaps START), copy the source's
  *      performance settings and set the printed ones neutral, name the pad with the run's numbers, save,
@@ -185,9 +186,11 @@ typedef s32 (*fn4_t)(u32, u32, u32, u32);
 #define BUS_DRY 0
 
 /* --- tuning --- */
-#define TX_ONSET 2048           /* about -48 dBFS of the 20-bit stems (bounce probe, T1) */
-#define RX_ONSET 128            /* about -48 dBFS of the 16-bit capture (bounce probe, T1) */
-#define TX_QUIET 128            /* about -72 dBFS */
+/* The stems carry 16-bit samples in their 20-bit slots, at the capture's scale (dm-404 reads both at the same
+ * level for one sound); the two onsets and the two quiet tests use the same thresholds. */
+#define TX_ONSET 128            /* about -48 dBFS */
+#define RX_ONSET 128            /* about -48 dBFS */
+#define TX_QUIET 8              /* about -72 dBFS */
 #define RX_QUIET 8              /* about -72 dBFS */
 #define SILENCE_FRAMES 9600     /* 200 ms */
 #define TAIL_QUIET 12000        /* 250 ms */
@@ -195,10 +198,12 @@ typedef s32 (*fn4_t)(u32, u32, u32, u32);
 #define ONSET_SEARCH 4800       /* the TX onset within 100 ms of the voice start */
 #define L_MIN 8
 #define L_MAX 300
-#define L_ACCEPT 6              /* an onset L within this of the estimate is used */
-#define L_CACHE 3               /* and within this it becomes the boot's estimate */
+/* The phase estimate is good to a frame: L - 64 D + (P mod 64) read 138 or 139 on every boot measured (T1, the
+ * unit since). An onset is not: a threshold crossing moves with the attack's shape and any level step between the
+ * stems and the return (bounce-3-test2 took an onset 3 frames early from a loop's attack). */
+#define L_ACCEPT 1              /* an onset L within this of the estimate is used, and calibrates the boot */
 #define K16 2216                /* 16 x 138.5: bounce probe T1 read L - 64 D + (P mod 64) = 138 and 139 */
-#define L_CENTER 75             /* T1: L was 73..78; the estimate is the candidate nearest this */
+#define L_CENTER 75             /* T1: L was 73..78; with D out of reach, the candidate nearest this */
 #define END_MARGIN 32
 #define MIN_FILE 1000           /* the stock pad loader refuses shorter samples */
 #define HIST_BLOCKS 4
@@ -425,10 +430,13 @@ static void read_phase(void) {
     A.p_n++;
 }
 
-/* L = 138.5 - (P mod 64) + 64 n, rounded, the candidate nearest L_CENTER; p16 = 16 x the mean P. */
-EXPORT s32 bnc_estimate(s32 p16) {
-    s32 x16 = (K16 - p16) & 1023;
-    s32 v = (x16 + 8) >> 4;
+/* L = 138.5 - (P mod 64) + 64 D, rounded (T1's relation); p16 = 16 x the mean P, d = RX blocks - TX blocks. If that
+ * falls outside L_MIN..L_MAX, the candidate 138.5 - (P mod 64) + 64 n nearest L_CENTER. */
+EXPORT s32 bnc_estimate(s32 p16, s32 d) {
+    s32 v = (K16 - (p16 & 1023) + 1024 * d + 8) >> 4;
+    if (v >= L_MIN && v <= L_MAX)
+        return v;
+    v = (((K16 - p16) & 1023) + 8) >> 4;
     while (v + 32 <= L_CENTER)
         v += 64;
     while (v - 32 > L_CENTER)
@@ -436,9 +444,9 @@ EXPORT s32 bnc_estimate(s32 p16) {
     return v;
 }
 
-/* meas - est reduced modulo 64 into -32..31 */
-static s32 off64(s32 meas, s32 est) {
-    return ((meas - est + 32) & 63) - 32;
+/* |a - b| <= L_ACCEPT */
+static u32 agrees(s32 a, s32 b) {
+    return a - b <= L_ACCEPT && b - a <= L_ACCEPT;
 }
 
 static void decide(s32 l) {
@@ -499,7 +507,7 @@ EXPORT void bnc_rx(void) {
         A.p16 = A.p0 * 16 + (A.p_sum * 16 + (s32)A.p_n / 2) / (s32)A.p_n;
         A.d = (s32)(A.rx_blocks - A.tx_blocks);
         A.cached = U.cal_valid;
-        A.l_est = U.cal_valid ? U.cal_l : bnc_estimate(A.p16);
+        A.l_est = U.cal_valid ? U.cal_l : bnc_estimate(A.p16, A.d);
     }
     if (!A.have_l) {                        /* L: the RX onset of the TX onset, near the estimate */
         u32 oldest = top > HIST_FRAMES ? top - HIST_FRAMES : 0;
@@ -518,9 +526,9 @@ EXPORT void bnc_rx(void) {
                 }
                 A.scan = fr;
                 if (found) {
-                    s32 meas = (s32)(found - 1 - txo), diff = off64(meas, A.l_est);
+                    s32 meas = (s32)(found - 1 - txo);
                     A.l_meas = meas;
-                    decide(diff <= L_ACCEPT && diff >= -L_ACCEPT ? meas : A.l_est);
+                    decide(agrees(meas, A.l_est) ? meas : A.l_est);
                 } else if (fr >= to) {
                     decide(A.l_est);
                 }
@@ -1192,8 +1200,8 @@ static void tick(void) {
             restore_source();               /* the source's settings back before the project is saved */
             set_setting(0x59, 0, 0);
             post(CMD_STOP);
-            s32 diff = off64(A.l_meas, A.l_est);
-            if (A.l_meas && A.l == A.l_meas && diff <= L_CACHE && diff >= -L_CACHE) {
+            /* an onset that agrees with the phase (not with the last calibration, so it cannot drift) */
+            if (A.l_meas && A.l == A.l_meas && agrees(A.l_meas, bnc_estimate(A.p16, A.d))) {
                 U.cal_l = A.l_meas;
                 U.cal_valid = 1;
             }

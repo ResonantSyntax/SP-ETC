@@ -488,14 +488,15 @@ class Machine:
         return 1
 
     def _mixer(self, uc, address, size, _):
-        """The stub mixer: this block's stems from the voice model (DRY, 20-bit = 16-bit << 4)."""
+        """The stub mixer: this block's stems from the voice model (DRY: 16-bit samples in the 20-bit stem slots, at
+        the capture's scale, as dm-404 reads them)."""
         self.mixer_calls.append([uc.reg_read(ar.UC_ARM_REG_R0), uc.reg_read(ar.UC_ARM_REG_R1),
                                  uc.reg_read(ar.UC_ARM_REG_SP)])
         n = self.tx_n
         frames = self.voice.tick(n) if self.voice else [(0, 0)] * 64
         buf = bytearray(64 * 14 * 4)
         for f, (l, r) in enumerate(frames):
-            struct.pack_into('<2i', buf, f * 56, l << 4, r << 4)
+            struct.pack_into('<2i', buf, f * 56, l, r)
             self.tx_mix[64 * n + f] = (l, r)
         uc.mem_write(STEMS, bytes(buf))
         self._ret(1)
@@ -1282,10 +1283,32 @@ def runs(img, man):
     check_take(m, 'NO TAIL, D -1, P65.5', pcm, 73, NO_TAIL, 6000)
     check(m.u('r_est') == 73 and m.u('r_d') == -1, f'P65.5 D-1: estimate 73 ({m.u("r_est")}), D -1')
 
-    # the onset decides a wrong estimate within 6 frames (here the estimate says 77, the onset 72)
+    # onsets a threshold crossing gets wrong: the true L is the estimate's, 77 (P61 D0); the onset moves with the
+    # attack's shape and with a level step between the stems and the return (bounce-3-test2 on the unit: an onset 3
+    # frames early from a loop's attack, L69 M69 against L72 M72 at the same P66)
+    onsets = []
+    for label, attack, gain, echo in (('a 32-frame attack', 32, 1.0, None), ('a 20 ms attack, RX +6 dB', 960, 2.0, None),
+                                      ('a 20 ms attack, RX -6 dB', 960, 0.5, None),
+                                      ('a 10 ms attack, an echo and RX +3.5 dB', 480, 1.5, (1500, 0.5))):
+        m, pcm, res = native_case(label, NO_TAIL, 0, attack=attack, gain=gain, echo=echo)
+        onsets.append((label, m.u('r_meas'), m.u('r_l')))
+        # the same levels: the matched thresholds cross together, L is exact; a level step can still move the onset
+        # by a frame, which the rule cannot tell from T1's one-frame spread (138 or 139), so L is right to a frame
+        exact = gain == 1.0 and echo is None
+        check(res['popup'] == 'BOUNCED A-1\nON A-2' and (m.u('r_l') == 77 if exact else abs(m.u('r_l') - 77) <= 1),
+              f'{label}: L = the true 77{"" if exact else " to a frame"} (onset {m.u("r_meas")}, estimate '
+              f'{m.u("r_est")}, used {m.u("r_l")})')
+        if exact:
+            check_take(m, label, pcm, 77, NO_TAIL, 6000)
+    check(any(meas not in (0, 77) for _, meas, _ in onsets),
+          f'those onsets are off the true L, so the rule, not the onset, keeps L exact ({onsets})')
+    # LOOP of a loop whose pass starts softly: the window is the second pass, frame for frame
+    m, pcm, res = native_case('LOOP soft start', LOOP, 2, n=5000, loop=1, attack=32)
+    check(m.u('r_l') == 77, f'LOOP, a 32-frame attack: L = the true 77 (onset {m.u("r_meas")}, used {m.u("r_l")})')
+    check_take(m, 'LOOP, a 32-frame attack', pcm[:5000], 77, LOOP, 5000)
+    # an onset 5 frames below the estimate is not used, nor one 20 frames late (a slow effect): the estimate is
     m, pcm, res = native_case('L-5', NO_TAIL, 0, L=72)
-    check_take(m, 'NO TAIL, latency 5 frames below the estimate', pcm, 72, NO_TAIL, 6000)
-    # ... and not beyond: an onset 20 frames late (a slow effect) keeps the estimate
+    check(m.u('r_meas') == 72 and m.u('r_l') == 77, f'an onset 5 frames from the estimate is not used ({m.u("r_l")})')
     m, pcm, res = native_case('L+20', NO_TAIL, 0, L=97)
     check(m.u('r_l') == 77 and m.u('r_meas') == 97, f'an onset 20 frames from the estimate is not used ({m.u("r_l")})')
 

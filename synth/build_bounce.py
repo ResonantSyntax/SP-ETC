@@ -570,7 +570,12 @@ def build(inp: Path, out: Path, zig: Path, base: int):
         changes=["the bounced pad is charged again from its window after its settings, as the stock finalize ends "
                  "(0x800d6390, 0x800d7508): bounce-3-test2 kept the take's charge, so it played the take's length from "
                  "its new START, L + 32 frames past END (in LOOP mode the next pass's beginning, a click with LOOP off, "
-                 "each loop L + 32 frames long)"],
+                 "each loop L + 32 frames long)",
+                 "L is the phase estimate, 138.5 - (P mod 64) + 64 D: an onset is used only within 1 frame of it "
+                 "(test2: within 6, modulo 64, so a soft attack's onset 3 frames early was used, L69 M69 against "
+                 "L72 M72 at the same P66, and a far one could pass as another 64-frame block)",
+                 "the TX onset and quiet thresholds are the RX ones (128, 8): the stems carry 16-bit samples, at the "
+                 "capture's scale (test2 put TX 24 dB higher, so a soft attack crossed it late)"],
         changes_test2=['the looper refuses or ends a bounce only while it plays, records, overdubs or waits for a '
                  'level (phase +0x101), no longer whenever MARK Function = LOOPER (+0x39 = enabled)',
                  "the RESAMPLE page's tick (0x8012db58) no longer sees a bounce's standby, take or cancel: after a "
@@ -607,10 +612,14 @@ def build(inp: Path, out: Path, zig: Path, base: int):
         branch_scan=dict(bytes=scanned, result='no direct branch into a patched span'),
         guards=[dict(start=s, end=e, sha256=d, establishes=w) for s, e, d, w in GUARDS],
         table_guards=[dict(address=a, value=v, establishes=w) for a, v, w in TABLE_GUARDS],
-        latency=dict(k_chip=138, center=75, onset_accept=6, onset_calibrates=3,
-                     estimate='K - (P mod 64) + 64 n, the candidate nearest 75; P = eDMA phase as the probe read it',
-                     onset='TX stems above 2048 (20-bit) within 100 ms of T0; RX above 128 (16-bit) 8..300 frames later'),
-        thresholds=dict(silence='RX |x| <= 8 and TX |x| <= 128 for 9600 frames, at most 10 s',
+        latency=dict(k_chip=138.5, center=75, onset_accept=1, onset_calibrates=1,
+                     estimate='138.5 - (P mod 64) + 64 D (T1: L - 64 D + (P mod 64) = 138 or 139), else this boot\'s '
+                              'calibration; outside 8..300 the candidate nearest 75. P = eDMA phase as the probe read '
+                              'it, D = RX blocks - TX blocks',
+                     onset='TX stems above 128 within 100 ms of T0; RX above 128 8..300 frames later (the stems carry '
+                           '16-bit samples, at the capture\'s scale); used only within 1 frame of the estimate, and '
+                           'calibrates the boot only within 1 frame of the phase'),
+        thresholds=dict(silence='RX |x| <= 8 and TX |x| <= 8 for 9600 frames, at most 10 s',
                         tail='after the voice ends: 12000 frames below RX |x| <= 8; END = last frame above; cap 30 s'),
         popups=POPUPS,
         tool='synth/build_bounce.py')

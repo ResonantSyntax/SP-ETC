@@ -11,8 +11,10 @@ fix). It supersedes stage 2 (bounce-2-test1, which never ran on the unit) on the
 plus the pad-event dispatcher and, since bounce-3-test2, the RESAMPLE page's tick. Stage 1 is the
 bounce probe ([BOUNCE_PROBE.md](BOUNCE_PROBE.md)).
 
-**bounce-3-test3** follows the hardware run of bounce-3-test2 (2026-10-19). A LOOP bounce played
-with LOOP off clicked at its end, because the end held a little of the loop's beginning.
+**bounce-3-test3** follows the hardware run of bounce-3-test2 (2026-10-19), which found two
+faults in a LOOP bounce. Played with LOOP off it clicked at its end, because the end held a little
+of the loop's beginning. Layered with its source (PAD LINK) it phased: a constant offset of a few
+frames, steady over 30 s, with no effect on.
 
 - **The bounce played on past its END.** Playback does not read START and END directly. It reads
   the pad's charge: SMPL CHARGE's cache entry, charged by `0x800d84f0` from the pad's range at
@@ -39,6 +41,27 @@ with LOOP off clicked at its end, because the end held a little of the loop's be
   - REPLACE and UNDO were not affected: the stock exchange reloads both pads, which charges them
     afresh. A REPLACE in LOOP mode on test2 sounds for END − START and loops at END − the loop
     point in dm-404.
+- **The window started a few frames early.** The user's two bounces at the same P66 read
+  `L72 M72` (an earlier bounce, used as the source) and `L69 M69` (the LOOP bounce). T1's
+  relation, L − 64 D + (P mod 64) = 138 or 139, puts L at 72 or 73 there. The LOOP bounce
+  measured its onset 3 frames early and used it. Two things let that through:
+  - **The onset thresholds did not match.** The TX threshold, 2048, assumed stems at full
+    20-bit scale. The stems carry 16-bit samples at the capture's scale: in dm-404 a pad of
+    full-scale noise peaks at about 8,900 in its stem, and the capture reads the same level. So
+    TX's −48 dBFS was really −24 dB, and any attack that is not instant crossed it later than
+    RX crossed its own −48 dB. That made M too small by the attack's rise from −48 to −24 dB.
+    T1 used clicks, whose attack is instant, so it never showed.
+  - **The rule trusted the onset within 6 frames of the estimate, modulo 64.** A 3-frame error
+    passed. So could an onset 69 frames off, which looks like another 64-frame block.
+  - test3 matches the thresholds (TX 128 and quiet 8, as RX). The estimate is primary:
+    138.5 − (P mod 64) + 64 D, T1's relation with D, or this boot's calibration. An onset is
+    used only within 1 frame of it, and calibrates the boot only within 1 frame of the phase.
+  - In Unicorn, with true L 77: a 32-frame attack, 20 ms attacks with RX +6 and −6 dB, a 10 ms
+    attack through an echo with +3.5 dB, and a LOOP pass with a soft start. The test2 rule took
+    L 71, 8, 8, 77 and 73. test3 gives 77, and 76 for the level step, which the rule cannot tell
+    from T1's one-frame spread. One frame is 21 µs, so its first comb notch is at 24 kHz.
+  - dm-404's effects stand-in has its own round trip (65 at P65, where the unit's relation gives
+    73), so there test3 aligns to the unit's estimate, about 9 frames off the emulator's.
 
 **bounce-3-test2** followed the first hardware run of bounce-3-test1 (2026-10-19), which found three
 bugs:
@@ -352,13 +375,17 @@ count both and call `bnc_tx` after the mixer and `bnc_rx` after the feed.
   F0 + *k*.
 - **L:** the round trip through the effects chip, in these frame counts. START = F0 + L in the
   file, END = START + the window.
-  - **Onset:** measured as in the probe. L = the first RX frame above −48 dBFS (128) minus the
-    first TX frame above −48 dBFS (2048), searched within 100 ms of T0. It is used when it lies
-    within 6 frames of the estimate, modulo 64.
-  - **Estimate:** this boot's last onset L that agreed with the estimate within 3. Otherwise
-    138.5 − (P mod 64), taking the candidate nearest 75 and rounding. P is the eDMA phase (TX
-    line 3 read position minus RX write position, in frames) averaged over the silence wait.
-  - **Basis:** T1 read L − 64 D + (P mod 64) as 138 and 139 on two boots, with L 77 and 73.
+  - **Estimate:** this boot's calibrated L. Otherwise 138.5 − (P mod 64) + 64 D, rounded; if that
+    is outside 8..300, the candidate 138.5 − (P mod 64) + 64 n nearest 75. P is the eDMA phase
+    (TX line 3 read position minus RX write position, in frames) averaged over the silence wait;
+    D is the RX blocks minus the TX blocks counted since boot.
+  - **Onset:** L = the first RX frame above −48 dBFS minus the first TX frame above −48 dBFS
+    (both 128: the stems carry 16-bit samples, at the capture's scale), searched within 100 ms
+    of T0. It is used only within 1 frame of the estimate; within 1 frame of the phase estimate
+    it also calibrates the boot. A threshold crossing moves with the attack's shape and with any
+    level step between the stems and the return, so it only settles T1's one-frame spread.
+  - **Basis:** T1 read L − 64 D + (P mod 64) as 138 and 139 on two boots, with L 77 and 73. The
+    unit has kept to it since: `L72 M72` at P66 with D −1 is 138.
 - **The stock recorder never writes:** before every feed call the RX bridge clears the feed's
   gate enable (`0x805917c4`) while a bounce owns the recorder. Every stock standby sets it back
   to 1, and the run sets it back to 1 when it ends. The module writes only while the stock gate
@@ -446,12 +473,13 @@ python synth/build_bounce.py out/kits-v946-final/SP404MKII_APP1.bin out/bounce -
 python synth/test_bounce.py out/bounce
 ```
 
-bounce-3-test3 is APP1 `8995fd25…8927` (3,103,888 bytes). It comes out the same on the published
+bounce-3-test3 is APP1 `b9b11fb0…3c52b` (3,103,872 bytes). It comes out the same on the published
 v9.46 (`7b5fbcb4…684a`) and on a clean rebuild of every stage from stock 5.52 (v9.5 `d0919e40…`,
 v9.6 `1b2d50e0…`, kits `88384c3c…`, start fix `7b5fbcb4…684a`), and two builds are byte-identical.
 (bounce-3-test2 was `26f594db…11bf`, 3,103,856 bytes; bounce-3-test1 `59e061cf…221d`, 3,103,744
-bytes. Two earlier test2 builds were never handed over: `571589da…20aa`, before the third bug was
-known, and `9e438a84…0373`, the first fix, which skipped only the after-recording routine.)
+bytes. These builds were never handed over: `8995fd25…8927`, an earlier test3 with the charge fix
+alone; `571589da…20aa`, a test2 from before the third bug was known; and `9e438a84…0373`, the first
+test2 fix, which skipped only the after-recording routine.)
 
 ## Checks (emulator)
 
@@ -496,7 +524,8 @@ Modelled:
 - the RTOS under the looper and the queue (locks, waits, task creation, event flags), and the
   dispatcher's run-time state on the RESAMPLE page (no mode holding the keys, no key pairs, the
   page object live);
-- the source pad's voice, which renders the pad's frames into the DRY stems from the first block
+- the source pad's voice, which renders the pad's frames into the DRY stems (16-bit samples in
+  the 20-bit slots, at the capture's scale, as dm-404 reads them) from the first block
   after its trigger;
 - the effects chip: RX = the record mix L frames later, optionally with gain, an echo, noise, or
   music on the input while EXT SOURCE is on;
@@ -505,7 +534,7 @@ Modelled:
   system parameter stores;
 - the screen: drawing returns at once.
 
-The checks (491 cases):
+The checks (506 cases):
 
 - **Static:** only the header, the six sites and the appended tail differ from v9.46. The
   scatter table is v9.46's rows plus a copy row and a zero-fill row; APP1 ends below the PCM
@@ -548,6 +577,10 @@ The checks (491 cases):
   commands posted, the settings pinned and restored, the stock gate never running, the name and
   the save; the bounce's last charge is its final START, END and loop point (on test2 each of these
   fails: the last charge was the take's).
+- **Onsets a threshold crossing gets wrong,** with true L 77: a 32-frame attack, 20 ms attacks
+  with RX +6 and −6 dB, a 10 ms attack through an echo with +3.5 dB, and a LOOP pass with a soft
+  start. L stays 77, and is within a frame with the level step. An onset 5 frames or 20 frames
+  from the estimate is not used.
 - **The bounced pad's settings,** read back through the stock getter: performance settings
   copied, printed ones neutral, VINYL MODE with and without TEMPO SYNC, the poly bit under GATE,
   LOOP, loop point and the 0x72 flag per mode, PAD LINK; the source untouched.
