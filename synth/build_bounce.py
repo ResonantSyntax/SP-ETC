@@ -51,7 +51,7 @@ HERE = Path(__file__).resolve().parent
 FLASH, COPY, ZERO = 0x60080000, 0x600800E4, 0x60080100   # scatter rows: copy, zero fill
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
 PUBLISHED_V946 = '7b5fbcb4c3ce1e8782fef4b5803be74c7d14eddf25a1b53682abe00c9ed3684a'
-REVISION = 'bounce-3-test3'
+REVISION = 'bounce-3-test4'
 SLOT = 0x5000                       # reserved: [base, base + SLOT)
 SLOT_CEILING = 0x83FED000           # the CPU meter test build's slot, then the start fix at 0x83FEF000
 BRIDGES = {'tx': 0x00, 'rx': 0x30, 'ui': 0x80, 'gate': 0xC0, 'tick': 0x100}
@@ -566,8 +566,19 @@ def build(inp: Path, out: Path, zig: Path, base: int):
         parent_app1=str(inp), parent_sha256=parent_sha, parent_is_published_v946=parent_sha == PUBLISHED_V946,
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
         if parent_manifest.exists() else None,
-        replaces='bounce-3-test2 (the same six sites)',
-        changes=["the bounced pad is charged again from its window after its settings, as the stock finalize ends "
+        replaces='bounce-3-test3 (the same six sites)',
+        changes=["the take starts where the return departs from silence: the first non-zero RX frame in the 16 "
+                 "frames before L, after 8 silent ones, else L. The unit's return pre-rings each attack about 7 "
+                 "frames before its main delay (a closed hi-hat on test3: L73 M73, START 457, first non-zero 450), so "
+                 "test3 cut the attack's start and a LOOP take ended in the next pass's pre-ring (the end click). The "
+                 "window stays one pass; layered with its source, the bounce's main attack sits up to the pre-ring "
+                 "(about 7 frames, 0.15 ms) late",
+                 "the boot's calibration is an offset on T1's relation (1/16 frames), applied to each take's own P "
+                 "and D: test3 kept an L, which a P move within the boot made wrong (P65.1 then P62.0: the LOOP "
+                 "take used L73 where its phase and its onset M76 said 76)",
+                 "the pad's name shows the departure (A1 L73-7 M73 P65.1 D-1); a name longer than the stock 23 "
+                 "characters leaves out P's tenth, so D is never cut (A12 L73-7C M73 P65 D-1)"],
+        changes_test3=["the bounced pad is charged again from its window after its settings, as the stock finalize ends "
                  "(0x800d6390, 0x800d7508): bounce-3-test2 kept the take's charge, so it played the take's length from "
                  "its new START, L + 32 frames past END (in LOOP mode the next pass's beginning, a click with LOOP off, "
                  "each loop L + 32 frames long)",
@@ -612,10 +623,13 @@ def build(inp: Path, out: Path, zig: Path, base: int):
         branch_scan=dict(bytes=scanned, result='no direct branch into a patched span'),
         guards=[dict(start=s, end=e, sha256=d, establishes=w) for s, e, d, w in GUARDS],
         table_guards=[dict(address=a, value=v, establishes=w) for a, v, w in TABLE_GUARDS],
-        latency=dict(k_chip=138.5, center=75, onset_accept=1, onset_calibrates=1,
-                     estimate='138.5 - (P mod 64) + 64 D (T1: L - 64 D + (P mod 64) = 138 or 139), else this boot\'s '
-                              'calibration; outside 8..300 the candidate nearest 75. P = eDMA phase as the probe read '
-                              'it, D = RX blocks - TX blocks',
+        latency=dict(k_chip=138.5, center=75, onset_accept=1, onset_calibrates=1, depart_span=16, depart_quiet=8,
+                     estimate='138.5 - (P mod 64) + 64 D (T1: L - 64 D + (P mod 64) = 138 or 139) for this take\'s P '
+                              'and D, plus this boot\'s calibration (an offset in 1/16 frames); outside 8..300 the '
+                              'candidate nearest 75. P = eDMA phase as the probe read it, D = RX blocks - TX blocks',
+                     window='START = F0 + where the return departs from silence: the first RX frame not 0 in the 16 '
+                            'frames before L (from the sound\'s first TX frame not 0), after 8 silent RX frames; '
+                            'else F0 + L',
                      onset='TX stems above 128 within 100 ms of T0; RX above 128 8..300 frames later (the stems carry '
                            '16-bit samples, at the capture\'s scale); used only within 1 frame of the estimate, and '
                            'calibrates the boot only within 1 frame of the phase'),

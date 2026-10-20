@@ -25,11 +25,13 @@
  *      LOOP mode) to the engine's stereo writer: file frame k is RX frame F0 + k. It writes only while
  *      the stock gate itself would (sub-state 2, error word 0): when the stock recorder ends the take on
  *      its own (storage full, ring overrun), the module stops at once and lets the stock finalize run;
- *   6. the round trip L is the estimate: this boot's onset-calibrated L, else 138.5 minus the eDMA
- *      phase averaged over the silence wait plus 64 D (bounce probe T1's relation). The onset-
+ *   6. the round trip L is the estimate: 138.5 minus the eDMA phase averaged over this take's
+ *      silence wait plus 64 D (bounce probe T1's relation), with this boot's onset calibration (a
+ *      frame at most; P can move between takes, so it is kept as an offset, not an L). The onset-
  *      measured value replaces it only within 1 frame (a threshold crossing moves with the attack
  *      and the levels);
- *   7. post REC_STOP (0x18); after the stock finalize, set START = F0 + L, END = START + length and
+ *   7. post REC_STOP (0x18); after the stock finalize, set START = F0 + where the return departs from
+ *      silence (up to 16 frames before L: the return's low pre-ring), END = START + length and
  *      the loop point through the stock pad setter (the stock finalize snaps START), copy the source's
  *      performance settings and set the printed ones neutral, name the pad with the run's numbers, save,
  *      and restore everything pinned;
@@ -107,6 +109,7 @@ typedef unsigned char u8;
 #define F_PADGET 0x800DC6B9u    /* pad get (obj, id, pad) */
 #define F_PADSET 0x800DA721u    /* pad set (obj, id, value, pad) */
 #define F_PADNAME 0x800CFA29u   /* pad name (obj, pad, text): 23 characters */
+#define PADNAME_LEN 23          /* ... it keeps this many */
 #define F_PROTECT 0x8001AA79u   /* the pad setter's protect test (obj, id, pad): true = it refuses */
 #define F_TSET 0x800D48E9u      /* recorder target set (obj, id, value, 0), through the command ring */
 #define F_SYSGET 0x800DA011u    /* system parameter get (obj, id, -1) */
@@ -202,6 +205,12 @@ typedef s32 (*fn4_t)(u32, u32, u32, u32);
  * unit since). An onset is not: a threshold crossing moves with the attack's shape and any level step between the
  * stems and the return (bounce-3-test2 took an onset 3 frames early from a loop's attack). */
 #define L_ACCEPT 1              /* an onset L within this of the estimate is used, and calibrates the boot */
+/* L is the return's main delay (T1's clicks crossed -48 dB there); the return departs from silence a few frames
+ * earlier, a low pre-ring of the attack (bounce-3-test3 on the unit: START 457, first non-zero 450). The take starts
+ * where the return departs, so it holds the whole attack and a LOOP take ends before the next pass's pre-ring. */
+#define DEPART 0                /* any sample not 0 is no longer silence (both sides; the unit's floor is 0) */
+#define DEPART_SPAN 16          /* the return departs at most this many frames before L */
+#define DEPART_QUIET 8          /* ... after this many frames of silence */
 #define K16 2216                /* 16 x 138.5: bounce probe T1 read L - 64 D + (P mod 64) = 138 and 139 */
 #define L_CENTER 75             /* T1: L was 73..78; with D out of reach, the candidate nearest this */
 #define END_MARGIN 32
@@ -253,6 +262,9 @@ struct aud {
     u32 win;                    /* the window's length, 0 = not known yet */
     u32 rx_now;                 /* RX frames seen */
     u32 fail;                   /* 1: the kept blocks were overwritten; 2: the stock recorder ended the take */
+    u32 tx_first;               /* TX frame + 1 of the first frame above DEPART, 0 = none */
+    s32 l_win;                  /* the window's delay: where the return departs from silence, else L */
+    u32 departed;               /* l_win is known */
     s16 hist[HIST_BLOCKS * FRAMES * 2];
 };
 
@@ -275,7 +287,7 @@ struct ui {
     u32 msg;                    /* a popup to show when idle */
     u32 waits;                  /* a recorder command is pending (cancel) */
     u32 last_mode;              /* kept for the next setup (RAM) as soon as it is picked */
-    s32 cal_l;                  /* this boot's last onset-calibrated L */
+    s32 cal_off;                /* this boot's onset minus T1's relation, 1/16 frames, from a take that agreed */
     u32 cal_valid;
     u32 runs;
     /* the last finished run */
@@ -387,9 +399,19 @@ EXPORT void bnc_tx(void) {
     }
     u32 base = block * FRAMES;
     u32 live = A.voice_end == 0;
-    if (!A.tx_onset && base < A.t0 + ONSET_SEARCH) {       /* the sound's first frame above -48 dBFS */
+    if (!A.tx_onset && base < A.t0 + ONSET_SEARCH) {       /* the sound's first frame out of silence, then above
+                                                               -48 dBFS (never earlier): one pass over the stems */
         const volatile s32 *x = STEMS;
-        for (u32 i = 0; i < FRAMES * STEM_SLOTS; i++)
+        u32 i = 0;
+        if (!A.tx_first) {
+            for (; i < FRAMES * STEM_SLOTS; i++)
+                if (LOUD(x[i], DEPART)) {
+                    A.tx_first = base + i / STEM_SLOTS + 1;
+                    break;
+                }
+            i -= i % STEM_SLOTS;
+        }
+        for (; i < FRAMES * STEM_SLOTS; i++)
             if (LOUD(x[i], TX_ONSET)) {
                 A.tx_onset = base + i / STEM_SLOTS + 1;
                 break;
@@ -430,13 +452,19 @@ static void read_phase(void) {
     A.p_n++;
 }
 
-/* L = 138.5 - (P mod 64) + 64 D, rounded (T1's relation); p16 = 16 x the mean P, d = RX blocks - TX blocks. If that
- * falls outside L_MIN..L_MAX, the candidate 138.5 - (P mod 64) + 64 n nearest L_CENTER. */
-EXPORT s32 bnc_estimate(s32 p16, s32 d) {
-    s32 v = (K16 - (p16 & 1023) + 1024 * d + 8) >> 4;
+/* 16 x (138.5 - (P mod 64) + 64 D): T1's relation, unrounded; p16 = 16 x the mean P, d = RX blocks - TX blocks */
+static s32 est16(s32 p16, s32 d) {
+    return K16 - (p16 & 1023) + 1024 * d;
+}
+
+/* L = 138.5 + off16 / 16 - (P mod 64) + 64 D, rounded; off16 = this boot's calibration in 1/16 frames (the chip's
+ * constant on this boot, so it holds when P and D move between takes). If that falls outside L_MIN..L_MAX, the
+ * candidate 138.5 - (P mod 64) + 64 n nearest L_CENTER. */
+EXPORT s32 bnc_estimate(s32 p16, s32 d, s32 off16) {
+    s32 v = (est16(p16, d) + off16 + 8) >> 4;
     if (v >= L_MIN && v <= L_MAX)
         return v;
-    v = (((K16 - p16) & 1023) + 8) >> 4;
+    v = (((K16 + off16 - p16) & 1023) + 8) >> 4;
     while (v + 32 <= L_CENTER)
         v += 64;
     while (v - 32 > L_CENTER)
@@ -471,6 +499,30 @@ static void stock_ended(void) {
 
 #define HIST_FRAMES (HIST_BLOCKS * FRAMES)
 #define HIST(fr) (&A.hist[((fr) % HIST_FRAMES) * 2])
+
+/* The window's delay: where the return of the sound's first frame departs from silence, the first RX frame above
+ * DEPART in the DEPART_SPAN frames before L, after DEPART_QUIET silent frames; else L itself (no departure seen,
+ * a noisy floor, or the frames no longer kept). Waits until those RX frames are in. */
+static void depart(u32 top) {
+    u32 oldest = top > HIST_FRAMES ? top - HIST_FRAMES : 0;
+    A.l_win = A.l;
+    if (A.tx_first && (u32)A.l > DEPART_SPAN + DEPART_QUIET) {
+        u32 at = A.tx_first - 1 + (u32)A.l, lo = at - DEPART_SPAN, fr = lo - DEPART_QUIET;
+        if (at >= top)
+            return;
+        if (fr >= oldest) {
+            while (fr < lo && !LOUD2(HIST(fr), DEPART))
+                fr++;
+            if (fr == lo) {
+                while (fr < at && !LOUD2(HIST(fr), DEPART))
+                    fr++;
+                A.l_win = A.l - (s32)(at - fr);
+            }
+        }
+    }
+    BARRIER();
+    A.departed = 1;
+}
 
 /* After the recorder feed has copied RX block rx_blocks into CAPTURE. */
 EXPORT void bnc_rx(void) {
@@ -507,7 +559,7 @@ EXPORT void bnc_rx(void) {
         A.p16 = A.p0 * 16 + (A.p_sum * 16 + (s32)A.p_n / 2) / (s32)A.p_n;
         A.d = (s32)(A.rx_blocks - A.tx_blocks);
         A.cached = U.cal_valid;
-        A.l_est = U.cal_valid ? U.cal_l : bnc_estimate(A.p16, A.d);
+        A.l_est = bnc_estimate(A.p16, A.d, U.cal_valid ? U.cal_off : 0);     /* this take's own P and D */
     }
     if (!A.have_l) {                        /* L: the RX onset of the TX onset, near the estimate */
         u32 oldest = top > HIST_FRAMES ? top - HIST_FRAMES : 0;
@@ -537,19 +589,21 @@ EXPORT void bnc_rx(void) {
             decide(A.l_est);
         }
     }
+    if (A.have_l && !A.departed)
+        depart(top);
     if (A.mode == TAIL && !A.win) {         /* TAIL: to the last loud frame, after 250 ms quiet */
         for (u32 f = 0; f < FRAMES; f++)
             if (LOUD2(cap + 2 * f, RX_QUIET))
                 A.last_loud = base + f + 1;
-        if (A.have_l) {
-            u32 start = A.f0 + (u32)A.l, last = A.last_loud > start ? A.last_loud : start + 1;
+        if (A.departed) {
+            u32 start = A.f0 + (u32)A.l_win, last = A.last_loud > start ? A.last_loud : start + 1;
             if ((A.voice_end && top >= last + TAIL_QUIET && top >= A.voice_end + (u32)A.l + TAIL_QUIET) ||
                 top >= start + TAIL_CAP)
                 A.win = last - start;
         }
     }
-    if (!A.stop && A.have_l && A.win) {
-        u32 stop = A.f0 + (u32)A.l + A.win + END_MARGIN;
+    if (!A.stop && A.departed && A.win) {
+        u32 stop = A.f0 + (u32)A.l_win + A.win + END_MARGIN;
         A.stop = stop > A.f0 + MIN_FILE ? stop : A.f0 + MIN_FILE;
     }
     /* write the take: RX frames from F0, the history first */
@@ -701,7 +755,7 @@ static void progress_text(void) {
         *o++ = ' ';
         u32 done = 0, finished = U.state >= U_FINAL || A.phase == A_DONE;
         if (A.phase == A_RUN) {
-            u32 start = A.t0 + (u32)(A.have_l ? A.l : A.l_est);
+            u32 start = A.t0 + (u32)(A.departed ? A.l_win : A.have_l ? A.l : A.l_est);
             done = A.rx_now > start ? A.rx_now - start : 0;
         }
         if (U.mode == TAIL) {
@@ -1011,6 +1065,8 @@ static void arm(void) {
     A.l = A.l_est = A.l_meas = 0;
     A.p16 = A.d = 0;
     A.tx_onset = A.scan = A.voice_end = A.last_loud = 0;
+    A.tx_first = A.departed = 0;
+    A.l_win = 0;
     A.stop = A.fed = A.fail = 0;
     A.rx_now = 0;
     BARRIER();
@@ -1053,7 +1109,7 @@ static u32 settle(void) {
     if (channels != 2 || data < offset)
         return 0;
     forget(dst);                            /* a record that still names this pad is stale */
-    u32 start = (u32)(data - offset) / 4 + (u32)A.l, end = start + A.win;
+    u32 start = (u32)(data - offset) / 4 + (u32)(A.departed ? A.l_win : A.l), end = start + A.win;
     u32 loops = U.mode == LOOP || (U.mode == NO_TAIL && U.loop_src);
     /* NO TAIL of a loop: it loops from its own loop point, as the source does */
     u32 lp = U.mode == NO_TAIL && U.loop_src && U.lp_off < A.win ? start + U.lp_off : start;
@@ -1086,13 +1142,22 @@ static u32 settle(void) {
     *o++ = (char)('A' + src / 16);
     o = put_uint(o, src % 16 + 1);
     o = put_int(put(o, " L"), A.l);
+    if (A.departed && A.l_win != A.l)        /* the frames the return departed before L */
+        o = put_int(put(o, "-"), A.l - A.l_win);
     if (A.cached)
         *o++ = 'C';
     o = A.l_meas ? put_int(put(o, " M"), A.l_meas) : put(o, " M--");
     o = put_uint(put(o, " P"), (u32)A.p16 >> 4);
+    char *tenth = o, *dpart;
     *o++ = '.';
     o = put_uint(o, (((u32)A.p16 & 15) * 10 + 8) >> 4);
+    dpart = o;
     o = put_int(put(o, " D"), A.d);
+    if (o - name > PADNAME_LEN) {              /* the stock name keeps 23 characters: P's tenth goes, not D */
+        while (dpart < o)
+            *tenth++ = *dpart++;
+        o = tenth;
+    }
     *o = 0;
     CALL3(F_PADNAME, SMPL, dst, name);      /* it marks the pads edited (the byte at SMPL + 0x1c) itself */
     save_pads();
@@ -1201,8 +1266,8 @@ static void tick(void) {
             set_setting(0x59, 0, 0);
             post(CMD_STOP);
             /* an onset that agrees with the phase (not with the last calibration, so it cannot drift) */
-            if (A.l_meas && A.l == A.l_meas && agrees(A.l_meas, bnc_estimate(A.p16, A.d))) {
-                U.cal_l = A.l_meas;
+            if (A.l_meas && A.l == A.l_meas && agrees(A.l_meas, bnc_estimate(A.p16, A.d, 0))) {
+                U.cal_off = 16 * A.l_meas - est16(A.p16, A.d);
                 U.cal_valid = 1;
             }
             enter(U_FINAL);

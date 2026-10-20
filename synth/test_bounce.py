@@ -124,14 +124,14 @@ KEY_REC, KEY_RESAMPLE, KEY_EXIT, KEY_SHIFT, KEY_VALUE = 0x1B, 0x1C, 0x22, 0x2A, 
 EV_KEY, EV_KEY_UP, EV_ENCODER, EV_KNOB, EV_PAD, EV_PAD_UP = 5, 6, 7, 9, 0x10, 0x11
 FIELDS_A = ('tx_blocks rx_blocks phase quiet_rx quiet_tx pad mode skip measure armed_voices slot voice t0 f0 fed '
             'stop have_l cached l l_est l_meas p_n p0 p_sum p16 d tx_onset scan last_nz voice_end last_loud win '
-            'rx_now fail').split()
+            'rx_now fail tx_first l_win departed').split()
 FIELDS_U = ('state ms since shown refresh src dst mode modes loop_src loop_pin len1 len2 native saved_len saved_snap '
-            'pinned msg waits last_mode cal_l cal_valid runs r_l r_est r_meas r_p16 r_d r_start r_end r_len '
+            'pinned msg waits last_mode cal_off cal_valid runs r_l r_est r_meas r_p16 r_d r_start r_end r_len '
             'r_mode r_exact target targets last_target scratch lp_off ext_pin saved_ext link_pin link_src swap_kind '
             'swap_a swap_b want_len_a want_ch_a want_len_b want_ch_b fence undo_slot undo_next partial err dropped').split()
 UNDO_FIELDS = 'used pad keep len_pad ch_pad len_keep ch_keep link'.split()
 UNDOS = 8
-SIGNED = {'l', 'l_est', 'l_meas', 'p0', 'p_sum', 'p16', 'd', 'saved_len', 'saved_snap', 'cal_l', 'r_l',
+SIGNED = {'l', 'l_est', 'l_meas', 'p0', 'p_sum', 'p16', 'd', 'saved_len', 'saved_snap', 'cal_off', 'r_l',
           'r_est', 'r_meas', 'r_p16', 'r_d', 'saved_ext', 'link_src', 'err'}
 (U_IDLE, U_SETUP, U_STANDBY, U_SILENCE, U_RECSTART, U_VOICE, U_RUN, U_FINAL, U_CANCEL, U_SWAP,
  U_STOCKSTOP) = range(11)
@@ -760,6 +760,10 @@ class Machine:
             d, eg = fx['echo']
             el, er = self.tx_mix.get(t - d, (0, 0))
             l, r = l + el * eg, r + er * eg
+        for k, gk in fx.get('ring', ()):              # a symmetric low ring around the main delay (both sides)
+            for tt in (t - k, t + k):
+                a, b = self.tx_mix.get(tt, (0, 0))
+                l, r = l + a * gk, r + b * gk
         if fx['noise']:
             l, r = l + self.rng.choice((-1, 1)) * fx['noise'], r + self.rng.choice((-1, 1)) * fx['noise']
         if fx['input'] and self.settings.get(0x25):     # music on the input, heard while EXT SOURCE is on
@@ -1306,6 +1310,54 @@ def runs(img, man):
     m, pcm, res = native_case('LOOP soft start', LOOP, 2, n=5000, loop=1, attack=32)
     check(m.u('r_l') == 77, f'LOOP, a 32-frame attack: L = the true 77 (onset {m.u("r_meas")}, used {m.u("r_l")})')
     check_take(m, 'LOOP, a 32-frame attack', pcm[:5000], 77, LOOP, 5000)
+    # the unit's return departs from silence 7 frames before its main delay (bounce-3-test3: START 457, the first
+    # non-zero frame 450, L 73 at P66 D-1): a low symmetric ring around L. The take starts where the return departs,
+    # so it holds the whole attack; L stays the main delay (the name reads L73-7)
+    ring = [(k, 0.0005 * (8 - k)) for k in range(1, 8)]
+
+    def ring_case(n, loop, turns):
+        mm = boot(img, man, d=-1, p=65, L=73, seed=rng.randint(0, 1 << 30))
+        mm.fx['ring'] = ring
+        src = pcm_burst(n, rng.randint(0, 1 << 30))
+        mm.load_pad(0, n, loop=loop)
+        mm.voice = Voice(mm, 0, src, 0, n, 0, 1)
+        return mm, run_bounce(mm, 0, turns)
+
+    m, res = ring_case(6000, 0, 0)
+    first = next((i for i, f in enumerate(m.take) if f != (0, 0)), None)
+    check(res['popup'] == 'BOUNCED A-1\nON A-2' and m.u('r_l') == 73 and first == 66 and
+          m.u('r_start') == 384 + 66 and m.u('r_end') == 384 + 66 + 6000 and m.name(1).startswith('A1 L73-7 M73'),
+          f'NO TAIL, a return departing 7 frames before L 73: START on its first frame 66 (first non-zero {first}, '
+          f'START {m.u("r_start") - 384}, L {m.u("r_l")}, {m.name(1)!r})')
+    # LOOP of a loop through the same return: one pass from the departure, so the take's last 7 frames hold nothing
+    # of the next pass (its ring starts right after the window); with LOOP off the bounce ends clean
+    m, res = ring_case(5000, 1, 2)
+    f0, lw = m.a('f0'), m.u('r_start') - 384
+    kept = m.tx_mix
+    m.tx_mix = {t: v for t, v in kept.items() if t < f0 + 5000}         # the next pass off
+    alone = [m.rx_value(f0 + lw + 5000 - 7 + i) for i in range(7)]
+    m.tx_mix = kept
+    tail = m.take[lw + 5000 - 7:lw + 5000]
+    check(res['popup'] == 'BOUNCED A-1\nON A-2' and lw == 66 and tail == alone,
+          f'LOOP through a return departing 7 frames early: the window starts on the departure ({lw}) and its last 7 '
+          f'frames hold nothing of the next pass ({tail == alone})')
+    # the name with all its fields: from A-12, after a take that calibrated the boot, it reads 24 characters
+    # ('A12 L73-7C M73 P65.5 D-1') and the stock name keeps 23. P's tenth goes, so D stays
+    m, res = ring_case(3000, 0, 0)
+    src = pcm_burst(3000, rng.randint(0, 1 << 30))
+    m.load_pad(11, 3000)
+    m.voice = Voice(m, 11, src, 0, 3000, 0, 1)
+    m.take, m.finalized = [], []
+    run_bounce(m, 11, 0)
+    name = m.name(m.u('dst'))
+    check(m.u('cal_valid') == 1 and name.startswith('A12 L73-7C M73 P') and name.endswith(' D-1') and
+          '.' not in name and len(name) <= 23, f'a name longer than the stock 23 characters keeps D ({name!r})')
+    # the other reading of the unit: a pure 66-frame return at P65.5 D-1, the estimate 73 seven frames long. The
+    # departure finds the return's first frame there too (L stays the estimate; the window starts at 66)
+    m, pcm, res = native_case('pure 66', NO_TAIL, 0, d=-1, p=65, L=66)
+    check(m.u('r_start') == 384 + 66 and m.take[66:66 + 6000] == pcm,
+          f'a pure 66-frame return under an estimate of 73: START on its first frame, the take the source frame for '
+          f'frame (START {m.u("r_start") - 384}, L {m.u("r_l")}, {m.name(1)!r})')
     # an onset 5 frames below the estimate is not used, nor one 20 frames late (a slow effect): the estimate is
     m, pcm, res = native_case('L-5', NO_TAIL, 0, L=72)
     check(m.u('r_meas') == 72 and m.u('r_l') == 77, f'an onset 5 frames from the estimate is not used ({m.u("r_l")})')
@@ -1367,7 +1419,9 @@ def runs(img, man):
     m.load_pad(0, 3000)
     m.voice = Voice(m, 0, pcm, 0, 3000, 0, 1)
     run_bounce(m, 0, 0)
-    check(m.u('cal_valid') == 1 and m.u('cal_l') == 73, 'calibration: the first run\'s onset L 73 is kept')
+    e16 = 2216 - (m.u('r_p16') & 1023) + 1024 * m.u('r_d')        # T1's relation at this take's P and D, x 16
+    check(m.u('cal_valid') == 1 and m.u('r_l') == 73 and m.u('cal_off') == 16 * 73 - e16,
+          f'calibration: the first run\'s onset L 73 is kept, as an offset on T1\'s relation ({m.u("cal_off")}/16)')
     soft = pcm_burst(9000, 22, silence=6000)
     m.load_pad(2, 9000)
     m.voice = Voice(m, 2, soft, 0, 9000, 0, 2)
@@ -1377,6 +1431,27 @@ def runs(img, man):
     check(m.take[73:73 + 9000] == soft, 'calibration: that take is frame-exact')
     name = m.name(3)
     check(name.startswith('A3 L73C M-- P'), f'calibration: the name marks the boot\'s L and no onset ({name})')
+    # P moves within a boot (bounce-3-test3 on the unit: P65.1 for NO TAIL, then P62.0 for LOOP in one session; the
+    # LOOP take used the boot's L73 although its own phase and its onset M76 both said 76): the calibration is an
+    # offset on each take's own P and D, so the next take follows the new phase
+    m = boot(img, man, d=-1, p=65, L=73, seed=6)
+    first = pcm_burst(3000, 24)
+    m.load_pad(0, 3000)
+    m.voice = Voice(m, 0, first, 0, 3000, 0, 1)
+    run_bounce(m, 0, 0)
+    calibrated = (m.u('cal_valid'), m.u('r_l'), m.u('cal_off'))
+    m.dma(62)                                           # the eDMA phase moves by 3 frames ...
+    m.rx()                                              # ... D from -1 to 0 (one RX block more) ...
+    m.fx['L'] = 76                                      # ... and the round trip follows T1's relation: 138.5 - 62.5
+    sharp = pcm_burst(3000, 25)
+    m.load_pad(2, 3000)
+    m.voice = Voice(m, 2, sharp, 0, 3000, 0, 1)
+    m.take, m.finalized = [], []
+    run_bounce(m, 2, 0)
+    check(calibrated[:2] == (1, 73) and m.u('r_d') == 0 and m.u('r_l') == 76 and m.u('r_start') == 384 + 76 and
+          m.take[76:76 + 3000] == sharp,
+          f'P moves within the boot ({calibrated} -> P{m.u("r_p16") / 16:.1f} D{m.u("r_d")}): L 76 from this take\'s '
+          f'own phase, not the boot\'s 73 (est {m.u("r_est")}, onset {m.u("r_meas")}, used {m.u("r_l")})')
 
     # NO TAIL of a looped pad at its own rate: exactly one pass; the bounce loops from the source's own loop point
     m, pcm, res = native_case('NO TAIL loop', NO_TAIL, 0, n=5000, loop=1, lp=1000)

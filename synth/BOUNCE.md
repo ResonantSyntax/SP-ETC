@@ -11,7 +11,47 @@ fix). It supersedes stage 2 (bounce-2-test1, which never ran on the unit) on the
 plus the pad-event dispatcher and, since bounce-3-test2, the RESAMPLE page's tick. Stage 1 is the
 bounce probe ([BOUNCE_PROBE.md](BOUNCE_PROBE.md)).
 
-**bounce-3-test3** follows the hardware run of bounce-3-test2 (2026-10-19), which found two
+**bounce-3-test4** follows the hardware run of bounce-3-test3 (2026-10-19). A LOOP bounce still
+clicked at its end with LOOP off, and every bounce's START sat a few frames after the waveform's
+first non-zero sample.
+
+- **The return departs from silence before its main delay.** A closed hi-hat bounced NO TAIL read
+  `L73 M73 P65.1`: the phase estimate and the matched −48 dB onset agree on the main delay, 73.
+  Yet START sat at 457 (384 + 73) and the waveform's first non-zero sample at 450. A pure delay
+  cannot put sound before its delay. The effects chip's return pre-rings each attack: about 7
+  frames of low-level sound before the main delay. test3 cut the take at the main delay, so the
+  start of the attack was lost. A LOOP take, one pass long, then ended inside the next pass's
+  pre-ring, which is the click with LOOP off.
+- **test4 starts the take where the return departs from silence.** That is the first RX frame
+  that is not 0 in the 16 frames before L, counted from the sound's first TX frame that is not 0,
+  after 8 silent frames. If no departure is found (a noisy floor, or frames no longer kept), the
+  take starts at L. The window stays one pass, so a LOOP take now ends just before the next
+  pass's pre-ring. The pad's name shows the departure: `A1 L73-7 M73 P65.1 D-1`. The stock name
+  keeps 23 characters, so when the name would be longer (a source on pads 10–16 after a take that
+  calibrated the boot) P's tenth is left out and D stays.
+- **The trade-off:** layered with its source, the bounce's main attack sits up to the pre-ring
+  later, about 7 frames (0.15 ms), which puts the first comb notch near 3.4 kHz. Played alone, or
+  in its source's place, nothing changes.
+- **The calibration now follows P.** In the same session the LOOP bounce read P62.0, against the
+  others' P65.1, and used the boot's stored L73, although its own phase and its onset (M76) both
+  said 76. P and D can move within a boot, and T1's relation held through the move: L − 64 D +
+  (P mod 64) was 138 for both takes. test4 keeps the boot's calibration as an offset on that
+  relation, in 1/16 frames, and applies it to each take's own P and D.
+- A recalibration of T1's constant by −7 was ruled out: it contradicts T1's own click readings
+  (L77 at P61 D0) and test2's `L72 M72` at P66, since test2's thresholds could only make M early.
+- **Evidence:**
+  - Unicorn models a return with a low symmetric ring around 73 that departs at 66. test3 starts
+    on 73, and its LOOP take's last 7 frames hold the next pass. test4 starts on 66, and its LOOP
+    take holds nothing of the next pass.
+  - A pure 66-frame return under an estimate of 73: test4 starts on 66 too.
+  - P moving from 65.5 to 62.5 within one boot: test3 uses 73, test4 76.
+  - dm-404's return is a plain delay of about 65 where the unit's relation gives 74. test4 finds
+    the emulator's own start there (`L74-8 M66`); the bounce lines up with its source within a
+    frame, sounds for END − START and loops at END − the loop point. Its boots that read
+    `L10 M8 P1.0 D-2` (in test2's and test3's runs too) are below the search and start at L, as in
+    test3.
+
+**bounce-3-test3** followed the hardware run of bounce-3-test2 (2026-10-19), which found two
 faults in a LOOP bounce. Played with LOOP off it clicked at its end, because the end held a little
 of the loop's beginning. Layered with its source (PAD LINK) it phased: a constant offset of a few
 frames, steady over 30 s, with no effect on.
@@ -302,16 +342,21 @@ back.
 The bounced pad is named with the run's numbers, so a hardware test can read them on the SP:
 
 ```
-A1 L77 M77 P61.5 D0
+A1 L73-7 M73 P65.1 D-1
 ```
 
 | Field | Meaning |
 | --- | --- |
 | `A1` | the source pad |
-| `L77` | the L used; `L73C` = this boot's calibrated L was the estimate |
-| `M77` | the onset-measured L; `M--` = no onset within 100 ms |
-| `P61.5` | the mean eDMA phase over the silence wait |
-| `D0` | RX blocks minus TX blocks counted since boot |
+| `L73` | the L used: the return's main delay |
+| `-7` | the window starts this many frames before L, where the return departs from silence; left out when it starts at L |
+| `C` | after L and the departure (`L73C`, `L73-7C`): the estimate included this boot's calibration |
+| `M73` | the onset-measured L; `M--` = no onset within 100 ms |
+| `P65.1` | the mean eDMA phase over the silence wait |
+| `D-1` | RX blocks minus TX blocks counted since boot |
+
+The stock name keeps 23 characters. A longer name loses P's tenth instead of D's end, for example
+`A12 L73-7C M73 P65 D-1`.
 
 These stay in the bounce-3 test builds: the timing is being checked on the unit, and T3 reads L
 and M from every bounce. A REPLACE shows them on the replaced pad; the parked original
@@ -373,17 +418,24 @@ count both and call `bnc_tx` after the mixer and `bnc_rx` after the feed.
   frames go straight to the recorder engine's stereo writer. The last four RX blocks are kept,
   so F0 may lie behind the block being processed. File frame *k* of the take is RX frame
   F0 + *k*.
-- **L:** the round trip through the effects chip, in these frame counts. START = F0 + L in the
-  file, END = START + the window.
-  - **Estimate:** this boot's calibrated L. Otherwise 138.5 − (P mod 64) + 64 D, rounded; if that
-    is outside 8..300, the candidate 138.5 − (P mod 64) + 64 n nearest 75. P is the eDMA phase
-    (TX line 3 read position minus RX write position, in frames) averaged over the silence wait;
-    D is the RX blocks minus the TX blocks counted since boot.
+- **L:** the return's main delay through the effects chip, in these frame counts. START = F0 +
+  the window's delay in the file, END = START + the window.
+  - **Estimate:** 138.5 − (P mod 64) + 64 D for this take's P and D, plus this boot's
+    calibration, rounded. If that is outside 8..300, the candidate 138.5 − (P mod 64) + 64 n
+    nearest 75. P is the eDMA phase (TX line 3 read position minus RX write position, in frames)
+    averaged over this take's silence wait; D is the RX blocks minus the TX blocks counted since
+    boot. P and D can move between takes in one boot.
   - **Onset:** L = the first RX frame above −48 dBFS minus the first TX frame above −48 dBFS
     (both 128: the stems carry 16-bit samples, at the capture's scale), searched within 100 ms
-    of T0. It is used only within 1 frame of the estimate; within 1 frame of the phase estimate
-    it also calibrates the boot. A threshold crossing moves with the attack's shape and with any
-    level step between the stems and the return, so it only settles T1's one-frame spread.
+    of T0. It is used only within 1 frame of the estimate. Within 1 frame of the phase alone it
+    also calibrates the boot: the onset minus T1's relation, kept in 1/16 frames. A threshold
+    crossing moves with the attack's shape and with any level step between the stems and the
+    return, so it only settles T1's one-frame spread.
+  - **The window's delay:** where the return departs from silence. That is the first RX frame not
+    0 in the 16 frames before L, from the sound's first TX frame not 0, after 8 silent RX frames;
+    otherwise L. The unit's return pre-rings each attack about 7 frames before L. The search runs
+    only when L is above 24, so its frames come after the sound's first TX frame. The unit's L has
+    been 69–77; dm-404's boots that read `L10 M8 P1.0 D-2` start at L.
   - **Basis:** T1 read L − 64 D + (P mod 64) as 138 and 139 on two boots, with L 77 and 73. The
     unit has kept to it since: `L72 M72` at P66 with D −1 is 138.
 - **The stock recorder never writes:** before every feed call the RX bridge clears the feed's
@@ -473,13 +525,15 @@ python synth/build_bounce.py out/kits-v946-final/SP404MKII_APP1.bin out/bounce -
 python synth/test_bounce.py out/bounce
 ```
 
-bounce-3-test3 is APP1 `b9b11fb0…3c52b` (3,103,872 bytes). It comes out the same on the published
+bounce-3-test4 is APP1 `d6c86579…4da2` (3,104,320 bytes). It comes out the same on the published
 v9.46 (`7b5fbcb4…684a`) and on a clean rebuild of every stage from stock 5.52 (v9.5 `d0919e40…`,
 v9.6 `1b2d50e0…`, kits `88384c3c…`, start fix `7b5fbcb4…684a`), and two builds are byte-identical.
-(bounce-3-test2 was `26f594db…11bf`, 3,103,856 bytes; bounce-3-test1 `59e061cf…221d`, 3,103,744
-bytes. These builds were never handed over: `8995fd25…8927`, an earlier test3 with the charge fix
-alone; `571589da…20aa`, a test2 from before the third bug was known; and `9e438a84…0373`, the first
-test2 fix, which skipped only the after-recording routine.)
+(bounce-3-test3 was `b9b11fb0…3c52b`, 3,103,872 bytes; bounce-3-test2 `26f594db…11bf`, 3,103,856
+bytes; bounce-3-test1 `59e061cf…221d`, 3,103,744 bytes. These builds were never handed over:
+`36d697c0…c2d7`, test4 before its name kept D; `97ff1a5f…fc97` and `e77aa89b…4369`, fixes (b) and
+(a) as prepared for the decision; `8995fd25…8927`, an earlier test3 with the charge fix alone;
+`571589da…20aa`, a test2 from before the third bug was known; and `9e438a84…0373`, the first test2
+fix, which skipped only the after-recording routine.)
 
 ## Checks (emulator)
 
@@ -534,7 +588,7 @@ Modelled:
   system parameter stores;
 - the screen: drawing returns at once.
 
-The checks (506 cases):
+The checks (511 cases):
 
 - **Static:** only the header, the six sites and the appended tail differ from v9.46. The
   scatter table is v9.46's rows plus a copy row and a zero-fill row; APP1 ends below the PCM
@@ -577,6 +631,12 @@ The checks (506 cases):
   commands posted, the settings pinned and restored, the stock gate never running, the name and
   the save; the bounce's last charge is its final START, END and loop point (on test2 each of these
   fails: the last charge was the take's).
+- **A return that departs before its main delay:** a low symmetric ring around 73 that departs at
+  66. NO TAIL starts on 66, and a LOOP take's last 7 frames hold nothing of the next pass. A pure
+  66-frame return under an estimate of 73 also starts on 66. From A-12 after a take that calibrated
+  the boot, the name (24 characters in full) loses P's tenth, not D.
+- **P moving within a boot:** calibrated at P65.5 D −1 with L 73, then P 62.5 D 0 with L 76. The
+  next take uses 76.
 - **Onsets a threshold crossing gets wrong,** with true L 77: a 32-frame attack, 20 ms attacks
   with RX +6 and −6 dB, a 10 ms attack through an echo with +3.5 dB, and a LOOP pass with a soft
   start. L stays 77, and is within a frame with the level step. An onset 5 frames or 20 frames
