@@ -85,6 +85,13 @@ RESAMPLE page's tick. Stage 1 is the bounce probe ([BOUNCE_PROBE.md](BOUNCE_PROB
   return's first non-zero sample was its onset, at L.
 - **LOOP**, the hi-hat through a delay: the take keeps the delayed hits, and after TRUNCATE it is
   the source's length.
+- **REPLACE**, the hi-hat through a delay: it sounds right and starts properly.
+- **NO TAIL through a reverb** clicks at its end. That is expected: NO TAIL cuts the effect where
+  the source ends. TAIL or LOOP keep the tail, or a short Release fades it.
+- **Open:** a later LOOP take of the hi-hat through a delay looked a few frames late. Its waveform
+  began just before START, and its last frames held the start of the hit. In dm-404 the LOOP window
+  is exact: a one-shot made to loop plays exactly END − START a pass over 137 passes, and the take
+  at pass 136 lines up with the source as a take of pass 1 does.
 
 **bounce-3-test5** changes only the image under the bounce. The user found a normal RESAMPLE's
 START a few samples after the start of its wave. The cause is the RESAMPLE start fix (v2): it puts
