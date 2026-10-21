@@ -2,7 +2,8 @@
 
 A hardware test build on top of the published Sound Generator + Kits v9.46 (APP1 `7b5fbcb4…684a`). It is
 stages E1 and E2 of the pad envelope study (`analysis/pad_envelope/REPORT.md`): finer attack and release
-times, curves, decay and sustain, and two options for loops and reverse. Everything is opt-in per pad.
+times, curves, decay and sustain, and two options for loops and reverse; and from E3a, a fade instead of
+the cut when a new hit stops a pad's sounding voice. Everything is opt-in per pad.
 **A pad you don't touch plays exactly as on v9.46**: it runs the stock code, and the emulator checks
 compare it bit for bit with the parent.
 
@@ -16,6 +17,15 @@ compare it bit for bit with the parent.
 | Sustain | 0-100 %, the level the decay falls to | - |
 | LOOP | EVERY PASS (stock) or FIRST PASS: a looping pad shapes only its first pass, then holds the sustain level and fades only at key-up or stop | EVERY PASS |
 | REVERSE | MIRROR (stock: in reverse the release is heard first) or TIME: the attack is heard first | MIRROR |
+| RETRIG | CUT (stock: a new hit stops the sounding voice with the 1.3 ms declick, which clicks on a loud note) or a fade, 0.5 ms - 8 s (the FINE map): the old voice fades out over it while the new one starts | CUT |
+
+RETRIG covers every hit that stops the pad's own sounding voice: the pad hit again, and in chromatic mode a
+new note when chromatic is mono (it stops the ringing note whatever the note; the hardware report: "only when
+ringing") or the same note again when poly. The fade is stock's key-up release (linear, in output time; it
+ends at END if that comes first), started in place of the declick, so the old voice keeps its slot until the
+fade ends and the new voice takes a free one. When the new voice needs that slot (every slot busy), when the
+fade is under 64 frames (1.3 ms) or nothing is left to play, it is stock's cut. A voice already releasing goes
+on (stock does that only for panel pads). Steals, the stop-all while recording and mute-group chokes stay stock.
 
 The envelope stays positional, as stock's is: it is applied to the sample data by source position while each
 voice's stream is filled (`0x16f50` forward, `0x17196` reverse), before PITCH/SPEED/stretch, so it scales with
@@ -44,7 +54,7 @@ page, no popups (test 1 used popups; test 2 draws on the page itself):
 | 1 A-H-R (stock) | `C1:ATTACK` | `C2:HOLD` | `C3:RELEASE` | `A-1` (stock's) |
 | 2 SHAPE | `C1:ATTACK` LIN/EXP/LOG/S | `C2:TIME` STOCK / FINE | `C3:RELEASE` curve | `A-1 SHAPE 2/4` |
 | 3 DECAY | `C1:DECAY` OFF or the time | `C2:SUSTAIN` 0-100% | `C3:CURVE` the decay's | `A-1 DECAY 3/4` |
-| 4 MODE | `C1:LOOP` EVERY / FIRST | - | `C3:REVERSE` MIRROR / TIME | `A-1 MODE 4/4` |
+| 4 MODE | `C1:LOOP` EVERY / FIRST | `C2:RETRIG` CUT or the fade | `C3:REVERSE` MIRROR / TIME | `A-1 MODE 4/4` |
 
 - The screen keeps stock's layout (rows 0-7 the CTRL labels, 8-16 their values under them, 17-32 the graph, the
   S and E marks at the bottom) and is drawn with stock's own calls on the page's context; the labels go into the
@@ -78,7 +88,9 @@ Per pad, in the PADCONF extended block's reserved bytes (pad FX uses 0x54-0x63):
 | 0x65 / 0x66 | attack / release, fine index |
 | 0x67 | curves: b0-1 attack, b2-3 decay, b4-5 release (LIN, EXP, LOG, S) |
 | 0x68 / 0x69 | decay, fine index (0 off) / sustain 0-100 % |
-| 0x6a-0x6c | reserved for E3a (retrigger, overlap fade, choke) |
+| 0x6a | retrigger: 0 CUT (stock), 1 FADE |
+| 0x6b | the re-hit fade, fine index |
+| 0x6c | reserved for E3a's choke |
 | 0x6d | layout version: 1 whenever any of 0x64-0x6c is not 0; anything else = stock |
 | 0x6e-0x6f | reserved |
 
@@ -88,7 +100,7 @@ goes out once, 1 s after the last change, or when the page closes.
 
 ## The patches
 
-All on code DOOM OS ED5E and the fork leave stock (33 guards, SHA-256 of every span the module calls, reads or
+All on code DOOM OS ED5E and the fork leave stock (39 guards, SHA-256 of every span the module calls, reads or
 relies on). Nothing branches into the displaced bytes but their entries (every BL, B, B<cond>, CB(N)Z, B.W,
 literal and MOVW/MOVT pair in the image is checked).
 
@@ -107,14 +119,26 @@ literal and MOVW/MOVT pair in the image is checked).
    +0x08 is untouched. The REPORT named +0xD0 and +0xE4; +0x04 makes the save go out when the page closes, and
    +0xC8/+0xCC draw the pages: those two are the only callers of stock's redraw `0x800f5f00`, and stock's
    refresh (event 4: the static layer copied over the screen, then +0xCC) goes through them too.
+5. **The re-hit**: in the stop `0x80094168`, its call of the re-hit / steal stop `0x80024580` (10 bytes at
+   `0x8009424e`: `movs r1, #0`, `bl 0x80024580`, `eor r7, r0, #1`) -> `movw ip / movt ip / blx ip` to
+   `env_retrig`, which reads the stop's wait flag (r5) and its caller's return address (sp + 0x24). For the
+   voice manager's re-hits (`0x800d63c8`: the call at `0x800d6c08`, and `0x800d6954` for a looping chromatic
+   note hit again with HOLD down) of a FADE pad, with wait 0, a sounding voice gets stock's note-off
+   `0x80023118` instead, its release sized from the fade (`env_release` takes it from `env_fade_frames` for that
+   voice). Otherwise it calls `0x80024580` as stock did, and sets r7 as the `eor` did. The stop's own
+   bookkeeping (lock, wait, slot flags, time) stays stock's. The study's plan patched the stop's entry; the
+   call site keeps all of that and needs no displaced code in the module.
+   Stock decides where the new voice goes: free slots first, a steal only when there are too few, and then
+   the re-hit stop has wait 1 (it waits for the declick to free the slot), which this leaves stock.
 
-The module (Zig 0.13.0, -Os; 7 KB code, 3 KB tables, 3.7 KB state; 2.3 KB of the slot free) is a new boot copy
-row in a 16 KB slot at
+The module (Zig 0.13.0, -Os; about 7.6 KB code, 3.1 KB tables, 3.7 KB state; 2.0 KB of the slot free) is a new
+boot copy row in a 16 KB slot at
 **`0x83FDE000`-`0x83FE2000`**. The REPORT's slot `0x83FE4000`-`0x83FE8000` is taken since: FX deep edit uses
 `0x83FE2000`-`0x83FE6000` and the FX probe `0x83FE6000`-`0x83FE8000`. The builder checks the slot against every
-row of the input, against every fork module's slot (FX deep edit, FX probe, bounce stage 2/3 `0x83FE8000`, CPU
-meter `0x83FED000`, bounce probe `0x83FEE000`, start fix `0x83FEF000`) and that nothing refers to it. Pad FX
-keeps `0x83FC9000`-`0x83FDE000` (84 KB).
+row of the input, against every fork module's slot (a chromatic-mode module `0x83FD7000` (planned), stage 2
+`0x83FD9000`, note repeat `0x83FDC000`, FX deep edit, FX probe, bounce stage 2/3 `0x83FE8000`, CPU meter
+`0x83FED000`, bounce probe `0x83FEE000`, start fix `0x83FEF000`) and that nothing refers to it. Pad FX keeps
+`0x83FC9000`-`0x83FD7000` (56 KB).
 
 ## Stage 2 and later: `env_stages`
 
@@ -159,7 +183,7 @@ loaders and static constructors, real stock code throughout (recompute, applicat
 setter, fan-out, UI dispatcher, the page's registry handler, DOOM OS's filter, the page's methods) and, for the
 page, boot's three 128 x 64 surfaces made (`0x8006fcb8`) so every drawing call runs down to the pixels.
 
-- static: only the scatter pointer, the four code sites and the five vtable words change inside the parent;
+- static: only the scatter pointer, the five code sites and the five vtable words change inside the parent;
   the guards and displaced bytes hold; nothing reaches into them; the module's copies are exact; the slot
   is free; the FINE map and curves are the formulas above;
 - neutral pads (all zero, version 0 with anything else, version 1 at stock settings, an unknown version, voices
@@ -170,12 +194,20 @@ page, boot's three 128 x 64 surfaces made (`0x8006fcb8`) so every drawing call r
   times, curves, ADSR, overlap, decay cut by the release, REV-TIME, LOOP-ONCE with wraps, turns and an Init
   reset, mono/stereo, state 7, before START, past HOLD);
 - note-off: every fine index, short and long releases; curves-only pads keep stock's release;
+- the re-hit: the stop `0x80094168` called as each of its five callers calls it, wait 0 and 1, on 8 kinds of
+  pad and 6 kinds of voice (480 cases): a FADE pad's sounding voice, stopped for a new hit, gets the release over
+  the fade (ceil(min(fade, frames left) / 64) blocks) and no declick, a releasing one goes on; everything else
+  (CUT, other layouts or retrigger values, a fade under 64 frames, nothing left to play, wait 1, the steal, the
+  stop-all, the MIDI chromatic loop) is the parent's byte for byte. Then the voice manager `0x800d63c8` itself
+  (Unicorn's ARM_MAX CPU; the voice start only noted): chromatic mono with another note, poly with the same note
+  and with another (no stop), a panel pad hit again, every slot busy: the old voice keeps its slot while the new
+  one starts in a free slot, and CUT pads and the busy case are the parent's;
 - dispatcher: stock block first, then `env_stages` gets the call once from all five callers;
 - the page: SHIFT taps (and what isn't one), page 1 stock until FINE, FINE writes, pages 2-4, COPY / REMAIN
   (mute group, bank, protected bank, empty pad), effect knobs, the save timer and the save on close, a later
   stage's page through `env_more_pages`;
 - the screen and its static layer, byte for byte: page 1 with stock settings is the parent's (after opening,
-  every knob turn and a return from the other pages); every page for 8 kinds of settings, after every turn, a
+  every knob turn and a return from the other pages); every page for 9 kinds of settings, after every turn, a
   refresh and a pad change, is a reference drawn on the parent with stock's own calls from the settings alone
   (labels, values, every fine time, the graph from a Python model of the envelope, the bottom line); the module
   shows no popups. Two broken builds (labels not in the static layer, the graph a row off) fail it.
@@ -203,6 +235,11 @@ threshold checks pass while its structural checks expect the start fix to be the
 - Whether stock firmware keeps the bytes through a load and save (pad FX study, test S2), and whether Roland's
   app touches them.
 - CPU with many shaped voices next to the kits (cheaper than stock per frame in the emulator).
+- The re-hit fade on the unit: the voice start (Init), the audio task's release and the slot freed at its end
+  weren't run (the release is stock's key-up one, which the unit plays for GATE pads). A fading voice holds its
+  slot for the fade, so fast rolls with long fades steal earlier. Chromatic mono sends its message for the old
+  note (`0x800bd5a0`) again if a new note comes while one fades. Which UI setting project param 0xf3 (chromatic
+  mono when not 2) is wasn't looked up.
 
 ## Build
 

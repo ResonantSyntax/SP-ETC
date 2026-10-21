@@ -1,7 +1,8 @@
-"""Pad envelopes, stage 1 (hardware test build): FINE attack/release, curves, decay/sustain, LOOP-ONCE and
-REV-TIME per pad, on the ENVELOPE page (PAD_ENV.md; analysis/pad_envelope/REPORT.md stages E1 and E2).
+"""Pad envelopes, stage 1 (hardware test build): FINE attack/release, curves, decay/sustain, LOOP-ONCE,
+REV-TIME and the re-hit fade per pad, on the ENVELOPE page (PAD_ENV.md; analysis/pad_envelope/REPORT.md
+stages E1, E2 and E3a's OVERLAP retrigger).
 
-A stage on the published Sound Generator + Kits v9.46 APP1. Nine changes in 5.52 space, each checked byte
+A stage on the published Sound Generator + Kits v9.46 APP1. Ten changes in 5.52 space, each checked byte
 for byte against what it replaces:
 - code: the envelope recompute's first twelve bytes (0x800a2d98) -> a jump to env_recompute, the shared
   dispatcher (the stock body first, then this stage, then env_stages[] for later ones);
@@ -10,15 +11,19 @@ for byte against what it replaces:
 - code: the ITCM applicators' first ten bytes (0x16f50 forward, 0x17196 reverse) -> jumps to env_fwd /
   env_rev, which run the module's applicator for a shaped voice and otherwise the displaced instructions,
   then on in ITCM;
+- code: the stop 0x80094168's call of the re-hit / steal stop 0x80024580 (ten bytes at 0x8009424e: movs r1,
+  #0; bl; eor r7, r0, #1) -> a call of env_retrig, which gives a FADE pad's re-hit voice the key-up release
+  and otherwise calls 0x80024580, and sets r7 as the eor did;
 - data: the ENVELOPE page vtable 0x8021ec14, slots +0x04 (deleting destructor), +0xC8 (pad change), +0xCC
   (redraw), +0xD0 (tick, stock empty) and +0xE4 (knob) -> env_ui_leave, env_ui_pad, env_ui_draw, env_ui_poll,
   env_ui_knob, which go on to the stock methods; the screen shows the pages (no popups).
 Nothing branches into the displaced bytes but their entries (every BL, B, B<cond>, CB(N)Z, B.W, literal and
 MOVW/MOVT pair in the image is checked). Stock code the module calls, reads or relies on is checked byte
 for byte (GUARDS). The module (Zig 0.13.0, -Os) goes in a new boot copy row in a 16 KB slot at 0x83FDE000,
-below every other fork module (KNOWN_SLOTS: FX deep edit 0x83FE2000, FX probe 0x83FE6000, bounce stage 3
-0x83FE8000, CPU meter 0x83FED000, bounce probe 0x83FEE000, the start fix 0x83FEF000); the builder checks
-that no row of the input and no known slot overlaps it and that nothing in the input refers to it.
+between the other fork modules (KNOWN_SLOTS: a chromatic-mode module 0x83FD7000 (planned), pad envelopes stage 2
+0x83FD9000, note repeat 0x83FDC000, FX deep edit 0x83FE2000, FX probe 0x83FE6000, bounce stage 3 0x83FE8000, CPU
+meter 0x83FED000, bounce probe 0x83FEE000, the start fix 0x83FEF000); the builder checks that no row of the input
+and no known slot overlaps it and that nothing in the input refers to it.
 
 usage: python synth/build_pad_env.py IN_APP1 OUT_DIR --zig ZIG [--base 0x83FDE000] [--build-dir DIR]
 """
@@ -41,11 +46,14 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'pad-env-test2'
+REVISION = 'pad-env-test4'
 SLOT = 0x4000                       # reserved: [base, base + SLOT)
 GAP = (0x83FC9000, 0x83FF0000)      # above the fork's rows (end 0x83FC8450), below the end of cacheable SDRAM
 # Every other fork module's reserved RAM (branch, start, end).
 KNOWN_SLOTS = [
+    ('chromatic mode module (planned, its own branch)', 0x83FD7000, 0x83FD9000),
+    ('claude/pad-env-pitchfilter (pad envelopes stage 2)', 0x83FD9000, 0x83FDC000),
+    ('claude/note-repeat (note repeat)', 0x83FDC000, 0x83FDE000),
     ('claude/fx-deep-edit (FX deep edit)', 0x83FE2000, 0x83FE6000),
     ('claude/fx-probe (FX probe)', 0x83FE6000, 0x83FE8000),
     ('claude/bounce-stage2, claude/bounce-stage3 (bounce)', 0x83FE8000, 0x83FED000),
@@ -56,7 +64,8 @@ KNOWN_SLOTS = [
 EXPORTS = ('env_recompute', 'env_recompute_stock', 'env_dispatch', 'env_fwd', 'env_fwd_stock', 'env_fwd_apply',
            'env_rev', 'env_rev_stock', 'env_rev_apply', 'env_shaped', 'env_release', 'env_release_r6',
            'env_ui_knob', 'env_ui_poll', 'env_ui_leave', 'env_ui_draw', 'env_ui_pad', 'env_voices', 'env_stages',
-           'env_more_pages', 'env_ui', 'env_text', 'env_fine_frames', 'env_fine_stock', 'env_stock_fine', 'env_curve')
+           'env_more_pages', 'env_ui', 'env_text', 'env_fine_frames', 'env_fine_stock', 'env_stock_fine', 'env_curve',
+           'env_retrig', 'env_retrig_c', 'env_fade_voice', 'env_fade_frames')
 
 # (address, displaced bytes, what they are, where the stock code goes on, entry symbol)
 SITES = [
@@ -73,6 +82,12 @@ SITES = [
 ]
 # The module's copies of the displaced instructions: symbol -> site address.
 STOCK_COPIES = {'env_recompute_stock': 0x800A2D98, 'env_fwd_stock': 0x00016F50, 'env_rev_stock': 0x00017196}
+# (address, displaced bytes, what they are, where the call returns to, entry symbol): movw ip / movt ip / blx ip
+CALL_SITES = [
+    (0x8009424E, bytes.fromhex('002190f796f980f00107'),
+     'the stop 0x80094168 calling the re-hit / steal stop: movs r1, #0; bl 0x80024580; eor r7, r0, #1', 0x80094258,
+     'env_retrig'),
+]
 VTABLE = 0x8021EC14                 # ENVELOPE page (0x10)
 VTABLE_SLOTS = [(0x04, 0x800F6239, 'env_ui_leave', 'deleting destructor (the page closes)'),
                 (0xC8, 0x800F5A61, 'env_ui_pad', 'pad change: START/END again, then the redraw 0x800f5f00'),
@@ -158,6 +173,24 @@ GUARDS = [
      'context set-up: the backend by the surface\'s format (8: 0x800313c0)'),
     (0x8021D670, 0x8021D700, '3913bcbe323e4af792dd890182c169da745f4047c502029aa0c2cbe5d0310f64',
      'the 8-bit backend\'s vtable (0x8021d678)'),
+    (0x80094168, 0x800942E0, '0bcbccb0476d153dc14ad7e735d21f21eb2eb6bb6df931e7cd566d65530aa800',
+     'the stop (slot, wait): push of five and sub sp, #0x14 (the caller\'s return address at sp + 0x24 at the call), '
+     'r4 the slot, r5 wait; with no declick going on, 0x80024580(voice, 0) under the lock at 0x8009424e; result 1 '
+     '-> with wait, it spins until the declick has run; 0 -> the slot goes on'),
+    (0x80024580, 0x80024748, 'f5fae1daf9c173c2d7dec31f2bdd3d5ed29512c4645f30424bc5dea7c4e86d1b',
+     'the re-hit / steal stop (voice): a voice releasing (+0x143b0 >= 1) on a panel-pad slot (type 4) is left alone '
+     '(0); else the declick: +0x1439c = 1, +0x143a0 = 0, 1'),
+    (0x800D63C8, 0x800D7480, 'aaf6fa61d28ebd401b14a75f7c974df40a9cd0c74ce8b5b663e934bcce66684d',
+     'the voice manager\'s note-on: it stops the pad\'s voices for a new hit through 0x80094168 at 0x800d6c08 '
+     '(chromatic: the same note, or every note when mono) and 0x800d6954 (a looping chromatic note again with HOLD '
+     'down), wait = slots needed > slots free; the new voice takes free slots first, steals (0x800d6ffa) only when '
+     'there are not enough'),
+    (0x80022A20, 0x80022A40, '478268362daf58be1cb3f26a69d3a7a8c497b05c13e6ed55ea3c5d1da49b0a13',
+     'a declick under way (+0x1439c >= 1, +0x143a0 0): the stop waits instead of calling 0x80024580'),
+    (0x00014B88, 0x00016690, '5889ffd51a5ad7c93a6e5d9d4a120a88d36812201b89e40513af94b3406ad180',
+     'the renderer: the release over +0x143ac / +0x143b0 blocks (a linear fade in output time), ending the voice'),
+    (0x800A1B18, 0x800A1B24, 'e6917fb473dc2f23c88b5d7a3b4c38f0c4b5dd4e8bfef7a54aacbb0996647536',
+     'a slot is free when its state word is 0 (a releasing voice\'s slot is not)'),
 ]
 MD = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB | capstone.CS_MODE_MCLASS)
 
@@ -337,6 +370,11 @@ def jump(target, size):
     return movw_movt_bx(12, target | 1) + bytes.fromhex('00bf') * ((size - 10) // 2)
 
 
+def call(target):
+    """movw ip / movt ip / blx ip to target (10 bytes)."""
+    return movw_movt_bx(12, target | 1)[:8] + struct.pack('<H', 0x4780 | 12 << 3)
+
+
 def listing(code, at):
     return [f'{i.mnemonic} {i.op_str}'.strip() for i in MD.disasm(code, at)]
 
@@ -351,7 +389,8 @@ SECTIONS {{
  . = {link_base:#x};
  .text : {{ KEEP(*(.text.env_recompute)) KEEP(*(.text.env_release)) KEEP(*(.text.env_fwd))
             KEEP(*(.text.env_rev)) KEEP(*(.text.env_ui_knob)) KEEP(*(.text.env_ui_poll))
-            KEEP(*(.text.env_ui_leave)) KEEP(*(.text.env_ui_draw)) KEEP(*(.text.env_ui_pad)) *(.text*) }}
+            KEEP(*(.text.env_ui_leave)) KEEP(*(.text.env_ui_draw)) KEEP(*(.text.env_ui_pad))
+            KEEP(*(.text.env_retrig)) *(.text*) }}
  .rodata : ALIGN(16) {{ KEEP(*(.rodata.env_*)) *(.rodata*) }}
  .data : ALIGN(16) {{ *(.data*) }}
  .bss : ALIGN(16) {{ KEEP(*(.bss.env_*)) *(.bss*) *(COMMON) }}
@@ -394,7 +433,7 @@ def check_parent(rt, img):
     for start, end, digest, what in GUARDS:
         if sha(rt.read(start, end - start)) != digest:
             raise ValueError(f'{start:#x}..{end:#x} differs from stock 5.52 ({what})')
-    for at, want, what, _, _ in SITES:
+    for at, want, what, _, _ in SITES + CALL_SITES:
         if rt.read(at, len(want)) != want:
             raise ValueError(f'{at:#x}: expected the stock {what}')
         inside = branches_into(rt, at + 1, at + len(want)) + \
@@ -430,7 +469,7 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
         raise ValueError(f'module ({len(module)} bytes) exceeds the slot')
     for name in ('env_recompute', 'env_recompute_stock', 'env_dispatch', 'env_fwd', 'env_fwd_stock', 'env_rev',
                  'env_rev_stock', 'env_release', 'env_ui_knob', 'env_ui_poll', 'env_ui_leave', 'env_ui_draw',
-                 'env_ui_pad'):
+                 'env_ui_pad', 'env_retrig', 'env_retrig_c'):
         if not symbols[name] & 1:
             raise ValueError(f'{name} is not a Thumb function symbol')
     resume = {at: back for at, _, _, back, _ in SITES}
@@ -444,6 +483,11 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
     tail = listing(module[at - base:at - base + 22], at)
     if tail[-3:] != ['movw ip, #0x316b', 'movt ip, #0x8002', 'bx ip'] or 'r6' not in tail[3]:
         raise ValueError(f'env_release does not set r6 and go on at 0x8002316a: {tail}')
+    at = symbols['env_retrig'] & ~1
+    shim = listing(module[at - base:at - base + 20], at)
+    if shim[:3] != ['ldr r2, [sp, #0x24]', 'mov r1, r5', 'push {r3, lr}'] or \
+            shim[4:7] != ['pop.w {r3, lr}', 'eor r7, r0, #1', 'bx lr'] or not shim[3].startswith('bl '):
+        raise ValueError(f'env_retrig does not take the voice, wait and return address and set r7: {shim}')
 
     patches = []
     for at, original, what, back, entry in SITES:
@@ -454,6 +498,13 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
                             what=f'{what} -> movw ip / movt ip / bx ip to {entry}' +
                                  (f' (the stock path goes on at {back:#x})' if entry != 'env_release' else
                                   f' (it sets r6 and goes on at {back:#x})'),
+                            listing=listing(code, at)))
+    for at, original, what, back, entry in CALL_SITES:
+        off = file_offset(img, at, len(original))
+        code = call(symbols[entry])
+        img[off:off + len(original)] = code
+        patches.append(dict(address=at, size=len(original), original_hex=original.hex(), replacement_hex=code.hex(),
+                            what=f'{what} -> movw ip / movt ip / blx ip to {entry} (back at {back:#x})',
                             listing=listing(code, at)))
     for off_, old, entry, what in VTABLE_SLOTS:
         off = file_offset(img, VTABLE + off_, 4)
@@ -484,8 +535,9 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
         revision=REVISION, status='hardware-unverified', published=False,
         description='pad envelopes stage 1: per pad, opt-in on the ENVELOPE page (SHIFT + PITCH/SPEED, tap SHIFT for '
                     'pages 2-4): FINE attack/release 0.5 ms - 8 s, LIN/EXP/LOG/S curves, decay and sustain, '
-                    'LOOP-ONCE, REV-TIME; the screen shows each page and the pad\'s real envelope (no popups); saved '
-                    'in PADCONF bytes 0x64-0x6F; untouched pads run the stock code',
+                    'LOOP-ONCE, REV-TIME, the re-hit fade (RETRIG: a new hit, chromatic notes too, fades the sounding '
+                    'voice out instead of the 1.3 ms cut); the screen shows each page and the pad\'s real envelope (no '
+                    'popups); saved in PADCONF bytes 0x64-0x6F; untouched pads run the stock code',
         parent_app1=str(inp), parent_sha256=sha(inp.read_bytes()),
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
         if parent_manifest.exists() else None,
@@ -500,7 +552,8 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
                              '0x65': 'attack, fine index', '0x66': 'release, fine index',
                              '0x67': 'curves: b0-1 attack, b2-3 decay, b4-5 release (LIN, EXP, LOG, S)',
                              '0x68': 'decay, fine index (0 off)', '0x69': 'sustain 0-100 %',
-                             '0x6a-0x6c': 'reserved for stage E3a (retrigger, overlap fade, choke)',
+                             '0x6a': 'retrigger: 0 CUT (stock), 1 FADE', '0x6b': 'the re-hit fade, fine index',
+                             '0x6c': 'reserved for the choke (stage E3a)',
                              '0x6d': 'layout version: 1 whenever any of 0x64-0x6c is not 0; anything else = stock',
                              '0x6e-0x6f': 'reserved'},
                       save='Edited flag (CSmplPrm + 0x1c) on every change; command 0xD (0x800e25c0(0xd, 1, 0)) 1 s '
@@ -514,7 +567,7 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
                 pages=['1 A-H-R (stock; FINE: attack/release fine index)',
                        '2 SHAPE: attack curve, TIME STOCK/FINE, release curve',
                        '3 DECAY: decay, sustain, decay curve',
-                       '4 MODE: LOOP every/first pass, -, REVERSE mirror/time'],
+                       '4 MODE: LOOP every/first pass, RETRIG cut/fade time, REVERSE mirror/time'],
                 next_page='tap SHIFT (press and release within 1 s; no other key pressed or let go, no knob turned, '
                           'no pad change in between)',
                 screen='rows 0-7 the CTRL 1-3 labels (also in the static layer [page + 0xc00]), 8-16 their values, '

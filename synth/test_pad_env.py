@@ -2,7 +2,7 @@
 
 usage: python synth/test_pad_env.py OUT_DIR [N]          (unicorn, capstone on PYTHONPATH; N random cases, default 60)
 
-Reads OUT_DIR/manifest.json for the parent APP1. Static checks first: only the header's scatter pointer, the four
+Reads OUT_DIR/manifest.json for the parent APP1. Static checks first: only the header's scatter pointer, the five
 code sites, the five ENVELOPE vtable words and the appended tail differ from the parent; the guards and the
 displaced bytes hold on the parent and nothing reaches into those bytes; the module's copies of them are exact; the
 slot overlaps no row and no other fork module; the tables are the documented formulas. Then the parent and the new
@@ -21,6 +21,11 @@ Checks:
 - shaped pads (FINE times, curves, decay and sustain, attack/decay/release overlap, REV-TIME, LOOP-ONCE with wraps,
   turns and an Init reset): the published shape and every frame of both applicators match a Python model;
 - the note-off sizes a FINE release from the fine time (every index, short and long releases);
+- the re-hit: the stop 0x80094168, called as each of its callers calls it, on every kind of pad and voice: a FADE
+  pad's sounding voice, stopped for a new hit with free slots, gets the key-up release over the fade, a releasing
+  one goes on; everything else is the parent's, byte for byte. Through the voice manager 0x800d63c8 (on Unicorn's
+  ARM_MAX CPU, the voice start only noted): chromatic mono, poly, a panel pad hit again and every slot busy;
+  the old voice keeps its slot and the new one takes a free slot;
 - the dispatcher: the stock body first, then every env_stages entry with the call (voice, pad, return address) from
   each of the five recompute callers;
 - the ENVELOPE page: tapping SHIFT steps the pages (not while held at entry, nor with a key pressed or let go, a
@@ -45,9 +50,10 @@ from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_PROT_ALL, UC_HOOK_CODE
 from unicorn import arm_const as ar
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_pad_env import (GUARDS, SITES, STOCK_COPIES, VTABLE, VTABLE_SLOTS, VTABLE_KEEP,  # noqa: E402
+from build_pad_env import (GUARDS, SITES, CALL_SITES, STOCK_COPIES, VTABLE, VTABLE_SLOTS, VTABLE_KEEP,  # noqa: E402
                            KNOWN_SLOTS, SLOT, Runtime, scatter, decompress, branches_into, movw_movt_bx,
                            fine_frames, curve_tables, stock_frames, sha)
+from build_pad_env import call as call_code  # noqa: E402
 from build_start_fix import refs_into  # noqa: E402
 
 FLASH, COPY, DECOMPRESS, ZERO = 0x60080000, 0x600800E4, 0x60080088, 0x60080100
@@ -102,10 +108,13 @@ def s32(v):
 
 
 class Machine:
-    def __init__(self, img, symbols=None, screen=False):
-        """screen: boot's three 128 x 64 surfaces made (0x8006fcb8) and the drawing code run for real"""
+    def __init__(self, img, symbols=None, screen=False, arm_max=False):
+        """screen: boot's three 128 x 64 surfaces made (0x8006fcb8) and the drawing code run for real;
+        arm_max: Unicorn's ARM_MAX CPU (the voice code after a voice start uses VFP instructions the default lacks)"""
         self.sym = symbols or {}
         self.uc = uc = Uc(UC_ARCH_ARM, UC_MODE_THUMB)
+        if arm_max:
+            uc.ctl_set_cpu_model(ar.UC_CPU_ARM_MAX)
         for base, size in ((0x0, 0x20000), (0x20000000, 0x80000), (0x20200000, 0x100000), (0x80000000, 0x4000000),
                            (0x30000000, 0x100000), (0x60000000, 0x400000), (0x400E8000, 0x2000),
                            (0xE0000000, 0x100000), (0x40000000, 0xE8000), (0x400EA000, 0x316000),
@@ -537,13 +546,13 @@ def static_checks(out, man, img, parent):
         return [load - FLASH + addr - dst for load, dst, n, fn in prow
                 if fn == COPY and load and dst <= addr < dst + n][0]
     allowed = set(range(0x80, 0x88))
-    for at, original, _, _, _ in SITES:
+    for at, original, _, _, _ in SITES + CALL_SITES:
         allowed |= set(range(file_off(at), file_off(at) + len(original)))
     for off, _, _, _ in VTABLE_SLOTS:
         allowed |= set(range(file_off(VTABLE + off), file_off(VTABLE + off) + 4))
     diff = [i for i in range(len(parent)) if img[i] != parent[i]]
     check(set(diff) <= allowed and img[:len(parent)] != parent,
-          f'only the scatter pointer, the four code sites and five ENVELOPE vtable words change inside the parent '
+          f'only the scatter pointer, the five code sites and five ENVELOPE vtable words change inside the parent '
           f'({len(diff)} bytes)')
     e = man['entries']
     rt, nrt = Runtime(parent), Runtime(img)
@@ -551,15 +560,18 @@ def static_checks(out, man, img, parent):
     for at, original, what, back, entry in SITES:
         jump = movw_movt_bx(12, e[entry]) + bytes.fromhex('00bf') * ((len(original) - 10) // 2)
         ok.append(rt.read(at, len(original)) == original and nrt.read(at, len(original)) == jump)
+    for at, original, what, back, entry in CALL_SITES:
+        ok.append(rt.read(at, len(original)) == original and nrt.read(at, len(original)) == call_code(e[entry]) and
+                  back == at + len(original))
     check(all(ok), 'each code site: the stock instructions on the parent, movw ip / movt ip / bx ip to its entry (and '
-                   f'never-run nops) here ({ok})')
+                   f'never-run nops) here; at 0x8009424e movw ip / movt ip / blx ip, back right after ({ok})')
     ok = [rt.word(VTABLE + off) == old and nrt.word(VTABLE + off) == e[entry] for off, old, entry, _ in VTABLE_SLOTS]
     ok += [rt.word(VTABLE + off) == want == nrt.word(VTABLE + off) for off, want, _ in VTABLE_KEEP]
     check(all(ok), 'ENVELOPE vtable: +0x04 / +0xC8 / +0xCC / +0xD0 / +0xE4 stock on the parent and the module\'s '
                    'here; DOOM OS\'s +0x08 and the current-pad +0x14C untouched')
     check(all(sha(rt.read(s, en - s)) == d for s, en, d, w in GUARDS), f'{len(GUARDS)} guards hold on the parent')
     inside = []
-    for at, original, _, _, _ in SITES:
+    for at, original, _, _, _ in SITES + CALL_SITES:
         inside += branches_into(rt, at + 1, at + len(original))
         inside += [h for h in refs_into(parent, at + 1, at + len(original)) if h[2] & ~1 != at]
     check(not inside, f'nothing branches or points into the displaced bytes but their entries ({inside[:4]})')
@@ -884,6 +896,224 @@ def note_off_checks(img, parent, man, frames):
           'note-off with a release already running: left alone (result 1), as stock')
 
 
+# ---------------------------------------------------------------- the re-hit
+SLOTS, SLOT_SIZE, SLOT_STATES = 0x202AE1A0, 0x58, SCRATCH + 0x8000  # 32 slots; their state words made here (0 free)
+STOP, STOP_DECLICK, STOP_SPIN, SLOT_NOTE_OFF = 0x80094168, 0x80024580, 0x800942B0, 0x800D5E78
+VMAN, VMAN_OBJ, VSTART = 0x800D63C8, 0x80D4E630, 0x800200E0
+NOW, TICK = 0x3FFA, 0x202BCF20                           # the RTOS time (0x800d3194): a tick later at every read here
+STOP_FLAG, STOP_COUNT, STOP_TIME = 0x82E4EA50, 0x82E4E9D0, 0x833B8608
+NOTES, NOTE_BASE = 0x801AA0A0, PROJECT + 0x2C            # chromatic: pad -> note offset, minus the project's base
+INFO, SEG, SEGREC = SCRATCH + 0x8400, SCRATCH + 0x9000, SCRATCH + 0xA000
+REHITS = {0x800D6C0D: 'a new hit (0x800d6c08)', 0x800D6959: 'a looping chromatic note again with HOLD (0x800d6954)'}
+NOT_REHITS = {0x800D6A35: 'stop-all while recording (0x800d6a30)', 0x800D6FFF: 'the steal (0x800d6ffa)',
+              0x800D67DD: 'the MIDI chromatic loop (0x800d67d8)'}
+FADE48 = ext_bytes(rest=b'\x01\x30\x00')                 # FADE, fine index 48: 888 frames (19 ms), 14 blocks
+RETRIG_PADS = [('CUT', ext_bytes()), ('FADE 19 ms', FADE48),
+               ('FADE 0.5 ms (under 64 frames)', ext_bytes(rest=b'\x01\x01\x00')),
+               ('FADE 8 s', ext_bytes(rest=b'\x01\x7f\x00')),
+               ('FADE bytes, layout version 0', ext_bytes(rest=b'\x01\x30\x00', version=0)),
+               ('FADE bytes, unknown layout 2', ext_bytes(rest=b'\x01\x30\x00', version=2)),
+               ('retrigger 2 (unknown)', ext_bytes(rest=b'\x02\x30\x00')),
+               ('FINE, curves and decay, CUT', ext_bytes(3, 32, 90, 0x19, 70, 40))]
+VOICE_STATES = [('sounding (chromatic slot)', dict()), ('sounding (panel-pad slot)', dict(typ=4)),
+                ('sounding, 100 frames left', dict(played=200900)), ('releasing', dict(rel=5)),
+                ('releasing (panel-pad slot)', dict(rel=5, typ=4)), ('nothing left to play', dict(pos=0, end=0))]
+
+
+def rehit_machine(img, symbols=None):
+    """a machine for the stop and the voice manager: the project's chromatic settings from m.params, time going on,
+    the audio task running a declick the stop waits for, and the voice start (Init) only noted"""
+    m = Machine(img, symbols, arm_max=True)
+    m.params, m.calls = {}, []
+    for pad in range(32):
+        m.load_pad(pad)
+
+    def project(uc, a, size, _):
+        r1 = uc.reg_read(ar.UC_ARM_REG_R1)
+        if uc.reg_read(ar.UC_ARM_REG_R0) == PROJECT and r1 in m.params:
+            m._ret(m.params[r1])
+
+    def tick(uc, a, size, _):
+        uc.mem_write(TICK, struct.pack('<Q', struct.unpack('<Q', bytes(uc.mem_read(TICK, 8)))[0] + 1))
+
+    def spin(uc, a, size, _):
+        m.w32(uc.reg_read(ar.UC_ARM_REG_R7) + 0x1439C, 0)
+
+    def start(uc, a, size, _):
+        m.calls.append(('start',) + m.regs(3))
+        m._ret(0)
+
+    def log(name, n):
+        def f(uc, a, size, _):
+            m.calls.append((name,) + m.regs(n) + ((uc.reg_read(ar.UC_ARM_REG_LR),) if name == 'stop' else ()))
+        return f
+    for a, fn in ((SAMPLE_GET, project), (NOW, tick), (STOP_SPIN, spin), (VSTART, start), (STOP, log('stop', 2)),
+                  (STOP_DECLICK, log('declick', 2)), (NOTE_OFF, log('note-off', 1)),
+                  (SLOT_NOTE_OFF, log('slot note-off', 2))):
+        m.uc.hook_add(UC_HOOK_CODE, fn, None, begin=a, end=a)
+    return m
+
+
+def free_slots(m):
+    for k in range(32):
+        s = SLOTS + k * SLOT_SIZE
+        m.uc.mem_write(s, bytes(SLOT_SIZE))
+        m.w32(s + 4, SLOT_STATES + 16 * k)
+        m.uc.mem_write(SLOT_STATES + 16 * k, bytes(16))
+        m.w32(s + 0x28, k)
+        m.w32(s + 0x2C, M32)
+    m.w32(SEGREC + 0x2080, M32)                         # no loop record: the release counts from the played frames
+    m.uc.mem_write(TICK, bytes(8))
+    m.uc.mem_write(STOP_FLAG, b'\0')
+    m.uc.mem_write(STOP_COUNT, bytes(4 * 32))
+    m.uc.mem_write(STOP_TIME, bytes(8 * 32))
+
+
+def sounding(m, k, i, pad, typ=0xC, note=0, pos=1000, end=200000, played=0, rel=0):
+    """slot k, busy, holds voice i of pad (the stand-in voice class): at pos frames of END end, played frames counted,
+    rel release blocks left (0 none); a playing voice's segment table (byte 1 not 0xff)"""
+    s, v = SLOTS + k * SLOT_SIZE, VOICES + i * VOICE_SIZE
+    m.w32(s, v)
+    m.w32(SLOT_STATES + 16 * k, 1)
+    m.w32(s + 0x14, 100 + k)                            # start serial: the oldest is stolen first
+    m.w32(s + 0x2C, typ)
+    m.w32(s + 0x4C, note)
+    info, seg = INFO + 0x40 * i, SEG + 0x40 * i
+    m.w32(v, SCRATCH + 0x10)
+    m.w32(v + 0x100, 40)
+    m.w32(v + 0x14264, info)
+    m.w32(v + 0x14268, seg)
+    m.uc.mem_write(seg, bytes(0x40))
+    m.w32(seg + 0x20, SEGREC)
+    m.w32(v + 0x14274, pad)
+    m.w32(v + 0x14278, k)
+    m.w32(v + 0x143B8, played)
+    m.w32(info + 8, 0x200 + 4 * pos)
+    m.w32(info + 0x18, 4 * end)
+    m.w32(info + 0x54, 0)
+    m.uc.mem_write(v + 0x14260, b'\0\0')
+    m.w32(v + 0x1439C, 0)
+    m.uc.mem_write(v + 0x143A0, b'\0')
+    m.w32(v + 0x143AC, rel)
+    m.w32(v + 0x143B0, rel)
+    return s, v
+
+
+def stop_state(m, k, v):
+    """what a stop may change: the voice's play state, its slot, the stop's flag, count and time"""
+    return dict(voice=bytes(m.uc.mem_read(v + 0x14200, 0x200)), slot=bytes(m.uc.mem_read(SLOTS + k * SLOT_SIZE,
+                                                                                         SLOT_SIZE)),
+                flag=bytes(m.uc.mem_read(STOP_FLAG, 1)), count=m.r32(STOP_COUNT + 4 * k),
+                time=bytes(m.uc.mem_read(STOP_TIME + 8 * k, 8)), tick=bytes(m.uc.mem_read(TICK, 8)))
+
+
+def with_release(st, blocks):
+    """stop state st with the voice's release blocks set and no declick"""
+    b = bytearray(st['voice'])
+    struct.pack_into('<I', b, 0x19C, 0)
+    struct.pack_into('<2I', b, 0x1AC, blocks, blocks)
+    return dict(st, voice=bytes(b))
+
+
+def retrig_checks(img, parent, man, frames):
+    m, p = rehit_machine(img, man['entries']), rehit_machine(parent)
+    # the stop, called as its callers do, on every kind of pad and voice
+    bad, faded, alone, kinds = [], 0, 0, set()
+    for what, b in RETRIG_PADS:
+        on = b[9] == 1 and b[6] == 1
+        f = frames[b[7] & 127]
+        for lr in list(REHITS) + list(NOT_REHITS):
+            for wait in (0, 1):
+                for sname, st in VOICE_STATES:
+                    res = []
+                    for mm in (m, p):
+                        free_slots(mm)
+                        mm.set_ext(3, b)
+                        s, v = sounding(mm, 6, 6, 3, **st)
+                        before = stop_state(mm, 6, v)
+                        mm.calls.clear()
+                        mm.call(STOP | 1, s, wait, lr=lr, until=lr & ~1, count=5_000_000)
+                        res.append((before, stop_state(mm, 6, v), [c for c in mm.calls if c[0] != 'stop']))
+                    (b0, after, calls), (_, want, stock) = res
+                    left = st.get('end', 200000) + st.get('pos', 1000) - st.get('played', 0)
+                    blocks = -(-min(f, left) // 64) if f >= 64 else 0
+                    eligible = on and lr in REHITS and not wait
+                    if eligible and st.get('rel'):
+                        ok = calls == [] and after['voice'] == b0['voice'] and after['slot'] == b0['slot'] and \
+                            after['flag'] == b'\0' and after['count'] == 0
+                        alone += ok
+                        kinds.add('releasing')
+                    elif eligible and blocks >= 1:
+                        ok = calls == [('note-off', v)] and after['voice'] == with_release(b0, blocks)['voice'] and \
+                            after['slot'] == b0['slot'] and after['flag'] == b'\0' and after['count'] == 0
+                        faded += ok
+                        kinds.add('faded')
+                    else:                               # stock's declick (a fade it can't give: note-off tried first)
+                        ok = after == want and [c for c in calls if c[0] != 'note-off'] == stock and \
+                            [c for c in calls if c[0] == 'note-off'] == ([('note-off', v)] if eligible else [])
+                        kinds.add('stock')
+                    if not ok:
+                        bad.append((what, hex(lr), wait, sname))
+    total = len(RETRIG_PADS) * (len(REHITS) + len(NOT_REHITS)) * 2 * len(VOICE_STATES)
+    check(not bad and faded and alone and kinds == {'faded', 'releasing', 'stock'},
+          f'the stop 0x80094168 as its callers call it ({total} cases): for a new hit ({", ".join(REHITS.values())}) '
+          f'with free slots (wait 0) on a FADE pad, a sounding voice gets the key-up release over the fade, '
+          f'ceil(min(fade, frames left) / 64) blocks, and no declick ({faded} cases), and a releasing one goes on '
+          f'untouched ({alone}); the slot, the stop\'s flag and count as stock leaves them; everything else is the '
+          f'parent\'s, byte for byte: CUT pads, a fade under 64 frames or with nothing left to play (the declick), '
+          f'other layouts and retrigger values, wait 1 (the new voice needs this slot), and the other callers '
+          f'({", ".join(NOT_REHITS.values())}) ({bad[:4]})')
+
+    # through the voice manager: where the new voice goes and what happens to the old one
+    table = struct.unpack('<16i', bytes(p.uc.mem_read(NOTES, 64)))
+    base = s32(p.r32(NOTE_BASE))
+    bad, seen = [], []
+    cases = [('chromatic, mono: another note while one rings', 1, 1, 5, 0xC, 2, True),
+             ('chromatic, poly: the ringing note again', 1, 0, 2, 0xC, 2, True),
+             ('chromatic, poly: another note (both ring)', 1, 0, 5, 0xC, 2, False),
+             ('a pad hit again while it rings', 0, 1, 3, 4, 0, True),
+             ('chromatic, mono, every slot busy (the new voice needs the old slot)', 1, 1, 5, 0xC, 2, None)]
+    for what, chrom, mono, pressed, typ, ringing, stops in cases:
+        for pname, b in (('CUT', ext_bytes()), ('FADE 19 ms', FADE48)):
+            res = []
+            for mm in (m, p):
+                free_slots(mm)
+                mm.params = {0xBF: chrom, 0xC1: 3, 0xF3: 0 if mono else 2}
+                mm.set_ext(3, b)
+                s, v = sounding(mm, 7, 7, 3, typ, table[ringing] - base if chrom else 0)
+                if stops is None:
+                    for k in range(32):
+                        if k != 7:
+                            sounding(mm, k, k, 8 + k % 8, 4)
+                mm.calls.clear()
+                r = mm.call(VMAN | 1, VMAN_OBJ, 0xC if chrom else 4, pressed if chrom else 3, 100, stack=(0, 0, 0),
+                            count=50_000_000)
+                res.append((r, list(mm.calls), [stop_state(mm, k, VOICES + k * VOICE_SIZE) for k in range(32)],
+                            mm.r32(SLOT_STATES + 16 * 7), mm.r32(SLOTS + 7 * SLOT_SIZE)))
+            (r, calls, states, busy, held), (pr, pcalls, pstates, _, _) = res
+            starts = [c[1] for c in pcalls if c[0] == 'start']
+            stop = [c for c in pcalls if c[0] == 'stop' and c[1] == s]
+            if pname == 'CUT' or not stops:
+                ok = (r, [c[:3] if c[0] == 'declick' else c for c in calls], states) == \
+                    (pr, [c[:3] if c[0] == 'declick' else c for c in pcalls], pstates)
+            else:
+                want = [('note-off', v) if c[:2] == ('declick', v) else c for c in pcalls]
+                pstates[7] = with_release(pstates[7], 14)
+                ok = r == pr and calls == want and stop == [('stop', s, 0, 0x800D6C0D)] and \
+                    [k for k in range(32) if states[k]['voice'] != pstates[k]['voice']] == [] and \
+                    [st['slot'] for st in states] == [st['slot'] for st in pstates] and busy == 1 and held == v and \
+                    starts and starts[0] != s
+            seen.append((what, pname, bool(stop), starts[:1] and (starts[0] - SLOTS) // SLOT_SIZE))
+            if not ok:
+                bad.append((what, pname))
+    check(not bad and [x[2] for x in seen] == [True, True, True, True, False, False, True, True, True, True],
+          f'through the voice manager 0x800d63c8 (the new voice\'s start only noted): chromatic mono (project 0xf3 '
+          f'not 2) stops the ringing note for any new one, poly only for the same note, a panel pad hit again stops '
+          f'its voice, all from 0x800d6c08 with wait 0; on a FADE pad the old voice fades out over 14 blocks instead '
+          f'of the declick and keeps its slot (busy) while the new voice starts in a free one; CUT pads, and every '
+          f'slot busy (wait 1), are the parent\'s ({bad}; {seen})')
+
+
 # ---------------------------------------------------------------- the dispatcher
 def dispatcher_checks(img, parent, man):
     m, p = Machine(img, man['entries']), Machine(parent)
@@ -910,7 +1140,7 @@ def dispatcher_checks(img, parent, man):
 # ---------------------------------------------------------------- the ENVELOPE page
 # ---------------------------------------------------------------- the ENVELOPE page and its screen
 PAGE_LABELS = [['C1:ATTACK', 'C2:HOLD', 'C3:RELEASE'], ['C1:ATTACK', 'C2:TIME', 'C3:RELEASE'],
-               ['C1:DECAY', 'C2:SUSTAIN', 'C3:CURVE'], ['C1:LOOP', '', 'C3:REVERSE']]
+               ['C1:DECAY', 'C2:SUSTAIN', 'C3:CURVE'], ['C1:LOOP', 'C2:RETRIG', 'C3:REVERSE']]
 PAGE_NAMES = ['', 'SHAPE', 'DECAY', 'MODE']
 CURVE_NAMES = ['LIN', 'EXP', 'LOG', 'S']
 SPAN = (0, 288000)                                       # every test pad's START and END: 6 s
@@ -980,7 +1210,9 @@ class Screens:
                 v['values'] = [time_text(self.F[dec]) if dec else 'OFF', f'{min(eff[5], 100)}%',
                                CURVE_NAMES[eff[3] >> 2 & 3]]
             else:
-                v['values'] = ['FIRST' if eff[0] & 4 else 'EVERY', '', 'TIME' if eff[0] & 8 else 'MIRROR']
+                fade = eff[7] & 127 if eff[6] == 1 else 0
+                v['values'] = ['FIRST' if eff[0] & 4 else 'EVERY', time_text(self.F[fade]) if fade else 'CUT',
+                               'TIME' if eff[0] & 8 else 'MIRROR']
         v['bottom'] = f'{pad_label(pad)} {name} {n + 1}/{count}'
         return v
 
@@ -1067,6 +1299,7 @@ CONFIGS = [  # (what, settings bytes, A, H, R, LOOP, PLAY)
     ('FINE times overlapping on HOLD 10 %', ext_bytes(1, 120, 120, 0x30), 20, 10, 40, 0, 0),
     ('S curves, decay cut by the release', ext_bytes(3, 80, 100, 0x3F, 127, 20), 20, 60, 40, 0, 0),
     ('an unknown layout version', ext_bytes(0x0F, 40, 50, 0x3F, 60, 50, version=2), 20, 80, 40, 0, 0),
+    ('a re-hit fade of 19 ms, the envelope stock', ext_bytes(rest=b'\x01\x30\x00'), 20, 80, 40, 0, 0),
 ]
 
 
@@ -1183,9 +1416,9 @@ def ui_checks(img, parent, man, frames, curves):
                 bad.append((what, n))
     check(not bad, f'every page for {len(CONFIGS)} kinds of settings (stock; FINE, curves, decay and sustain; curves '
                    f'with stock times; LOOP-ONCE on a looping pad; REV-TIME on a reverse pad; overlapping times; a '
-                   f'decay cut by the release; an unknown layout): the screen and static layer are the reference\'s, '
-                   f'byte for byte: the page\'s labels and values, the pad\'s real envelope in the graph (stock\'s for '
-                   f'stock settings), "A-6 DECAY 3/4" ({bad})')
+                   f'decay cut by the release; an unknown layout; a re-hit fade): the screen and static layer are the '
+                   f'reference\'s, byte for byte: the page\'s labels and values, the pad\'s real envelope in the graph '
+                   f'(stock\'s for stock settings), "A-6 DECAY 3/4" ({bad})')
     # a refresh (stock copies the static layer over the screen, then redraws) keeps each page
     setup(m, 5, *CONFIGS[1][1:])
     seq = []
@@ -1213,13 +1446,17 @@ def ui_checks(img, parent, man, frames, curves):
         m.knob(ctrl, raw)
         seq.append(matches(m, screens, 1, 5))
     go_to(m, 3)
-    for ctrl, raw in ((1, 100), (3, 90), (2, 30), (3, 10)):
+    fades = []
+    for ctrl, raw in ((1, 100), (3, 90), (2, 30), (3, 10), (2, 0), (2, 48)):
         m.knob(ctrl, raw)
         seq.append(matches(m, screens, 3, 5))
+        if ctrl == 2:
+            fades.append(m.ext(5)[6:8])
     b = m.ext(5)
     check(all(seq) and b[0] & 3 == 3 and b[4] == 90 and b[5] == 50 and b[3] == (3 | 2 << 2 | 3 << 4) and
-          b[0] & 12 == 4, f'pages 2-4: each turn writes its setting and the screen shows it at once ({seq}, '
-                          f'{b.hex()})')
+          b[0] & 12 == 4 and fades == [b'\x01\x1e', b'\x00\x00', b'\x01\x30'],
+          f'pages 2-4: each turn writes its setting and the screen shows it at once; MODE CTRL 2 writes the re-hit '
+          f'fade (bytes 0x6a 1, 0x6b the fine index; far left 0 0, CUT) ({seq}, {fades}, {b.hex()})')
     # page 1 with FINE: the times on the screen
     go_to(m, 0)
     seq, times = [], []
@@ -1399,6 +1636,7 @@ def main():
     neutral_checks(img, parent, man, n)
     shaped_checks(img, man, frames, curves, n)
     note_off_checks(img, parent, man, frames)
+    retrig_checks(img, parent, man, frames)
     dispatcher_checks(img, parent, man)
     ui_checks(img, parent, man, frames, curves)
     print(f'\n{cases[0] - len(fails)}/{cases[0]} checks pass')

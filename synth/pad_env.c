@@ -12,6 +12,9 @@
  *   LOOP-ONCE a looping voice shapes only its first pass (attack, decay), then holds the sustain level;
  *             it fades only at key-up or stop
  *   REV-TIME  reverse reads are evaluated at START + END - position, so the attack is heard first
+ *   RETRIG    CUT (stock: a new hit stops the pad's sounding voice with a 1.3 ms declick) or a FADE time:
+ *             the old voice fades out over it as a key-up release while the new one starts (chromatic
+ *             notes too)
  *
  * The settings live in the pad's PADCONF reserved bytes 0x64-0x6F (B_* below), which stock saves,
  * loads, copies, moves and exchanges, and resets for a new sample. Byte 0x6D must be 1 (layout version)
@@ -27,6 +30,8 @@
  *              env_fwd_apply / env_rev_apply; anything else runs the displaced instructions and goes on
  *              in ITCM
  *   0x8002315a (16 bytes) -> env_release: r6 = release frames x 127 for a FINE voice, else R x 144000
+ *   0x8009424e (10 bytes, a call) -> env_retrig: the stop 0x80094168 calling the re-hit / steal stop
+ *              0x80024580; for the voice manager's re-hits of a FADE pad, the key-up release instead
  *   ENVELOPE page vtable 0x8021ec14: +0x04 (leave) env_ui_leave, +0xC8 (pad change) env_ui_pad,
  *              +0xCC (redraw) env_ui_draw, +0xD0 (tick) env_ui_poll, +0xE4 (knob) env_ui_knob
  *
@@ -37,7 +42,8 @@
  *            indices (the stock fields get the nearest stock value) and the screen shows the times
  *   2 SHAPE  CTRL 1 attack curve, CTRL 2 TIME: STOCK / FINE, CTRL 3 release curve
  *   3 DECAY  CTRL 1 decay (OFF, 0.5 ms - 8 s), CTRL 2 sustain 0-100 %, CTRL 3 decay curve
- *   4 MODE   CTRL 1 LOOP: EVERY / FIRST (pass), CTRL 3 REVERSE: MIRROR / TIME
+ *   4 MODE   CTRL 1 LOOP: EVERY / FIRST (pass), CTRL 2 RETRIG: CUT / the fade (0.5 ms - 8 s), CTRL 3
+ *            REVERSE: MIRROR / TIME
  * Later stages add pages through env_more_pages[]. A pad with stock settings keeps stock's graph, and on
  * page 1 the whole stock screen.
  * Holding COPY or REMAIN applies a turn to the mute group or bank, as stock's apply 0x800f5df0 does.
@@ -95,6 +101,8 @@ typedef unsigned long long u64;
 #define B_CURVES 0x67                 /* b0-1 attack, b2-3 decay, b4-5 release: LIN EXP LOG S */
 #define B_DEC 0x68                    /* decay, fine index, 0 = off */
 #define B_SUS 0x69                    /* sustain 0-100 % */
+#define B_RETRIG 0x6A                 /* 0 CUT (stock), 1 FADE */
+#define B_FADE 0x6B                   /* the re-hit fade, fine index */
 #define B_VERSION 0x6D                /* 1 whenever any of 0x64-0x6C is not 0 */
 #define F_FINE 1
 #define F_ADSR 2
@@ -106,6 +114,12 @@ typedef unsigned long long u64;
 
 static u8 *ext(u32 pad) {
     return (u8 *)(CSMPLPRM + 0xF800u + pad * 0x80u);
+}
+
+/* a setting as it counts: 0 unless the layout version is 1 */
+static u32 setting(u32 pad, u32 byte) {
+    const u8 *b = ext(pad);
+    return b[B_VERSION] == 1 ? b[byte] : 0;
 }
 
 /* ---------------------------------------------------------------- per voice */
@@ -551,10 +565,16 @@ __attribute__((naked)) EXPORT void env_rev(void) {
 
 /* ---------------------------------------------------------------- the note-off */
 
+/* env_retrig_c's note-off: this voice's release is env_fade_frames (0 = none) */
+EXPORT volatile u32 env_fade_voice;
+EXPORT volatile u32 env_fade_frames;
+
 /* What 0x8002315a..0x8002316a leaves in r6: stock's R x 144000, or the FINE release x 127 (the code
  * after it divides by 127 and sizes the key-up release from that, a FINE release under 64 frames being
- * stock's 1.3 ms declick). */
+ * stock's 1.3 ms declick), or a re-hit's fade x 127. */
 EXPORT u32 env_release_r6(const u8 *voice) {
+    if ((u32)voice == env_fade_voice)
+        return env_fade_frames * 127u;
     u32 r6 = *(const u32 *)(voice + V_R) * 144000u;
     s32 i = voice_of((u32)voice + ENV_AT);
     if (i >= 0) {
@@ -576,6 +596,56 @@ __attribute__((naked)) EXPORT void env_release(void) {
         "movw r12, #0x316b\n\t"
         "movt r12, #0x8002\n\t"
         "bx r12\n\t");
+}
+
+/* ---------------------------------------------------------------- the re-hit */
+
+#define V_DECLICK 0x1439C            /* voice: a declick pending (the stop's) */
+#define V_REL 0x143AC                /* voice: the release, in 64-frame blocks: total, then left (+0x143b0) */
+#define STOP_DECLICK ((s32 (*)(u32, s32))0x80024581u)  /* the re-hit / steal stop: 1 = it started the declick */
+#define NOTE_OFF ((s32 (*)(u32))0x80023119u)           /* the key-up release: 1 = started (env_release sizes it) */
+#define REHIT_RET 0x800D6C0Du        /* the voice manager stopping a pad's voices for a new hit (chromatic: the
+                                        same note, or every note when chromatic is mono) */
+#define REHIT_LOOP_RET 0x800D6959u   /* the same, for a looping chromatic note hit again with HOLD down */
+
+/* 0x80024580 for the stop 0x80094168 (lr: who asked it to stop the voice; wait: the new voice needs this slot,
+ * so stock waits for the declick). A re-hit of a FADE pad's sounding voice, with free slots for the new one,
+ * gets the key-up release over the fade instead of the 1.3 ms declick: the voice keeps its slot until the
+ * release ends it, and the new voice takes a free one. A voice already releasing goes on, as stock lets a
+ * panel pad's. Anything else, a fade under 64 frames, or nothing left to play: stock's declick. Returns what
+ * 0x80024580 does: 1 when it started the declick, 0 when the voice is left alone. */
+EXPORT s32 env_retrig_c(u32 voice, u32 wait, u32 lr) {
+    u32 pad = *(const u32 *)(voice + V_PAD);
+    if (!wait && (lr == REHIT_RET || lr == REHIT_LOOP_RET) && pad < PADS && setting(pad, B_RETRIG) == 1 &&
+        !*(volatile s32 *)(voice + V_DECLICK)) {
+        volatile s32 *rel = (volatile s32 *)(voice + V_REL);
+        if (rel[1] >= 1)
+            return 0;
+        s32 total = rel[0], left = rel[1];
+        env_fade_frames = env_fine_frames[setting(pad, B_FADE) & 127];
+        env_fade_voice = voice;
+        s32 started = NOTE_OFF(voice);
+        env_fade_voice = 0;
+        if (started && rel[1] >= 1)
+            return 0;
+        rel[0] = total;
+        rel[1] = left;
+    }
+    return STOP_DECLICK(voice, 0);
+}
+
+/* The call at 0x8009424e (movs r1, #0; bl 0x80024580; eor r7, r0, #1 displaced): r0 is the voice, r4 the slot,
+ * r5 the stop's wait flag, and its caller's return address is at sp + 0x24 (push of five, sub sp, #0x14). Back
+ * with r7 = result ^ 1, as the eor leaves it; r0-r3 and r12 are free (the unlock comes next). */
+__attribute__((naked)) EXPORT void env_retrig(void) {
+    __asm__ volatile(
+        "ldr r2, [sp, #0x24]\n\t"
+        "mov r1, r5\n\t"
+        "push {r3, lr}\n\t"
+        "bl env_retrig_c\n\t"
+        "pop {r3, lr}\n\t"
+        "eor r7, r0, #1\n\t"
+        "bx lr\n\t");
 }
 
 /* ---------------------------------------------------------------- the ENVELOPE page */
@@ -708,12 +778,6 @@ static u32 protected(u32 pad) {
     return ((s32 (*)(u32, s32, s32))((*(u32 **)PROJECT)[2]))(PROJECT, 0x17 + (s32)(pad >> 4), -1) != 0;
 }
 
-/* a setting as it counts: 0 unless the layout version is 1 */
-static u32 setting(u32 pad, u32 byte) {
-    const u8 *b = ext(pad);
-    return b[B_VERSION] == 1 ? b[byte] : 0;
-}
-
 /* the current pad, then the pads stock's apply 0x800f5df0 reaches: COPY held, the other pads of its
  * (non-zero) mute group; REMAIN held, the rest of its bank; protected banks never; and, as for stock's
  * setter, only pads holding a sample it edits */
@@ -834,21 +898,33 @@ static void decay_turn(u32 pad, u32 ctrl, s32 raw) {
 }
 
 static void mode_value(u32 pad, u32 ctrl, char *out) {
-    u32 f = setting(pad, B_FLAGS);
-    put0(out, ctrl == 1 ? (f & F_ONCE ? "FIRST" : "EVERY") : ctrl == 3 ? (f & F_REV ? "TIME" : "MIRROR") : "");
+    u32 f = setting(pad, B_FLAGS), fade = setting(pad, B_RETRIG) == 1 ? setting(pad, B_FADE) & 127 : 0;
+    if (ctrl == 2) {
+        if (fade)
+            *time_text(out, env_fine_frames[fade]) = 0;
+        else
+            put0(out, "CUT");
+    } else {
+        put0(out, ctrl == 1 ? (f & F_ONCE ? "FIRST" : "EVERY") : f & F_REV ? "TIME" : "MIRROR");
+    }
 }
 
 static void mode_turn(u32 pad, u32 ctrl, s32 raw) {
-    if (ctrl == 1)
+    if (ctrl == 1) {
         store(pad, B_FLAGS, F_ONCE, zone(raw, 2) ? F_ONCE : 0);
-    else if (ctrl == 3)
+    } else if (ctrl == 2) {
+        u32 v = zone(raw, 128);
+        store(pad, B_FADE, 0xFF, v);
+        store(pad, B_RETRIG, 0xFF, v ? 1 : 0);
+    } else {
         store(pad, B_FLAGS, F_REV, zone(raw, 2) ? F_REV : 0);
+    }
 }
 
 static const struct env_page built_in[BUILT_IN] = {
     {"SHAPE", {"C1:ATTACK", "C2:TIME", "C3:RELEASE"}, shape_value, shape_turn, 0},
     {"DECAY", {"C1:DECAY", "C2:SUSTAIN", "C3:CURVE"}, decay_value, decay_turn, 0},
-    {"MODE", {"C1:LOOP", "", "C3:REVERSE"}, mode_value, mode_turn, 0},
+    {"MODE", {"C1:LOOP", "C2:RETRIG", "C3:REVERSE"}, mode_value, mode_turn, 0},
 };
 
 static u32 page_count(void) {
