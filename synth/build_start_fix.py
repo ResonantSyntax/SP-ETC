@@ -1,4 +1,4 @@
-"""RESAMPLE start fix: put a resampled take's START on its first sound.
+"""RESAMPLE start fix: put a resampled take's START just before its first sound.
 
 Stock 5.52 (REPORT.md §2.8 step 9) trims a take's lead-in only when the
 first sound arrives 8-23.6 ms after recording started, and even then keeps
@@ -11,8 +11,17 @@ chip's round trip), so stock leaves that silence in. This patch:
      aren't cut. Other modes keep the table. LOW never comes from the table,
      so it also marks the take as a resample for hook A.
   A  0x8017f0ac  REC_STOP, mode != 2 branch: for takes carrying that mark,
-     set START = REC_START point + first-sound frame, when that frame is
-     1..WINDOW-1. Everything else runs the stock instructions.
+     set START = REC_START point + first-sound frame - MARGIN, when that
+     frame is MARGIN+1..WINDOW-1; otherwise START stays at the REC_START
+     point. Everything else runs the stock instructions.
+
+The margin keeps the quiet lead-in of the effects chip's return: it reaches
+the take a few frames before its first sample above LOW (a hi-hat bounced on
+the unit: the first non-zero sample 7 frames before the main delay).
+resample-startfix-2 put START on the first sample above LOW and cut that
+lead-in. The engine keeps only the first-sound frame (its writers compare each
+sample with the threshold as they stage it for the card), so the margin is
+fixed rather than measured back from the samples.
 
 The code goes in a new boot copy row at BASE (top of the free SDRAM gap).
 The audio data is untouched; only the pad's START moves. Mode 2 (the
@@ -35,13 +44,14 @@ FLASH, COPY = 0x60080000, 0x600800E4
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
 WINDOW = 2400          # frames (50 ms): first sound later than this keeps its lead-in
 LOW = 8                # |sample| > 8 (about -72 dBFS)
+MARGIN = 8             # frames kept in front of the first sample above LOW
 GETPARAM = 0x800D94D8  # GetParam(settings 0x82e01144, id, idx)
 SITE_A, SITE_B = 0x8017F0AC, 0x800E9EFE
 EXPECT_A = ['subs.w r0, sl, r6', 'movw r1, #0xbb8', 'sbcs.w r0, sb, r5']
 EXPECT_B = ['subs r0, #1', 'cmp r0, #9', 'bhi #0x800e9f0a', 'adr r1, #0xc', 'ldrh.w r7, [r1, r0, lsl #1]']
 TAIL_A = 0x8017F3B8    # where the stock branch continues after reading REC BPM
 TABLE_B = 0x800E9F14   # stock Auto Trig Level threshold table (left in place)
-REVISION = 'resample-startfix-2'
+REVISION = 'resample-startfix-3'
 
 MD = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB | capstone.CS_MODE_MCLASS)
 KS = Ks(KS_ARCH_ARM, KS_MODE_THUMB | KS_MODE_LITTLE_ENDIAN)
@@ -95,11 +105,11 @@ trim:
     ldrd    r0, r1, [r12, #0x208]
     cmp     r1, #0
     bne     bpm
-    cmp     r0, #0
-    beq     bpm
     movw    r1, #{WINDOW}
     cmp     r0, r1
     bhs     bpm
+    subs    r0, #{MARGIN}
+    ble     bpm
     ldrh.w  r1, [r12, #0x24]
     muls    r0, r1, r0
     lsls    r0, r0, #1
@@ -280,12 +290,15 @@ def build(inp: Path, out: Path, base: int):
     parent_manifest = inp.with_name('manifest.json')
     manifest = dict(
         revision=REVISION, status='hardware-unverified', published=False,
-        description='RESAMPLE takes start on their first sound (stock leaves the effects-chip delay as silence)',
+        description='RESAMPLE takes start just before their first sound, with its quiet lead-in (stock leaves the '
+                    'effects-chip delay as silence)',
+        replaces='resample-startfix-2 (START on the first sample above the threshold, which cut the return\'s '
+                 'quiet lead-in)',
         parent_app1=str(inp), parent_sha256=sha(inp.read_bytes()),
         parent_revision=json.loads(parent_manifest.read_text()).get('revision') if parent_manifest.exists() else None,
         sha256=sha(img), size=len(img), app0_sha256=APP0_SHA,
         blob_base=base, blob_file_offset=file_at, blob_size=len(code), blob_sha256=sha(code),
-        entries=entries, patches=patches, window_frames=WINDOW, threshold=LOW,
+        entries=entries, patches=patches, window_frames=WINDOW, threshold=LOW, margin_frames=MARGIN,
         scope='takes armed with settings param 0x36 == 1 (RESAMPLE page, incl. hot resample into the SG); REC sampling, the pattern-select resample page and pattern export are stock',
         tool='synth/build_start_fix.py')
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8', newline='\n')

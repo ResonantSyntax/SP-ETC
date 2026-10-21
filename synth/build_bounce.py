@@ -1,9 +1,10 @@
 """Bounce in place, stage 3: a sample pad through its effects, frame-exact, to an empty pad or in its
 place (REPLACE through the stock pad exchange, with UNDO).
 
-A stage applied to the published Sound Generator + Kits v9.46 image (kits plus the RESAMPLE start
-fix). It supersedes stage 2 (bounce-2-test1): the same four sites, bridged to the stage 3 bounce.c,
-plus the pad-event dispatcher. See BOUNCE.md.
+A stage applied to Sound Generator + Kits v9.46: the kit stage of the published v9.46 plus the
+RESAMPLE start fix v3 (resample-startfix-3, build_start_fix.py; the published v9.46 carries v2). It
+supersedes stage 2 (bounce-2-test1): the same four sites, bridged to the stage 3 bounce.c, plus the
+pad-event dispatcher. See BOUNCE.md.
 
 Six sites change, each checked against its exact v9.46 contents:
   0x0001d090  audio task, TX block: mov.w r1,#0x1000; mov r0,r5; bl mixer
@@ -51,7 +52,7 @@ HERE = Path(__file__).resolve().parent
 FLASH, COPY, ZERO = 0x60080000, 0x600800E4, 0x60080100   # scatter rows: copy, zero fill
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
 PUBLISHED_V946 = '7b5fbcb4c3ce1e8782fef4b5803be74c7d14eddf25a1b53682abe00c9ed3684a'
-REVISION = 'bounce-3-test4'
+REVISION = 'bounce-3-test5'
 SLOT = 0x5000                       # reserved: [base, base + SLOT)
 SLOT_CEILING = 0x83FED000           # the CPU meter test build's slot, then the start fix at 0x83FEF000
 BRIDGES = {'tx': 0x00, 'rx': 0x30, 'ui': 0x80, 'gate': 0xC0, 'tick': 0x100}
@@ -72,8 +73,9 @@ SITES = {
                               'bl #0x800ce420']),
 }
 VTABLE_SLOT, DOOM_FILTER = 0x80223474, 0x6031C8F9     # RESAMPLE page vtable 0x8022346c, +8
-# Code and data the module and bridges rely on: (start, end, SHA-256 of the v9.46 runtime bytes, what it
-# establishes). All are stock 5.52 bytes except the four marked v9.46 (the start fix and DOOM OS's filter).
+# Code and data the module and bridges rely on: (start, end, SHA-256 of the parent's runtime bytes, what it
+# establishes). All are stock 5.52 bytes except DOOM OS's filter (marked v9.46) and the three start fix spans
+# (marked startfix-3: its two jumps are v9.46's bytes, its code is v3's).
 GUARDS = [
     (0x1CF78, 0x1D0CC, 'f0c95148b5ac8c65cb13170f92197c3cffe4b51fdd832440934444ff10c18e00',
      'audio task: TX line 3 = 0x20006000 (eDMA TCD3 SADDR), RX = 0x20008000 (TCD4 DADDR); TX then RX per wake; '
@@ -111,11 +113,12 @@ GUARDS = [
      'REC_STOP finalize: START/END through 0x800cfa68 (all pad parameters to defaults), name, zero-cross adjust of '
      'START, END Snap (settings 0x59) and REC length (0x24) cut END, 0x59 cleared after the take'),
     (0x8017F0AC, 0x8017F0B8, 'e24fd45663eaa9ec0ae369899848f0ed766da72c358f8f6070d856d3780fb1b2',
-     'v9.46: the RESAMPLE start fix jump in REC_STOP'),
-    (0x83FEF000, 0x83FEF0B8, '138d719c869ab19345cb66b364f98ba340eab50bae521b99fb0584fc6383b2db',
-     'v9.46: the start fix moves START only when [+0x208] is 1..2399 (high word 0)'),
+     'startfix-3: the RESAMPLE start fix jump in REC_STOP'),
+    (0x83FEF000, 0x83FEF0B8, 'adb5394e72895911f7617dfbee500af9333a9503dd4cb8c29bef84be3ca2df61',
+     'startfix-3: the start fix moves START only when [+0x208] is 9..2399 (high word 0), to 8 frames before it; '
+     'a first sound of none (-1) leaves it'),
     (0x800E9EFE, 0x800E9F0A, '8e1fdd82606e81bc8de862c617ef85d532f718f5085aad26c7875083a981b5f3',
-     'v9.46: the start fix jump in the engine init'),
+     'startfix-3: the start fix jump in the engine init'),
     (0x800412D0, 0x800412DE, '815da4475a8e6822b2c93be0f01031eff226efb025baaaed7f639ef360db7828',
      'feed enable: 0x805917c4 = 1 (its only writer; called by standby)'),
     (0x8021E020, 0x8021E080, 'ff82d87baae3d7860397029c07ac5caa25aebcaed6efcd7e4ec444db409af6ce',
@@ -566,8 +569,14 @@ def build(inp: Path, out: Path, zig: Path, base: int):
         parent_app1=str(inp), parent_sha256=parent_sha, parent_is_published_v946=parent_sha == PUBLISHED_V946,
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
         if parent_manifest.exists() else None,
-        replaces='bounce-3-test3 (the same six sites)',
-        changes=["the take starts where the return departs from silence: the first non-zero RX frame in the 16 "
+        replaces='bounce-3-test4 (the same six sites, the same module)',
+        changes=["the parent is the published v9.46's kit stage plus the RESAMPLE start fix v3 (resample-startfix-3) "
+                 "instead of the published v9.46 (v2): a normal RESAMPLE's START keeps the return's quiet lead-in, "
+                 "8 frames before the first sample above -72 dBFS, where v2 put it on that sample. The bounce module, "
+                 "bridges and sites are test4's, byte for byte; a bounce never goes through the start fix (its take "
+                 "ends with the engine's first-sound frame set to none, and the run sets START after the finalize). "
+                 "The guard on the start fix's code holds v3's bytes"],
+        changes_test4=["the take starts where the return departs from silence: the first non-zero RX frame in the 16 "
                  "frames before L, after 8 silent ones, else L. The unit's return pre-rings each attack about 7 "
                  "frames before its main delay (a closed hi-hat on test3: L73 M73, START 457, first non-zero 450), so "
                  "test3 cut the attack's start and a LOOP take ended in the next pass's pre-ring (the end click). The "

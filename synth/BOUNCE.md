@@ -6,10 +6,38 @@ frame. **TO PAD** puts the result on the first empty pad and leaves the original
 **REPLACE** puts it on the pad itself and keeps the original on the first empty pad; **UNDO**
 swaps them back.
 
-This is a test build on the published Sound Generator + Kits v9.46 (kits plus the RESAMPLE start
-fix). It supersedes stage 2 (bounce-2-test1, which never ran on the unit) on the same four sites,
-plus the pad-event dispatcher and, since bounce-3-test2, the RESAMPLE page's tick. Stage 1 is the
-bounce probe ([BOUNCE_PROBE.md](BOUNCE_PROBE.md)).
+This is a test build on Sound Generator + Kits v9.46: the kit stage of the published v9.46 plus the
+RESAMPLE start fix v3 (the published v9.46 carries v2; see
+[KITS.md](KITS.md#start-fix-v3-test-builds-only)). It supersedes stage 2 (bounce-2-test1, which never
+ran on the unit) on the same four sites, plus the pad-event dispatcher and, since bounce-3-test2, the
+RESAMPLE page's tick. Stage 1 is the bounce probe ([BOUNCE_PROBE.md](BOUNCE_PROBE.md)).
+
+**bounce-3-test5** changes only the image under the bounce. The user found a normal RESAMPLE's
+START a few samples after the start of its wave. The cause is the RESAMPLE start fix (v2): it puts
+START on the take's first sample above −72 dBFS. The effects chip's return reaches the take with a
+quiet lead-in a few frames before that, and the stock finalize then moves START to the nearest zero
+crossing (`0x80017200`, called at `0x8017f626`). In an oscillating lead-in that crossing lies inside
+it.
+
+- **Start fix v3** puts START 8 frames before the first sample above −72 dBFS (never before the
+  take's start): in the silence in front of a lead-in of up to 7 frames, where the zero-cross snap
+  leaves it. The engine keeps only the first-sound frame (its writers compare each sample with the
+  threshold as they stage it for the card), so the margin is fixed. The code stays 184 bytes with
+  the same two entry points, so both jumps keep v2's bytes; 11 bytes of the image change.
+- **The bounce module, bridges and sites are test4's, byte for byte.** A bounce never goes through
+  the start fix: its take ends with the engine's first-sound frame set to none, and the run sets
+  START after the finalize. The builder's guard on the start fix's code now holds v3's bytes.
+- **Evidence, dm-404 (real firmware):** A-1's samples are written into its charge, the copy the
+  voice plays: 400 zero frames, then `1 −1 2 −2 3 −4`, then a cosine at 3000. The first sample above
+  8 comes 6 frames after the first non-zero one. In both builds a bounce of A-1 keeps the run's own
+  START after it settles and 5 s later: test4 START 450 = r_start, END 13578 = r_end; test5 458 =
+  r_start, 6674 = r_end. The engine's first-sound frame reads −1, and the take holds only zeros
+  between START and the lead-in. A normal RESAMPLE of A-1 (first sound k = 151, REC_START 384):
+  - test4 START 535 = 384 + 151, on the 3000 sample, with the lead-in cut;
+  - test5 START 527 = 384 + 151 − 8, followed by `0 0 1 −1 2 −2 3 −4 3000`.
+- **Evidence, Unicorn** (`test_start_fix.py`, 17 checks): a lead-in from 1 LSB crossing 8 five frames
+  later, the unit's 7-frame lead-in, a sharp attack, a floor under 8, a first sound after 2399
+  frames and mode 2. v2 fails 4 of them; v3 passes all.
 
 **bounce-3-test4** follows the hardware run of bounce-3-test3 (2026-10-19). A LOOP bounce still
 clicked at its end with LOOP off, and every bounce's START sat a few frames after the waveform's
@@ -507,7 +535,8 @@ finalize does. test2 did not, and its bounce played into those frames.
   finalize's end, the range setter, the mark and its clearing, `0x800d7508` and the charge entry
   functions under it. The jump-table entry
   for settings get 0x1b (REC BPM) is gone with the module's REC BPM read. All are stock 5.52 bytes
-  in v9.46 except the four marked v9.46 (the start fix and DOOM OS's filter).
+  except DOOM OS's filter (v9.46) and the start fix's three spans (startfix-3: its two jumps are
+  v9.46's bytes, its code is v3's).
 - **Branch scan:** no direct branch anywhere in the ITCM or SDRAM code lands inside a patched
   span.
 - **Cost (emulator):** about 50 instructions per TX+RX block pair when idle; up to about 2,600
@@ -517,18 +546,22 @@ finalize does. test2 did not, and its bounce played into those frames.
 
 ## Reproduce
 
-From stock 5.52, after the v9.46 commands in [KITS.md](KITS.md#reproduce) (the start fix stage
-included):
+From stock 5.52, after the v9.46 commands in [KITS.md](KITS.md#reproduce) up to the kit stage,
+with this branch's start fix (v3):
 
 ```sh
-python synth/build_bounce.py out/kits-v946-final/SP404MKII_APP1.bin out/bounce --zig /path/to/zig
+python synth/build_start_fix.py out/kits-v946/SP404MKII_APP1.bin out/kits-v946-sf3
+python synth/test_start_fix.py out/kits-v946-sf3
+python synth/build_bounce.py out/kits-v946-sf3/SP404MKII_APP1.bin out/bounce --zig /path/to/zig
 python synth/test_bounce.py out/bounce
 ```
 
-bounce-3-test4 is APP1 `d6c86579…4da2` (3,104,320 bytes). It comes out the same on the published
-v9.46 (`7b5fbcb4…684a`) and on a clean rebuild of every stage from stock 5.52 (v9.5 `d0919e40…`,
-v9.6 `1b2d50e0…`, kits `88384c3c…`, start fix `7b5fbcb4…684a`), and two builds are byte-identical.
-(bounce-3-test3 was `b9b11fb0…3c52b`, 3,103,872 bytes; bounce-3-test2 `26f594db…11bf`, 3,103,856
+bounce-3-test5 is APP1 `51583df0…1c35` (3,104,320 bytes) on start fix v3 `7d13c1e2…61cc`
+(3,094,624 bytes). Both come out the same on the kit stage the published v9.46 was built from
+(`88384c3c…92ba`) and on a clean rebuild of every stage from stock 5.52 (v9.5 `d0919e40…`, v9.6
+`1b2d50e0…`, kits `88384c3c…`), and two builds are byte-identical.
+(bounce-3-test4 was `d6c86579…4da2`, 3,104,320 bytes, on the published v9.46 `7b5fbcb4…684a`;
+bounce-3-test3 `b9b11fb0…3c52b`, 3,103,872 bytes; bounce-3-test2 `26f594db…11bf`, 3,103,856
 bytes; bounce-3-test1 `59e061cf…221d`, 3,103,744 bytes. These builds were never handed over:
 `36d697c0…c2d7`, test4 before its name kept D; `97ff1a5f…fc97` and `e77aa89b…4369`, fixes (b) and
 (a) as prepared for the decision; `8995fd25…8927`, an earlier test3 with the charge fix alone;
@@ -590,8 +623,8 @@ Modelled:
 
 The checks (511 cases):
 
-- **Static:** only the header, the six sites and the appended tail differ from v9.46. The
-  scatter table is v9.46's rows plus a copy row and a zero-fill row; APP1 ends below the PCM
+- **Static:** only the header, the six sites and the appended tail differ from the parent. The
+  scatter table is the parent's rows plus a copy row and a zero-fill row; APP1 ends below the PCM
   planning boundary; every guard holds.
 - **Bridges, against the parent's own instructions:** the mixer's arguments and stack depth; the
   stock feed's capture, meter and gate call (none while a bounce owns the recorder); the popup
