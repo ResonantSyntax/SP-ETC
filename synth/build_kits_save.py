@@ -14,11 +14,11 @@ Two words of the Sound Generator page's vtable (0x802295a8) change:
 - +0xd0 (0x80229678) the screen update, the kits' kit_ui_poll 0x83fa7485 -> ks_sg_poll, which calls it first.
 Stock code and data the module calls, reads or relies on are checked byte for byte (GUARDS), the kits module as a
 whole (its addresses below, exported or not, are v9.46's). The module (Zig 0.13.0, -Os) goes in a new boot copy
-row in an 8 KB slot at 0x83FDA000, taken from the top of the room pad FX was given (0x83FC9000-0x83FDA000 stays its
-own, 68 KB); the builder checks that no row and no other fork module's slot overlaps it and that nothing in the
-input refers to it.
+row in an 8 KB slot at 0x83FD5000, below the planned chromatic-mode module (0x83FD7000) and pad envelopes stage 2
+(0x83FD9000), taken from the top of the room pad FX was given (0x83FC9000-0x83FD5000 stays its own, 48 KB); the
+builder checks that no row and no other fork module's slot overlaps it and that nothing in the input refers to it.
 
-usage: python synth/build_kits_save.py IN_APP1 OUT_DIR --zig ZIG [--base 0x83FDA000] [--build-dir DIR]
+usage: python synth/build_kits_save.py IN_APP1 OUT_DIR --zig ZIG [--base 0x83FD5000] [--build-dir DIR]
 """
 import argparse
 import hashlib
@@ -42,7 +42,9 @@ SLOT = 0x2000                       # reserved: [base, base + SLOT)
 GAP = (0x83FC9000, 0x83FF0000)      # above the fork's rows (end 0x83FC8450), below the end of cacheable SDRAM
 # Every other fork module's reserved RAM (branch, start, end).
 KNOWN_SLOTS = [
-    ('pad FX (planned)', 0x83FC9000, 0x83FDA000),
+    ('pad FX (planned)', 0x83FC9000, 0x83FD5000),
+    ('chromatic mode (planned, the pad envelopes session)', 0x83FD7000, 0x83FD9000),
+    ('claude/pad-env-pitchfilter (pad envelopes stage 2)', 0x83FD9000, 0x83FDC000),
     ('claude/note-repeat (note repeat)', 0x83FDC000, 0x83FDE000),
     ('claude/pad-env-amp (pad envelopes)', 0x83FDE000, 0x83FE2000),
     ('claude/fx-deep-edit (FX deep edit)', 0x83FE2000, 0x83FE6000),
@@ -449,7 +451,7 @@ def main():
     ap.add_argument('app1', type=Path)
     ap.add_argument('out', type=Path)
     ap.add_argument('--zig', type=Path, required=True)
-    ap.add_argument('--base', type=lambda s: int(s, 0), default=0x83FDA000)
+    ap.add_argument('--base', type=lambda s: int(s, 0), default=0x83FD5000)
     ap.add_argument('--build-dir', type=Path)
     a = ap.parse_args()
     m = build(a.app1.resolve(), a.out.resolve(), a.zig.resolve(), a.base, a.build_dir.resolve() if a.build_dir else None)

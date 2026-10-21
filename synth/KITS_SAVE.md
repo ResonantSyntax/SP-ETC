@@ -124,8 +124,9 @@ instructions take 12 bytes); the module runs the displaced instructions and goes
 
 Nothing branches into the displaced instructions (checked by the builder over the whole image). The module
 (Zig 0.13.0, `-Os`, 5,996 bytes with its buffers) goes in a new boot copy row in an 8 KB slot at
-**`0x83FDA000`-`0x83FDC000`**, taken from the top of the room pad FX was given: pad FX now has
-`0x83FC9000`-`0x83FDA000` (68 KB; its study estimates 15 KB). The builder's `KNOWN_SLOTS` lists every fork
+**`0x83FD5000`-`0x83FD7000`**, below the planned chromatic-mode module (`0x83FD7000`-`0x83FD9000`) and pad
+envelopes stage 2 (`0x83FD9000`-`0x83FDC000`), taken from the top of the room pad FX was given: pad FX now has
+`0x83FC9000`-`0x83FD5000` (48 KB; its study estimates 15 KB). The builder's `KNOWN_SLOTS` lists every fork
 module's slot and refuses an overlap.
 
 The kits module's variables (`kit_pads`, `kit_mode`, `kit_midi_channel`, the arp's settings and held list,
