@@ -46,7 +46,7 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'pad-env-test4'
+REVISION = 'pad-env-test5-stage1'
 SLOT = 0x4000                       # reserved: [base, base + SLOT)
 GAP = (0x83FC9000, 0x83FF0000)      # above the fork's rows (end 0x83FC8450), below the end of cacheable SDRAM
 # Every other fork module's reserved RAM (branch, start, end).
@@ -64,8 +64,9 @@ KNOWN_SLOTS = [
 EXPORTS = ('env_recompute', 'env_recompute_stock', 'env_dispatch', 'env_fwd', 'env_fwd_stock', 'env_fwd_apply',
            'env_rev', 'env_rev_stock', 'env_rev_apply', 'env_shaped', 'env_release', 'env_release_r6',
            'env_ui_knob', 'env_ui_poll', 'env_ui_leave', 'env_ui_draw', 'env_ui_pad', 'env_voices', 'env_stages',
-           'env_more_pages', 'env_ui', 'env_text', 'env_fine_frames', 'env_fine_stock', 'env_stock_fine', 'env_curve',
-           'env_retrig', 'env_retrig_c', 'env_fade_voice', 'env_fade_frames')
+           'env_more_pages', 'env_targets', 'env_touched', 'env_ui', 'env_text', 'env_fine_frames',
+           'env_fine_stock', 'env_stock_fine', 'env_curve', 'env_retrig', 'env_retrig_c', 'env_fade_voice',
+           'env_fade_frames')
 
 # (address, displaced bytes, what they are, where the stock code goes on, entry symbol)
 SITES = [
@@ -390,7 +391,8 @@ SECTIONS {{
  .text : {{ KEEP(*(.text.env_recompute)) KEEP(*(.text.env_release)) KEEP(*(.text.env_fwd))
             KEEP(*(.text.env_rev)) KEEP(*(.text.env_ui_knob)) KEEP(*(.text.env_ui_poll))
             KEEP(*(.text.env_ui_leave)) KEEP(*(.text.env_ui_draw)) KEEP(*(.text.env_ui_pad))
-            KEEP(*(.text.env_retrig)) *(.text*) }}
+            KEEP(*(.text.env_retrig)) KEEP(*(.text.env_targets)) KEEP(*(.text.env_touched))
+            *(.text*) }}
  .rodata : ALIGN(16) {{ KEEP(*(.rodata.env_*)) *(.rodata*) }}
  .data : ALIGN(16) {{ *(.data*) }}
  .bss : ALIGN(16) {{ KEEP(*(.bss.env_*)) *(.bss*) *(COMMON) }}
@@ -575,7 +577,8 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
                        'marks "A-1 SHAPE 2/4" on pages 2-4; page 1 with a stock pad is stock\'s screen; drawn with '
                        'stock\'s own calls on the page\'s context',
                 more_pages='env_more_pages[4]: pointers to struct env_page {name, label[3], value(), turn(), '
-                           'graph()} for later stages, after MODE',
+                           'graph()} for later stages, after MODE; env_targets(pad, out[160]) gives the pads a turn '
+                           'reaches, env_touched() sets Edited and starts the save timer',
                 apply='COPY held: the mute group; REMAIN held: the bank (as stock\'s apply 0x800f5df0)'),
         tool='synth/build_pad_env.py')
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8', newline='\n')

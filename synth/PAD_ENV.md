@@ -1,4 +1,4 @@
-# Pad envelopes, stage 1: a better amplitude envelope per pad
+# Pad envelopes: stage 1, a better amplitude envelope per pad; stage 2, pitch and filter envelopes
 
 A hardware test build on top of the published Sound Generator + Kits v9.46 (APP1 `7b5fbcb4…684a`). It is
 stages E1 and E2 of the pad envelope study (`analysis/pad_envelope/REPORT.md`): finer attack and release
@@ -157,9 +157,8 @@ struct env_call {
 };
 ```
 
-A pitch envelope (Codex's design: the voice's Q14 step inside the 2048-frame fill `0x800e48ac` -> `0x800d2e38`
--> `0x1409a`) registers its entry there (a 4-byte data patch in this module's copy row) and acts on the four
-start/position return addresses it needs, leaving the A/H/R edit alone. Its fill-path hook is a different site.
+Stage 2 (pitch and filter, below) registers `pf_stage` there with a 4-byte data patch in this module's copy row;
+it acts on Init's return address only. Its fill-path hook is a different site (the resampler veneers).
 
 Its pages go in `env_more_pages[4]` (exported, zero at boot): pointers to
 
@@ -175,6 +174,10 @@ struct env_page {
 
 They come after MODE in order, the taps reach them, the bottom lines count them ("n/5"), and the module
 redraws after each turn. A graph draws with stock's calls on `ctx` (line `0x800c0660`, text `0x800d4fa0`, ...).
+A page keeps its own bytes; two exports give it the rest of a turn: `env_targets(pad, out[160])` returns the pads
+the turn reaches (the pad, then its mute group with COPY held or its bank with REMAIN held, protected banks and
+pads without a sample skipped), and `env_touched()` sets stock's Edited flag and starts the save timer (command 0xD
+1 s after the last change, or when the page closes).
 
 ## Checked in the emulator (not on hardware)
 
@@ -249,3 +252,194 @@ python synth/test_pad_env.py OUT_DIR
 ```
 
 Stock APP0 must sit beside the input APP1. keystone, unicorn and capstone on PYTHONPATH, Zig 0.13.0.
+
+---
+
+# Stage 2: a pitch envelope and a filter with a cutoff envelope
+
+A second module on top of stage 1 (`synth/pad_pitch_filter.c`, `synth/build_pad_pitch_filter.py`,
+`synth/test_pad_pitch_filter.py`; release `pad-env-test3`). Per pad and opt-in, like stage 1: **a pad whose new
+settings are all zero plays exactly as before**: it goes straight on to the stock resampler, and the emulator checks
+compare it bit for bit with the parent.
+
+| Setting | Values | Off |
+|---|---|---|
+| Pitch DEPTH | -24 .. +24 semitones; the step stays within -24 .. +13 semitones of unity (up: the stock maximum) | 0 |
+| Pitch ATTACK / DECAY | stage 1's fine times (0, then 0.5 ms - 8 s); DECAY 0 = HOLD (stays at 1) | - |
+| Filter TYPE | OFF, LPF, BPF, HPF | OFF |
+| CUTOFF | 20 Hz - 20 kHz in 128 log steps (20 Hz x 1000^(i / 127)) | - |
+| RESO | Q 0.707 - 16 in 128 log steps | - |
+| Filter AMOUNT | -63 .. +63: the envelope moves the cutoff by up to 2 x 63 steps (about 9.9 octaves) | 0 |
+| Filter ATTACK / DECAY | as the pitch's | - |
+| CURVES | LIN, EXP, LOG, S for each envelope (stage 1's curves; a falling EXP is EXP(1 - x)) | LIN |
+
+Each envelope rises from 0 to 1 over ATTACK, then falls back to 0 over DECAY, or holds at 1. The pitch step is the
+pad's own step times 2^(DEPTH x env / 12); the cutoff index is CUTOFF + 2 x AMOUNT x env. The time counts output
+frames from the voice's start (Init), not source frames, so PITCH, SPEED and stretch don't change it; it doesn't
+follow LOOP passes or the key (the fill runs ahead of the key: no release stage).
+
+## Where it runs, and why there
+
+Both run **in the sample fill**. The chunk worker `0x800e3f78` (SMPL CHARGE TASK, or the command dispatcher for a
+voice's first chunks) calls the resampler through two veneers, `0x800d2e38` -> `0x1409a` (mono) and `0x800d2e2e` ->
+`0x140c4` (stereo), with the voice's resampler object (voice + 0x140), scratch output buffers and 2048 frames; it then
+copies what came back into the stream chunk. The builder points both veneers at the module; the filter runs on the
+resampler's output before that copy.
+
+- The pitch has to be here: the resampler reads its step (object + 0x20 = voice + 0x160) for every output frame.
+- The filter could be here or in the pad FX per-voice render wrapper (`0x80005870`, real time). Here it costs no
+  audio-task CPU (pad FX's risk), sees one voice at a time, after the pitch (the cutoff doesn't move with PITCH), and
+  shares the hook with the pitch envelope. The price is the fill's lead: a knob change reaches a sounding voice
+  about 4 x 2048 frames (170 ms) late, as stage 1's settings do; an envelope starts with the voice, so it is exact.
+  No blocker turned up. It is not the pad FX filter (that one wants live TOP-page knobs), so pad FX keeps its bytes
+  0x54-0x63 and its RAM.
+
+## The resampler (stock 5.52, unchanged in ED5E / v9.46), as run in Unicorn
+
+- It is a **pitch shifter**: a time position (object + 0x64, Q14) advances at the voice's speed (float, object +
+  0x14104), the read heads at the step; when the heads drift a window (600 / 400 / 800 frames: stretch mode 0 / 1 / 2
+  at object + 0x1c, from the pad's 0x70 bits 1-2) from the time position it crossfades them back or forward
+  (`0x13a06`-`0x13b88`, a search in `0x13d82` / `0x13d9a`). So a new step moves the pitch, not the length, as the
+  PITCH knob does, and the fill keeps feeding at the speed.
+- **Splitting a call:** in modes 0 and 1, 1 x 2048 frames and calls of 64, 70 or 175 give the same frames and state
+  at a constant step (only the engine's call counter + 0x34 differs; nothing else reads it). **In mode 2 the search
+  runs every 25 or 35 frames of a call** (frame index % period; the period by engine + 0x5c), so calls must be
+  multiples of 175 frames to keep its schedule: 64 or 70 change the output.
+- **Up to 2.12x (+13 semitones, coarse/fine's maximum) the source never ran short** in 20 chunks in every mode, the
+  fill topping the ring up to 4096 frames as the worker does; at 3x the first chunk came back short (tag -1), at 4x
+  most did. Down to 0.25x nothing ran short. Hence the clamp.
+- The worker sets the step again before every resampler call, in every branch (coarse/fine, BPM sync, unity).
+- `0x80249a54` (read by `0x800baa58`, 1 at boot, toggled only through `0x8005d4f0`) chooses this path; at 0 the
+  worker copies the charge straight into the chunk: no stock pitch then, and no stage 2 either.
+
+## Per chunk
+
+1. `pf_active`, on the veneer's registers: the object is one of the 32 voices', its pad 0-159, byte 0x7F = 1, and
+   DEPTH or TYPE set. Otherwise the stock resampler with the registers, stack and return address as the veneer got
+   them.
+2. A new generation (stage 1's dispatcher called `pf_stage` from Init) resets the voice's clock and filter state.
+3. Pitch: a step per sub-block of 64 output frames (175 in stretch mode 2) from the envelope at its start, equal
+   steps in one call, then the step put back. A step set elsewhere meanwhile (another task's pitch edit) is the base
+   from the next sub-block on and is left in place.
+4. Filter: coefficients per 32 frames (g from a 129-entry tan table, interpolated in 1/256 steps; a1 = 1 / (1 + g (g +
+   k)), a2 = g a1, a3 = g a2), then the TPT state-variable filter per frame in float32 (`-ffp-contract=off`; VMLA isn't
+   fused): LP = v2, BP = k v1 (unity peak), HP = x - k v1 - v2, the input x 1 / sqrt(Q / 0.707) for LP and HP; a soft
+   knee from 24576 to 32767, rounding half away from zero. States under 1e-20 are flushed per block.
+5. The clock advances by the frames produced; a short return (the source's end) ends the chunk there.
+
+## Storage
+
+PADCONF extended block bytes 0x71-0x7F (0x64-0x6F are stage 1's, 0x70 bit 0 note repeat's follow flag, 0x54-0x63
+pad FX's):
+
+| Byte | Field |
+|---|---|
+| 0x71 | pitch depth, semitones, signed (-24..24; 0 = off) |
+| 0x72 / 0x73 | pitch attack / decay, fine index (decay 0 = HOLD) |
+| 0x74 | filter type: 0 off, 1 LP, 2 BP, 3 HP |
+| 0x75 / 0x76 | cutoff / resonance, 0-127 |
+| 0x77 | cutoff envelope amount, signed (-63..63) |
+| 0x78 / 0x79 | filter attack / decay, fine index (decay 0 = HOLD) |
+| 0x7a | curves: b0-1 pitch, b2-3 filter (LIN, EXP, LOG, S) |
+| 0x7b-0x7e | reserved |
+| 0x7f | layout version: 1 whenever any of 0x71-0x7e is not 0; anything else = stock |
+
+Stock saves, loads, copies, moves and exchanges them with the rest of the block and resets them for a new sample
+(pad FX study section 5.2). A sounding voice reads them at every chunk.
+
+## The pages (ENVELOPE screen, tap SHIFT)
+
+After stage 1's four, through `env_more_pages[0..3]`:
+
+| Page | CTRL 1 | CTRL 2 | CTRL 3 | Graph |
+|---|---|---|---|---|
+| 5 PITCH | `C1:DEPTH` OFF, -24st .. +24st | `C2:ATTACK` 0ms .. 8.00s | `C3:DECAY` HOLD, 0.5ms .. 8.00s | the pitch envelope, up for +, down for - |
+| 6 FILTER | `C1:TYPE` OFF, LPF, BPF, HPF | `C2:CUTOFF` 20Hz .. 20.0k | `C3:RESO` 0.7 .. 16.0 (Q) | stage 1's |
+| 7 F-ENV | `C1:AMOUNT` -9.9oct .. +9.9oct | `C2:ATTACK` | `C3:DECAY` | the cutoff envelope |
+| 8 CURVES | `C1:PITCH` LIN EXP LOG S | - | `C3:FILTER` LIN EXP LOG S | stage 1's |
+
+The bottom line reads `A-1 PITCH 5/8`; stage 1's pages count to 8 too. A turn writes the pad's byte (and, with COPY
+or REMAIN held, its mute group's or bank's, through `env_targets`), the layout version, then `env_touched` (Edited,
+the save 1 s after the last change). Bytes under an unknown layout version didn't count, so a turn clears them first.
+TYPE from OFF to LPF or BPF with CUTOFF at 0 opens the cutoff fully. A pad without a sample gets nothing.
+
+## The patches
+
+1. The veneers `0x800d2e2e` (stereo) and `0x800d2e38` (mono), 10 bytes each (`movw ip / movt ip / bx ip`), get the
+   module's entries as targets. Only the chunk worker calls them (four BLs: `0x800e443e`, `0x800e4872`, `0x800e4470`,
+   `0x800e48b6`); nothing branches or points into them.
+2. Stage 1's `env_stages[0]` -> `pf_stage`; `env_more_pages[0..3]` -> the four pages (words in stage 1's copy row,
+   zero in the parent).
+
+Eight guards (SHA-256 of the resampler wrappers and kernel, the worker, the veneers, the engine init, Init, the voice
+param setter, the line call). The module (Zig 0.13.0, -Os; 5.5 KB code, 2.6 KB tables and pages, 0.9 KB state) is a
+new boot copy row in a **12 KB slot at `0x83FD9000`-`0x83FDC000`, taken from the top of pad FX's planned room**, which
+keeps `0x83FC9000`-`0x83FD9000` (64 KB; the pad FX study estimated 15 KB). Stage 1's slot has 2.3 KB free, too little.
+The builder checks the slot against every row of the input, every fork module's slot (pad FX's room, note repeat
+`0x83FDC000`, stage 1 `0x83FDE000`, FX deep edit, FX probe, bounce, CPU meter, bounce probe, start fix) and that
+nothing refers to it.
+
+## Checked in the emulator (not on hardware)
+
+`python synth/test_pad_pitch_filter.py OUT_DIR [N]`, under Unicorn's **ARM_MAX** CPU model: the default ARM model (an
+ARMv7 Cortex-A) lacks the VSEL, VRINT, VMAXNM and VCVTA the resampler and Init use, and the Cortex-M7 model rejects the
+kernel's `vmov.f64 d10, #-0.5` at `0x12de2` (Codex's finding). A voice's resampler object is set up with the engine
+init Init uses (`0x800259e0`, `0x80025858`), filled as the worker fills it (2048 source frames while the ring holds
+less than 4096) and started with Init's recompute; the real veneers, wrappers and kernel run, chunk after chunk.
+
+- static: only the scatter pointer, the two veneers, `env_stages[0]` and `env_more_pages[0..3]` change inside the
+  parent; the guards hold; the veneers' only callers are the worker's BLs; the tables are their formulas;
+- untouched pads (all zero, version 0 with everything set, an unknown version, version 1 with depth 0 and the filter
+  off, reserved bytes only; voices without a pad; objects that are not a voice's): frames, counts, position tags and
+  the whole resampler and engine state are the parent's, stretch modes 0-2, mono and stereo, steps 7732-34716,
+  speeds 0.5-1.5;
+- pitch: the steps and sub-block lengths the kernel gets are the model's, chunk after chunk; the frames are what the
+  parent's kernel gives for that step sequence; the state after each chunk is the parent's; the step goes back; a
+  step set elsewhere mid-chunk is the new base; a source that runs out ends the chunk;
+- filter: every frame is a float32 model's (LP, BP, HP, cutoff envelopes up and down, resonance, mono and stereo),
+  its state carried across chunks; pitch and filter together;
+- a new start (Init's recompute through stage 1's dispatcher) resets the envelopes and the filter; edits don't;
+- the pages: the taps reach them after stage 1's four; the screen and static layer match a reference drawn on the
+  parent with stock's calls, byte for byte, for 5 kinds of settings and after every turn; every value the knobs
+  reach is shown as the model says (768 turns); COPY / REMAIN; the save timer and the save on close; an empty pad.
+
+Five broken builds fail it (sub-blocks of 96, the filter state dropped per block, the step not put back, DEPTH in
+48 zones, the layout version ignored). Stage 1's suite (test_pad_env, 50 checks) passes on the stage 1 build with
+`env_targets` / `env_touched`.
+
+Not run: the worker and the charges themselves (so LOOP, REVERSE and a real sample's end are not exercised through
+them; the stages only see the resampler's ring and output time, which LOOP and REVERSE don't change), the display
+transfer, and tasks preempting each other.
+
+Cost (Unicorn instructions per 2048-frame chunk, a voice's second chunk; stock at unity 360k mono / 444k stereo in
+stretch mode 0, 1.03M / 1.11M in mode 2):
+
+| | mono, mode 0 | stereo, mode 0 | in the module |
+|---|---|---|---|
+| untouched pad | +124 | +124 | 124 |
+| pitch, +12 st decaying over 739 ms | 470k (x1.31) | 692k (x1.56) | 7.6k |
+| pitch after its decay (one call) | 362k | 446k | 1.4k |
+| LP, resonance 80, cutoff envelope | 431k (x1.20) | 571k (x1.29) | 71k / 127k |
+| both | 541k (x1.50) | 818k (x1.84) | 78k / 134k |
+
+The module's own share is small for the pitch (32 sub-calls); the rest is the stock pitch shifter working at a
+shifted pitch (stock at a static +12 st: about 394k mono, 550k stereo). The filter is 34 instructions per frame
+(31 per channel in stereo). In mode 2 the pitch's module share is 3k (12 calls). Codex's version cost 638k (pitch),
+951k (filter) and 1.14M (both) against its own 343k mono fixture.
+
+## Not known (the hardware test, or later)
+
+- How it sounds, and how the pitch shifter splices under fast pitch moves (as the PITCH knob does at its extremes).
+- CPU in the fill with many enveloped voices next to the kits: the fill has to stay 4 chunks ahead for 32 voices.
+- That nothing else moves the step between sub-blocks on the unit (another task's pitch edit is handled).
+- Whether the bytes survive Roland's app and a stock-firmware round trip (as for stage 1 and pad FX).
+
+## Build (stage 2)
+
+```sh
+python synth/build_pad_env.py PATH/kits-v9.46-test3/SP404MKII_APP1.bin STAGE1_DIR --zig PATH/zig.exe
+python synth/build_pad_pitch_filter.py STAGE1_DIR/SP404MKII_APP1.bin OUT_DIR --zig PATH/zig.exe [--build-dir DIR]
+python synth/test_pad_pitch_filter.py OUT_DIR
+```
+
+numpy on PYTHONPATH as well for the tests.

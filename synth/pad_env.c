@@ -816,6 +816,18 @@ static void save(void) {
     POST(0xD, 1, 0);
 }
 
+/* For later stages' pages (env_more_pages), which keep their own bytes: the pads a turn reaches (out[160]), and
+ * a change made (stock's Edited flag; the save 1 s after the last change, or when the page closes). */
+EXPORT u32 env_targets(u32 pad, u8 *out) {
+    return targets(pad, out);
+}
+
+EXPORT void env_touched(void) {
+    EDITED = 1;
+    env_ui.dirty = 1;
+    env_ui.quiet_ms = 0;
+}
+
 /* FINE on for a pad: keep its fine index while the stock field still holds that index's nearest stock
  * value, else take the one nearest the stock time; the stock field then holds the index's nearest value */
 static void fine_on(u32 pad, u32 byte, s32 param) {
