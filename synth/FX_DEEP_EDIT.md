@@ -1,0 +1,187 @@
+# FX deep edit: a settings page for what the bus effects never get
+
+A hardware test build. Stock 5.52 sends only the six knob parameters (CTRL 1-6) of each effect to
+the effects chip (BMC); 142 of the 383 effect parameters are never sent. The FX probe (local branch
+`claude/fx-probe`, `synth/FX_PROBE.md` there) showed on the unit that the chip acts on every one it
+tried. This page lets you set them.
+
+It is a stage on top of the published Sound Generator + Kits v9.46 (APP1 `7b5fbcb4…684a`). The
+firmware's own state is never changed and nothing is saved: values live in RAM, per bus and effect,
+until power-off. Outside the page the build behaves as v9.46, except that an edited value goes to
+the chip again whenever the firmware selects that effect on that bus.
+
+## Using it
+
+On the TOP page, **hold EXIT and press VALUE**. The stock popup (`0x800d3ff0`) shows the bus the
+CTRL knobs drive, its effect and the first of that effect's extra settings:
+
+```
+BUS1 TAPE ECHO          turn VALUE: the next or previous setting
+TAPE DIST 4             press VALUE: edit
+```
+
+```
+BUS1 TAPE ECHO          editing: turn VALUE to change it (each change goes to the chip at once)
+TAPE DIST [4]           press VALUE again: stop editing
+```
+
+- **EXIT**, or any other button, closes the page and then does what it always does (four quick EXITs
+  are still STOP). Pads and knobs work as usual while the page is open, so you can play and listen.
+- A setting shows the firmware's default (`0x801abe64`) until you edit it. Numbers are raw: what they
+  mean (dB, Hz, cents) is not known.
+- Every value stays inside the firmware's own min/max for that parameter (`0x801ad1fc`/`0x801ac830`).
+- The popup stays 10 s after the last VALUE action; the page stays open until EXIT or another button
+  (turn VALUE to see it again).
+- Other popups: `BUS1 / NO EFFECT` (nothing on the bus), `BUS1 CRUSHER / NO EXTRA SETTINGS` (an effect
+  whose parameters stock already sends), `INPUT FX / BUS 1-4 ONLY` (the knobs are on the input FX).
+- If the bus's effect changes while the page is open, the next VALUE action starts over on the new
+  effect's first setting.
+
+## What the page reads and sends
+
+- **Bus:** settings `0x3a` (`0x82e01144`, getter `0x800d94d8`): 0 input FX, 1-4 BUS 1-4. TOP's CTRL
+  1-3 path `0x80183c48` → `0x800cc030` picks the slot from it.
+- **Effect:** system `0x27c[bus]` (`0x82dfeed0 + 0xc4 + 2 × bus`, getter `0x800da010`), 0 = none; the
+  knob path does nothing while it is 0. (`0x276[bus]` is the lit FX button, 1-5 or 6 = MFX; `0x27b` the
+  MFX choice; `0x80018bf0` turns those into `0x27c` and calls the effect select.)
+- **Settings:** an effect's parameters that are not in its six-ID knob record (`0x802e5b40`) and that
+  DM-404's `fxmap.json` gives no boot value; IDs from the firmware's name table (`0x80245ee4`) joined
+  with fxmap. The builder insists the firmware's name for every ID is fxmap's name at that address.
+  11 effects have none: Crusher, Overdrive, Distortion, Chorus, Downer, Auto Pitch, COMPRESSOR 2, SBF,
+  Harmony, Sub Sonic, Cloud Delay.
+- **A change** is one DT1 through the stock builder `0x800d8118(0x80592500, parameter ID, bus, value)`,
+  the call the bus-effect knobs end in; slot = bus, so `03 hi lo aa` with hi:lo = (effect − 1) × 5 + bus.
+  Opening, browsing, entering and leaving edit, a turn past min/max, and closing send nothing.
+
+## Sending again
+
+Stock (re)selects an effect on a slot by sending its FxType (`0x7e` + slot). It never re-sends an
+effect's knob parameters on an effect change: the effect select `0x800d0cf0` sends the FxType when it
+differs from its cache `0x80246f38`, and the bus switch; the knob stores are per bus and effect and are
+sent only by knob moves (`0x80018a98`) and the boot chip reset `0x801803b0`, which first sets every slot
+to FxType 0, then sends CTRL 1-3 of every effect on every slot. FxType goes out from the effect select,
+the system setter (`0x800de270`, IDs up to `0xa1`), the second setter (`0x8008cabe`), the BUS 1/2 swap
+(`0x8001b8e2`, `0x8001b95e`) and the chip reset.
+
+So the hook is on the builder itself: after any FxType for BUS 1-4 (`0x7f..0x82`) with effect *e*, the
+bus's edited values for *e* go out, in the page's order, right behind it. That covers an effect
+change and coming back, and a project or boot reload that selects the effect again. Nothing else adds
+a frame: a knob turn, an FxType for an effect without edits, the input FX's FxType, the chip reset's
+FxType 0. Choosing the effect the chip already has sends no FxType (stock's cache), so nothing is
+re-sent then either: the chip still has it.
+
+## The patches
+
+1. **TOP's page vtable** `0x8022ce5c`, slot `+0x08` (`0x8022ce64`): DOOM OS ED5E's filter `0x6031c8f9` →
+   `fde_filter`, which takes the chord, VALUE while the page is open, and closes the page on any other
+   button; every event goes on to DOOM OS's filter as before unless the page took it.
+2. **The DT1 builder's first ten bytes** (`0x800d8118`: `push.w {r4-r11, lr}`, `sub sp, #12`,
+   `movw sb, #0xe1c8`) → `movw ip / movt ip / bx ip` to `fde_dt1`. Nothing branches into those bytes but
+   the entry (the builder checks every BL, B.W and literal). `fde_dt1` is four instructions: anything
+   but an FxType for BUS 1-4 branches to `fde_dt1_stock` (the three displaced instructions, then on at
+   `0x800d8122`) with the caller's own stack and return address, so the builder runs exactly as stock,
+   down to the frames it builds from leftover stack for the `-1` entries of the knob records (the chip
+   reset sends 25 of those, with addresses like `d6 00 00 00`); an FxType for BUS 1-4 goes to
+   `fde_dt1_fxtype`, which sends it the same way and then the bus's edited values.
+
+The module (Zig 0.13.0, `-Os`, about 5 KB) lives in a new boot copy row in a 16 KB slot at `0x83FE2000`,
+below the FX probe's slot `0x83FE6000`, bounce stage 3 `0x83FE8000`, the CPU meter, the bounce probe and
+the start fix. 21 SHA-256 guards cover the stock code and tables it calls, reads or relies on.
+
+## The settings
+
+Name, the firmware's min-max, (its default). Effects 23 Gt Amp Sim and 42 Vocoder are not in the BUS
+menu; their rows only matter if they ever get onto a bus.
+
+| Effect | Settings |
+| --- | --- |
+| 1 FILTER+DRIVE | LEVEL 0-255 (255) |
+| 2 TIMECTRLDLY | HIGH CUT 0-14 (14), HIGH DAMP 0-81 (81), LOW DAMP 0-81 (81) |
+| 3 ISOLATOR | BALANCE 0-255 (255) |
+| 5 PHASER | TYPE 0-3 (2) |
+| 6 FLANGER | LOW CUT F 0-17 (0), MODE 0-1 (0) |
+| 9 TAPE ECHO | SYNC 0-1 (0), BASS 0-30 (15), TREBLE 0-30 (15), PAN S 0-255 (128), PAN M 0-255 (128), PAN L 0-255 (128), TAPE DIST 0-8 (4) |
+| 10 REVERB | DENSITY 0-10 (10) |
+| 11 WRMSATURATOR | LOW FREQ 0-255 (88), LOW GAIN 0-48 (10), HI SLOPE 0-2 (2), HI FREQ 0-255 (200), PRE1 TYPE 0-4 (0), PRE1 FREQ 0-255 (88), PRE1 GAIN 0-48 (24), PST1 TYPE 0-4 (3), PST1 FREQ 0-255 (88), PST2 TYPE 0-4 (4), PST2 FREQ 0-255 (200), PST3 TYPE 0-4 (4), PST3 FREQ 0-255 (149), PST3 GAIN 0-48 (24), PST3 Q 5-160 (5), SENSE 0-60 (20), POST GAIN 0-60 (57), BALANCE 0-255 (255) |
+| 12 RESONATOR | BALANCE 0-255 (255), LOW CUT F 0-17 (0) |
+| 13 DJFX LOOPER | LEVEL 0-255 (255) |
+| 15 JUNO CHORUS | LEVEL 0-255 (255) |
+| 16 TREMOLO/PAN | EQ LOW 0-30 (15), EQ HIGH 0-30 (15), LEVEL 0-255 (255), PHASE 0-180 (90) |
+| 17 WAH | BALANCE 0-255 (255), EQ LOW 0-30 (15), EQ HIGH 0-30 (15), LEVEL 0-255 (255) |
+| 18 SYNC DELAY | HIGH CUT 0-14 (14), HIGH DAMP 0-81 (81), LOW DAMP 0-81 (81) |
+| 19 EQUALIZER | MID Q 0-4 (0), MID2 FREQ 0-16 (7), MID2 GAIN 0-30 (15), MID2 Q 0-4 (0), LEVEL 0-255 (255), BALANCE 0-255 (255) |
+| 20 LO-FI | POST FILT 0-2 (1) |
+| 21 RING MOD | LEVEL 0-255 (255) |
+| 22 CHROMATIC PS | FINE1 0-200 (100), LEVEL1 0-255 (255), FINE2 0-200 (100), LEVEL2 0-255 (255), EQ LOW 0-30 (15), EQ HIGH 0-30 (15), LEVEL 0-255 (255) |
+| 23 GT AMP SIM | AMP SW 0-1 (1), AMP TYPE 0-13 (0), MASTER 0-255 (200), GAIN 0-2 (1), PRESENCE 0-255 (0), BRIGHT 0-1 (0), SP SW 0-1 (1), SP TYPE 0-15 (4), MIC SET 0-2 (1), MIC LEVEL 0-255 (255), DIRECT 0-255 (0), PAN 0-255 (128) |
+| 24 STOPPER | HOLD 0-1 (1) |
+| 26 SLICER | ATTACK 0-255 (100), RESET SW 0-1 (0), RESET THR 0-255 (120), LEVEL 0-255 (255) |
+| 28 COMPRESSOR | MODE 0-1 (0) |
+| 30 SCATTER | BALANCE 0-255 (255) |
+| 31 404 VINYLSIM | DIST 0-255 (60), DISC TYPE 0-2 (0), BALANCE 0-255 (255) |
+| 32 303 VINYLSIM | BALANCE 0-255 (255) |
+| 33 ZAN-ZOU | M D LEVEL 0-255 (0), M D MODE 0-2 (2), M D SYNC 0-1 (0), M D TIME 0-255 (188), M D FBK 0-255 (153), M HF DAMP 0-17 (17), M D PAN1 0-255 (0), M D PAN2 0-255 (255), M D PAN3 0-255 (64), M D PAN4 0-255 (192), S D PAN1 0-255 (0), S D PAN2 0-255 (255), S D PAN3 0-255 (64), S D PAN4 0-255 (192) |
+| 34 SUPER FILTER | FLT SLOPE 0-2 (0), FLT GAIN 0-12 (0), MOD SW 0-1 (1), MOD WAVE 0-4 (2), ATTACK 0-255 (100), LEVEL 0-255 (255) |
+| 35 HYPER-RESO | BALANCE 0-255 (255), LOW CUT F 0-17 (0) |
+| 36 KO-DA-MA | LEVEL 0-255 (255), TAP 0-255 (128), HIGH CUT 0-14 (14), HIGH DAMP 0-81 (81), LOW DAMP 0-81 (81) |
+| 37 HA-DOU | DENSITY 0-10 (10) |
+| 38 TO-GU-RO | HOLD 0-1 (0) |
+| 39 CASSETTE SIM | BALANCE 0-255 (255) |
+| 41 SX DELAY | SYNC 0-1 (1), PHASE 0-1 (0), FBK ROUTE 0-1 (0), HF DAMP 0-17 (17), MOD SW 0-1 (0), MOD RATE 0-255 (0), MOD DEPTH 0-255 (0), EQ LOW 0-30 (15), EQ HIGH 0-30 (15), LEVEL 0-255 (255) |
+| 42 VOCODER | COLOR 0-255 (0), LEVEL 0-255 (255) |
+| 44 SX REVERB | TYPE 0-5 (3), PRE DELAY 0-125 (26), LEVEL 0-255 (255) |
+| 46 BACK SPIN | MODE 0-5 (1), FLT MOD 0-255 (0), SYNC 0-1 (1), RESONANCE 0-255 (0), AMP MOD 0-255 (0) |
+| 48 DJFX DELAY | HIGH CUT 0-14 (14), HIGH DAMP 0-81 (81), H DAMP F 0-14 (13), LOW DAMP 0-81 (81), L DAMP F 0-11 (8) |
+
+## Checked in the emulator (not on hardware)
+
+`python synth/test_fx_deep_edit.py OUT_DIR` (74 checks), on the image with its static constructors run
+and the TOP page made on page entry, every chip byte logged, through the real UI dispatcher, DOOM OS's
+filter, TOP's EXIT and knob handlers, the system and settings getters and setters, the effect select,
+the chip reset and the DT1 builder:
+
+- static: only the scatter pointer, the TOP vtable word and the builder's first ten bytes change inside
+  the parent; one copy row added; the guards hold; nothing reaches into the ten bytes; the compiled
+  settings are exactly the 142 the test derives itself from the parent and fxmap; every popup line fits;
+- through the jump, every parameter ID on every slot (2,483 that send) and the whole boot chip reset
+  (19,560 bytes, its 25 garbage frames included) send the parent's bytes; fxmap's address for all 142
+  settings on all 4 buses;
+- the page: the chord, browsing, editing (one frame per change, nothing else), every one of the 142
+  settings stopping at the firmware's min and max, per-bus and per-effect values, the four other popups,
+  the effect changing while open, EXIT;
+- sending again, against the parent's own traffic: effect away and back through the stock MFX choice,
+  the system setter, an FxType sent straight to the builder as the bus swap does, and system init plus
+  the chip reset followed by the effect chosen again: the edited values follow the FxType frame, and
+  nothing else differs; a knob turn, another bus, the input FX and FxType 0 add nothing;
+- outside the page: every key alone, EXIT and VALUE alone and in pairs, knobs, pads, the encoder, four
+  quick EXITs (STOP), a lost VALUE release: as on the parent, with edited values held; while it is open,
+  pads and knobs as on the parent, and EXIT or any other button closes it and goes on as on the parent.
+
+The kit suites (test_kits, capture, chord, shortcut, midi, restart, hot resample, test_kit_bounce flow,
+13 kits and 4 tweaked) pass on the image. test_start_fix passes on its own release; on this image its
+trim and threshold checks pass and its 4 structural checks fail by design (they assert the start fix is
+the top stage). Two builds from different build folders are byte-identical.
+
+## Not known (the hardware test, or later)
+
+- What the numbers mean, and whether the chip uses the firmware's ranges.
+- Whether the chip's own value for a never-sent parameter at power-on is the firmware's default (the
+  page shows the default until edited).
+- Whether the chip keeps a never-sent value across an effect change. The page re-sends after every
+  FxType, so it should not matter.
+- How a project load reaches the chip: stock re-selects effects through the same setters (so FxType goes
+  out when the effect differs from the select's cache), but the load path itself was not traced. If a
+  project load restarts the unit, the edits are gone like at power-off.
+- BUS 3/4: stock's knobs write both slots 3 and 4; the page writes only the bus it shows.
+
+## Build
+
+```sh
+python synth/build_fx_deep_edit.py PATH/kits-v9.46-test3/SP404MKII_APP1.bin OUT_DIR \
+    --zig PATH/zig.exe --fxmap PATH/dm-404/core/fx/fxmap.json [--build-dir DIR]
+python synth/test_fx_deep_edit.py OUT_DIR
+```
+
+Stock APP0 must sit beside the input APP1. keystone, unicorn and capstone on PYTHONPATH, Zig 0.13.0.
+The manifest lists every setting with its ID, BUS 1 address, range and default, the patches and the
+guards.
