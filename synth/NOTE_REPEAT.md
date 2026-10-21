@@ -29,10 +29,11 @@ What the build does, in short:
   - it records the roll for a recording pattern (`0x800257b0`, "RecordRollPending", §1.6);
   - it sets the ring (`voice + 0x287f4` = `0x8300d760 + slot × 960000`, 5 s of 16-bit stereo) and the
     roll length in ms (`voice + 0x143a4`).
-- **The renderer** (`0x14b88`, audio task) sees the length, restarts the voice, records its own output into
-  the ring for that many frames (fading the last 64), then plays the ring in a loop (`0x8001c2c8`), with a
-  64-frame fade in and out on every pass. The voice's stream stays where the capture left it; when the roll
-  ends the rest of the sample plays from there.
+- **The renderer** (`0x14b88`, audio task) sees the length, sets the voice's position back (its vtable
+  slot 0 with the sample's start: inferred to restart it), records its own output into the ring for that many
+  frames (fading the last 64), then plays the ring in a loop (`0x8001c2c8`), with a 64-frame fade in and out
+  on every pass. The voice's stream stays where the capture left it; when the roll ends the rest of the
+  sample plays from there (inferred).
 
 So **a stock roll is one note-on and a looped slice**: the repeats are replays of the first `length` ms of
 the voice (envelope included), not new notes. While the pad's voice rolls, the voice manager ignores a new
@@ -44,7 +45,8 @@ hit of that pad (`0x800d63c8`: same pad, `0x800d5d98` rolling, return 0).
 
 ```
 length_ms = trunc(beats[Roll] x 60000 / (voice +0xc x BPM'))     voice +0xc = 1.0 (Init)
-BPM' = voice +0x34 (BPM x 100, from the pad's ORIGINAL BPM 0x6f), doubled until it is >= 50 BPM
+BPM' = voice +0x34 (BPM x 100), doubled until it is >= 50 BPM; the per-voice update sets +0x34 from the
+       pad's ORIGINAL BPM (0x6f); that it holds the same at voice start is inferred
 beats[1..10] (0x801a9f18) = 2, 1, 1/2, 1/4, 1/8, 1/16, 3/2, 3/4, 3/8, 3/16
 ```
 
@@ -78,7 +80,8 @@ its length.
 ROLL let go (no SHIFT, no EXIT) → `0x80135d40`: every pad in the roll list that still rolls gets roll-off
 (settings 0x91 = 0 for it: the ring stops at the end of the pass). Before that, if the **current pad** sounds
 and is not rolling, it **starts** a roll on it (0x91 = 1, and settings 0x7c = 1) — so in stock a ROLL tap while
-a long sample plays rolls it until the next tap. EXIT + ROLL turns every roll off. A GATE pad let go while it
+a long sample plays rolls it until the next tap (the two checks, `0x800d8c08` "a slot plays the pad" and
+`0x800cd670` "it rolls", are read from the code; the effect on the unit is inferred). EXIT + ROLL turns every roll off. A GATE pad let go while it
 rolls is let go at roll-off (`0x8001e2d0` marks the slot, `0x800202b8` sends the note-off).
 
 ### 1.6 Recording (verified code; DOOM OS's recorder not traced)
@@ -189,7 +192,7 @@ it.
 | UI tick, nothing rolling | 41 | 67 |
 | a key event / a pad press | 1227 / 7036 | 1311 / 7235 |
 | key-held query (other keys) | 55 | 60 |
-| four pads at 1/64: a tick / a repeat | — | about 560 / about 1700 more (two stock pad notes) |
+| four pads at 1/64: a tick / a repeat | — | about 580 / about 1700 more (two stock pad notes) |
 
 In the UI task that is well under 1% of the CPU. Not measured: SMPL TASK's work per repeat (voice start and
 first charge), the same as tapping the pad that fast. Voices: a repeat cuts the pad's last voice with the
@@ -227,8 +230,11 @@ the image; test_start_fix passes on its own release and, as on every stage image
 - **The UI tick's real rate.** The firmware calls it with 1 every time; if the UI task is busy the repeats
   come late (never drifting). How even they sound is the main thing to hear.
 - SMPL TASK's latency and CPU per repeat at fast divisions with several pads, and voice stealing then.
-- **DOOM OS's recorder:** whether recording in DOOM OS's screens takes the repeats (they go below DOOM's
-  page code). The stock pattern REC takes them (emulator).
+- **Recording on the unit.** The stock pattern recorder takes each repeat as a tap (emulator, from the pad
+  event on). The pattern REC page itself (page 0x18) was only run idle: it plays a pad through the stock page
+  pad handler when the pad is inside its range (`0x80111b38`, project 0x9b), and then a repeat starts as
+  anywhere else; in that idle state it played nothing, on the parent too. Whether DOOM OS's own recorder
+  takes repeats (they go below DOOM's page code) is not known.
 - Pads with Polyphonic bit 5 (ignore a re-hit while sounding) repeat only when the sound has ended.
 - Chromatic mode (pads as notes) and the kit pages don't repeat in this build (their pads don't go through
   the stock pad note's page calls).
