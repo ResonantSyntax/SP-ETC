@@ -405,7 +405,9 @@ less than 4096) and started with Init's recompute; the real veneers, wrappers an
 
 Five broken builds fail it (sub-blocks of 96, the filter state dropped per block, the step not put back, DEPTH in
 48 zones, the layout version ignored). Stage 1's suite (test_pad_env, 50 checks) passes on the stage 1 build with
-`env_targets` / `env_touched`.
+`env_targets` / `env_touched`. The kit suites (test_kits, capture, chord, shortcut, midi, restart, hot resample,
+test_kit_bounce flow, 13 kits and 4 tweaked) pass on the image; test_start_fix passes on its own release, and on this
+image its trim and threshold checks pass while its 4 structural checks expect the start fix to be the top stage.
 
 Not run: the worker and the charges themselves (so LOOP, REVERSE and a real sample's end are not exercised through
 them; the stages only see the resampler's ring and output time, which LOOP and REVERSE don't change), the display
