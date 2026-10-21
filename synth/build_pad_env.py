@@ -1,7 +1,7 @@
 """Pad envelopes, stage 1 (hardware test build): FINE attack/release, curves, decay/sustain, LOOP-ONCE and
 REV-TIME per pad, on the ENVELOPE page (PAD_ENV.md; analysis/pad_envelope/REPORT.md stages E1 and E2).
 
-A stage on the published Sound Generator + Kits v9.46 APP1. Seven changes in 5.52 space, each checked byte
+A stage on the published Sound Generator + Kits v9.46 APP1. Nine changes in 5.52 space, each checked byte
 for byte against what it replaces:
 - code: the envelope recompute's first twelve bytes (0x800a2d98) -> a jump to env_recompute, the shared
   dispatcher (the stock body first, then this stage, then env_stages[] for later ones);
@@ -10,8 +10,9 @@ for byte against what it replaces:
 - code: the ITCM applicators' first ten bytes (0x16f50 forward, 0x17196 reverse) -> jumps to env_fwd /
   env_rev, which run the module's applicator for a shaped voice and otherwise the displaced instructions,
   then on in ITCM;
-- data: the ENVELOPE page vtable 0x8021ec14, slots +0x04 (deleting destructor), +0xD0 (tick, stock empty)
-  and +0xE4 (knob) -> env_ui_leave, env_ui_poll, env_ui_knob, which go on to the stock methods.
+- data: the ENVELOPE page vtable 0x8021ec14, slots +0x04 (deleting destructor), +0xC8 (pad change), +0xCC
+  (redraw), +0xD0 (tick, stock empty) and +0xE4 (knob) -> env_ui_leave, env_ui_pad, env_ui_draw, env_ui_poll,
+  env_ui_knob, which go on to the stock methods; the screen shows the pages (no popups).
 Nothing branches into the displaced bytes but their entries (every BL, B, B<cond>, CB(N)Z, B.W, literal and
 MOVW/MOVT pair in the image is checked). Stock code the module calls, reads or relies on is checked byte
 for byte (GUARDS). The module (Zig 0.13.0, -Os) goes in a new boot copy row in a 16 KB slot at 0x83FDE000,
@@ -40,7 +41,7 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'pad-env-test1'
+REVISION = 'pad-env-test2'
 SLOT = 0x4000                       # reserved: [base, base + SLOT)
 GAP = (0x83FC9000, 0x83FF0000)      # above the fork's rows (end 0x83FC8450), below the end of cacheable SDRAM
 # Every other fork module's reserved RAM (branch, start, end).
@@ -54,8 +55,8 @@ KNOWN_SLOTS = [
 ]
 EXPORTS = ('env_recompute', 'env_recompute_stock', 'env_dispatch', 'env_fwd', 'env_fwd_stock', 'env_fwd_apply',
            'env_rev', 'env_rev_stock', 'env_rev_apply', 'env_shaped', 'env_release', 'env_release_r6',
-           'env_ui_knob', 'env_ui_poll', 'env_ui_leave', 'env_voices', 'env_stages', 'env_ui', 'env_text',
-           'env_fine_frames', 'env_fine_stock', 'env_stock_fine', 'env_curve')
+           'env_ui_knob', 'env_ui_poll', 'env_ui_leave', 'env_ui_draw', 'env_ui_pad', 'env_voices', 'env_stages',
+           'env_more_pages', 'env_ui', 'env_text', 'env_fine_frames', 'env_fine_stock', 'env_stock_fine', 'env_curve')
 
 # (address, displaced bytes, what they are, where the stock code goes on, entry symbol)
 SITES = [
@@ -74,6 +75,8 @@ SITES = [
 STOCK_COPIES = {'env_recompute_stock': 0x800A2D98, 'env_fwd_stock': 0x00016F50, 'env_rev_stock': 0x00017196}
 VTABLE = 0x8021EC14                 # ENVELOPE page (0x10)
 VTABLE_SLOTS = [(0x04, 0x800F6239, 'env_ui_leave', 'deleting destructor (the page closes)'),
+                (0xC8, 0x800F5A61, 'env_ui_pad', 'pad change: START/END again, then the redraw 0x800f5f00'),
+                (0xCC, 0x800F5AC9, 'env_ui_draw', 'redraw: values row, graph, pad name (b.w 0x800f5f00)'),
                 (0xD0, 0x800F5751, 'env_ui_poll', 'tick: stock bx lr; the base class calls it with 50 (ms)'),
                 (0xE4, 0x800F5D11, 'env_ui_knob', 'knob: CTRL 1-3 -> Attack, Hold, Release')]
 VTABLE_KEEP = [(0x08, 0x6031C8F9, 'DOOM OS ED5E\'s event filter'),
@@ -118,8 +121,6 @@ GUARDS = [
      'vtable +0x14c: the current pad (bank * 16 + pad)'),
     (0x800CE420, 0x800CE478, '4f15482478e1c72e4527cd6b21aa9e33f2577f1c9e7ef92b4f83a1e4e767bc17',
      'non-zero while the CTRL knobs drive the effect'),
-    (0x800D3FF0, 0x800D4026, '7399e6400e3ea2ddd99ad6a9f4de1469abffae638c380038c1d7aedbee61886b',
-     'popup(text, ms)'),
     (0x800E25C0, 0x800E2644, '704e01fc45d7c7b8beabf5a94f4aebbf066036b65b31fb80e88b160c0a629e76',
      'post command (cmd, a, b): 0xD 1 0 is what the pad setter posts to save'),
     (0x800DC6B8, 0x800DCF08, '76d59a974bf02d89a2b46f14293ee991a737fc3f66453f2c7c952414e5cd4fc7',
@@ -138,6 +139,25 @@ GUARDS = [
      'the charges: every applicator call passes voice + 0x60, or goes through the ITCM helpers'),
     (0x800D2E60, 0x800D2ED0, 'af7710ab37ae1445f292ed8abf9763b1e1d958ee278aaf3f216adf11cdba3613',
      'the veneers to the applicators, their wrappers and the ITCM helpers'),
+    (0x800E3F78, 0x800E4DD0, '182f189e9e5f694ea990f4e9a320d74a5fffe953c0811775347a2d3cb0af9ee6',
+     'the chunk fill: a voice whose PLAY (pad record +0x3c, copied to voice +0xdc) is 1 or 3 takes the reverse '
+     'charge'),
+    (0x800D8018, 0x800D8020, 'a29516822e299b99d4b6890b4905a08f8e47b6061e498610be084becdbd38d30',
+     'colours (context, foreground, background): the backend\'s +0x20'),
+    (0x800D80D8, 0x800D80E0, 'c926e32545570ec82ee1c842d26655e77bac2920bc932349f664fd581be08cd1',
+     'font (context, id): the backend\'s +0x58; the ENVELOPE page uses 0x1d'),
+    (0x800CE510, 0x800CE5B0, '4ebd6416d4b8fcc36eca5bdbc7e46b4389ab145cfd622cfbdfc916e83a00766e',
+     'rectangle fills (context, x0 y0 x1 y1 inclusive): 0x800ce510 in the foreground, 0x800ce580 the background'),
+    (0x800D4FA0, 0x800D5010, 'b503347a7c2b95195151b3dbcba1d129bea854feb5745df9b848e2e4f717fd4e',
+     'text (context, x, y, string): centered on x, top at y'),
+    (0x800C0660, 0x800C06C8, '8fc9e8cc40a884facd9598e2733b99a3527deb4befa73c822c843cc4e266fd77',
+     'line (context, {x, y}, {x, y})'),
+    (0x800D88E0, 0x800D8960, '57b58e2ee9ee9e4567a5af27f32b699ac8458d4c97bac1376c1df0c22f55cb7f',
+     'a context on a surface (memory, surface) and its end, as the ENVELOPE page\'s label pass uses them'),
+    (0x8002ECF8, 0x8002EE00, '46e2f7c40c14dc8f3d5fd8bd03249c4d958864aff71cdf9f0fa986df3c5a7f28',
+     'context set-up: the backend by the surface\'s format (8: 0x800313c0)'),
+    (0x8021D670, 0x8021D700, '3913bcbe323e4af792dd890182c169da745f4047c502029aa0c2cbe5d0310f64',
+     'the 8-bit backend\'s vtable (0x8021d678)'),
 ]
 MD = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB | capstone.CS_MODE_MCLASS)
 
@@ -331,7 +351,7 @@ SECTIONS {{
  . = {link_base:#x};
  .text : {{ KEEP(*(.text.env_recompute)) KEEP(*(.text.env_release)) KEEP(*(.text.env_fwd))
             KEEP(*(.text.env_rev)) KEEP(*(.text.env_ui_knob)) KEEP(*(.text.env_ui_poll))
-            KEEP(*(.text.env_ui_leave)) *(.text*) }}
+            KEEP(*(.text.env_ui_leave)) KEEP(*(.text.env_ui_draw)) KEEP(*(.text.env_ui_pad)) *(.text*) }}
  .rodata : ALIGN(16) {{ KEEP(*(.rodata.env_*)) *(.rodata*) }}
  .data : ALIGN(16) {{ *(.data*) }}
  .bss : ALIGN(16) {{ KEEP(*(.bss.env_*)) *(.bss*) *(COMMON) }}
@@ -409,7 +429,8 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
     if len(module) > SLOT:
         raise ValueError(f'module ({len(module)} bytes) exceeds the slot')
     for name in ('env_recompute', 'env_recompute_stock', 'env_dispatch', 'env_fwd', 'env_fwd_stock', 'env_rev',
-                 'env_rev_stock', 'env_release', 'env_ui_knob', 'env_ui_poll', 'env_ui_leave'):
+                 'env_rev_stock', 'env_release', 'env_ui_knob', 'env_ui_poll', 'env_ui_leave', 'env_ui_draw',
+                 'env_ui_pad'):
         if not symbols[name] & 1:
             raise ValueError(f'{name} is not a Thumb function symbol')
     resume = {at: back for at, _, _, back, _ in SITES}
@@ -463,7 +484,8 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
         revision=REVISION, status='hardware-unverified', published=False,
         description='pad envelopes stage 1: per pad, opt-in on the ENVELOPE page (SHIFT + PITCH/SPEED, tap SHIFT for '
                     'pages 2-4): FINE attack/release 0.5 ms - 8 s, LIN/EXP/LOG/S curves, decay and sustain, '
-                    'LOOP-ONCE, REV-TIME; saved in PADCONF bytes 0x64-0x6F; untouched pads run the stock code',
+                    'LOOP-ONCE, REV-TIME; the screen shows each page and the pad\'s real envelope (no popups); saved '
+                    'in PADCONF bytes 0x64-0x6F; untouched pads run the stock code',
         parent_app1=str(inp), parent_sha256=sha(inp.read_bytes()),
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
         if parent_manifest.exists() else None,
@@ -495,6 +517,12 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
                        '4 MODE: LOOP every/first pass, -, REVERSE mirror/time'],
                 next_page='tap SHIFT (press and release within 1 s; no other key pressed or let go, no knob turned, '
                           'no pad change in between)',
+                screen='rows 0-7 the CTRL 1-3 labels (also in the static layer [page + 0xc00]), 8-16 their values, '
+                       '17-32 the graph (x 0-127 = START-END, y 32 silent .. 17 full), 48-63 between the S and E '
+                       'marks "A-1 SHAPE 2/4" on pages 2-4; page 1 with a stock pad is stock\'s screen; drawn with '
+                       'stock\'s own calls on the page\'s context',
+                more_pages='env_more_pages[4]: pointers to struct env_page {name, label[3], value(), turn(), '
+                           'graph()} for later stages, after MODE',
                 apply='COPY held: the mute group; REMAIN held: the bank (as stock\'s apply 0x800f5df0)'),
         tool='synth/build_pad_env.py')
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8', newline='\n')

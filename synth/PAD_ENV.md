@@ -31,23 +31,31 @@ so EXP is the natural fast-then-slow fade and LOG a fast attack. Levels are Q15,
 (no drift across chunks), and the curve is a 257-entry table with linear interpolation.
 
 FINE map: index 0 = 0; 1-127 = 0.5 ms x 16000^((i - 1) / 126) at 48 kHz, rounded (24 frames to 8 s = 384,000
-frames). Anchors, as the popup shows them: 8 = 0.9 ms, 16 = 1.6 ms, 24 = 2.9 ms, 32 = 5.4 ms, 40 = 10 ms,
+frames). Anchors, as the screen shows them: 8 = 0.9 ms, 16 = 1.6 ms, 24 = 2.9 ms, 32 = 5.4 ms, 40 = 10 ms,
 48 = 19 ms, 64 = 63 ms, 80 = 216 ms, 96 = 739 ms, 112 = 2.53 s, 127 = 8.00 s.
 
 ## Using it (the ENVELOPE page, SHIFT + PITCH/SPEED)
 
-Tap SHIFT (press and let go within a second, touching nothing else) for the next page; a popup names it.
+Tap SHIFT (press and let go within a second, touching nothing else) for the next page. The screen shows the
+page, no popups (test 1 used popups; test 2 draws on the page itself):
 
-| Page | CTRL 1 | CTRL 2 | CTRL 3 |
-|---|---|---|---|
-| 1 A-H-R (stock) | ATTACK | HOLD | RELEASE |
-| 2 SHAPE | attack curve | TIME: STOCK / FINE | release curve |
-| 3 DECAY | decay (left = OFF) | sustain % | decay curve |
-| 4 MODE | LOOP: EVERY / FIRST PASS | - | REVERSE: MIRROR / TIME |
+| Page | CTRL 1 | CTRL 2 | CTRL 3 | Bottom line |
+|---|---|---|---|---|
+| 1 A-H-R (stock) | `C1:ATTACK` | `C2:HOLD` | `C3:RELEASE` | `A-1` (stock's) |
+| 2 SHAPE | `C1:ATTACK` LIN/EXP/LOG/S | `C2:TIME` STOCK / FINE | `C3:RELEASE` curve | `A-1 SHAPE 2/4` |
+| 3 DECAY | `C1:DECAY` OFF or the time | `C2:SUSTAIN` 0-100% | `C3:CURVE` the decay's | `A-1 DECAY 3/4` |
+| 4 MODE | `C1:LOOP` EVERY / FIRST | - | `C3:REVERSE` MIRROR / TIME | `A-1 MODE 4/4` |
 
-- Page 1 is stock's own page. With FINE on, ATTACK and RELEASE choose the fine index (knob = index), the
-  popup shows the time (`A-01 ATTACK` / `5.4ms`), and the stock fields get the nearest stock value (216 ms -> 9),
-  so the stock screen and stock firmware show and play the closest stock time.
+- The screen keeps stock's layout (rows 0-7 the CTRL labels, 8-16 their values under them, 17-32 the graph, the
+  S and E marks at the bottom) and is drawn with stock's own calls on the page's context; the labels go into the
+  page's static layer too, which stock copies back over the screen on a refresh.
+- The graph shows the pad's real envelope, as the voices will play it: x = START..END, y = level; FINE times,
+  curves, decay and sustain, the release ending at the HOLD point; a looping pad on FIRST PASS holds its
+  sustain level to the end; a reverse pad on REV-TIME is drawn mirrored (the attack at the END side, as heard
+  first). A pad with stock settings keeps stock's graph, and on page 1 stock's whole screen.
+- Page 1 is stock's own page. With FINE on, ATTACK and RELEASE choose the fine index (knob = index), the values
+  show the times (`5.4ms`, `216ms`, `2.53s`), and the stock fields get the nearest stock value (216 ms -> 9), so
+  stock firmware plays the closest stock time.
 - Turning TIME to FINE keeps the pad's fine times when its stock values still match them, else starts from the
   fine times nearest its stock ones.
 - Holding COPY or REMAIN applies a turn to the pad's mute group or bank, as stock's apply `0x800f5df0` does
@@ -80,7 +88,7 @@ goes out once, 1 s after the last change, or when the page closes.
 
 ## The patches
 
-All on code DOOM OS ED5E and the fork leave stock (25 guards, SHA-256 of every span the module calls, reads or
+All on code DOOM OS ED5E and the fork leave stock (33 guards, SHA-256 of every span the module calls, reads or
 relies on). Nothing branches into the displaced bytes but their entries (every BL, B, B<cond>, CB(N)Z, B.W,
 literal and MOVW/MOVT pair in the image is checked).
 
@@ -93,12 +101,15 @@ literal and MOVW/MOVT pair in the image is checked).
 3. **Applicators** `0x16f50` and `0x17196` (ITCM, 10 bytes each) -> `env_fwd` / `env_rev`: a voice whose envelope
    is the module's gets `env_fwd_apply` / `env_rev_apply`; anything else (stock pads, blocks that aren't a voice's)
    runs the displaced instructions and goes on in ITCM.
-4. **ENVELOPE page vtable** `0x8021ec14`: +0x04 (deleting destructor) -> `env_ui_leave`, +0xD0 (tick, stock
-   `bx lr`, called every 50 ms with 50) -> `env_ui_poll`, +0xE4 (knob) -> `env_ui_knob`. DOOM OS's +0x08 is
-   untouched. The REPORT named +0xD0 and +0xE4; +0x04 is added so the save also goes out when the page closes
-   and the page state resets there.
+4. **ENVELOPE page vtable** `0x8021ec14`: +0x04 (deleting destructor) -> `env_ui_leave`, +0xC8 (pad change:
+   START/END again, then `0x800f5f00`) -> `env_ui_pad`, +0xCC (redraw, `b.w 0x800f5f00`) -> `env_ui_draw`, +0xD0
+   (tick, stock `bx lr`, called every 50 ms with 50) -> `env_ui_poll`, +0xE4 (knob) -> `env_ui_knob`. DOOM OS's
+   +0x08 is untouched. The REPORT named +0xD0 and +0xE4; +0x04 makes the save go out when the page closes, and
+   +0xC8/+0xCC draw the pages: those two are the only callers of stock's redraw `0x800f5f00`, and stock's
+   refresh (event 4: the static layer copied over the screen, then +0xCC) goes through them too.
 
-The module (Zig 0.13.0, -Os; 5 KB code, 3 KB tables, 3.6 KB state) is a new boot copy row in a 16 KB slot at
+The module (Zig 0.13.0, -Os; 7 KB code, 3 KB tables, 3.7 KB state; 2.3 KB of the slot free) is a new boot copy
+row in a 16 KB slot at
 **`0x83FDE000`-`0x83FE2000`**. The REPORT's slot `0x83FE4000`-`0x83FE8000` is taken since: FX deep edit uses
 `0x83FE2000`-`0x83FE6000` and the FX probe `0x83FE6000`-`0x83FE8000`. The builder checks the slot against every
 row of the input, against every fork module's slot (FX deep edit, FX probe, bounce stage 2/3 `0x83FE8000`, CPU
@@ -126,13 +137,29 @@ A pitch envelope (Codex's design: the voice's Q14 step inside the 2048-frame fil
 -> `0x1409a`) registers its entry there (a 4-byte data patch in this module's copy row) and acts on the four
 start/position return addresses it needs, leaving the A/H/R edit alone. Its fill-path hook is a different site.
 
+Its pages go in `env_more_pages[4]` (exported, zero at boot): pointers to
+
+```c
+struct env_page {
+    const char *name;                                    /* bottom line: "A-1 PITCH 5/5" */
+    const char *label[3];                                /* top line, CTRL 1-3 ("" none; 10 characters) */
+    void (*value)(u32 pad, u32 ctrl, char *out);         /* CTRL ctrl's value as text, out[16] */
+    void (*turn)(u32 pad, u32 ctrl, s32 raw);            /* CTRL ctrl turned to raw (0-127) */
+    void (*graph)(u32 ctx, u32 pad, s32 start, s32 end); /* its own graph in rows 17-32 (cleared), or 0 */
+};
+```
+
+They come after MODE in order, the taps reach them, the bottom lines count them ("n/5"), and the module
+redraws after each turn. A graph draws with stock's calls on `ctx` (line `0x800c0660`, text `0x800d4fa0`, ...).
+
 ## Checked in the emulator (not on hardware)
 
 `python synth/test_pad_env.py OUT_DIR [N]`: the parent and the image booted in Unicorn with their scatter
 loaders and static constructors, real stock code throughout (recompute, applicators, note-off, getter,
-setter, fan-out, UI dispatcher, the page's registry handler, DOOM OS's filter, the page's methods, popup).
+setter, fan-out, UI dispatcher, the page's registry handler, DOOM OS's filter, the page's methods) and, for the
+page, boot's three 128 x 64 surfaces made (`0x8006fcb8`) so every drawing call runs down to the pixels.
 
-- static: only the scatter pointer, the four code sites and the three vtable words change inside the parent;
+- static: only the scatter pointer, the four code sites and the five vtable words change inside the parent;
   the guards and displaced bytes hold; nothing reaches into them; the module's copies are exact; the slot
   is free; the FINE map and curves are the formulas above;
 - neutral pads (all zero, version 0 with anything else, version 1 at stock settings, an unknown version, voices
@@ -144,12 +171,18 @@ setter, fan-out, UI dispatcher, the page's registry handler, DOOM OS's filter, t
   reset, mono/stereo, state 7, before START, past HOLD);
 - note-off: every fine index, short and long releases; curves-only pads keep stock's release;
 - dispatcher: stock block first, then `env_stages` gets the call once from all five callers;
-- the page: SHIFT taps (and what isn't one), page 1 stock until FINE, FINE writes, popups for all 128 times,
-  pages 2-4, COPY / REMAIN (mute group, bank, protected bank, empty pad), effect knobs, the save timer and the
-  save on close.
+- the page: SHIFT taps (and what isn't one), page 1 stock until FINE, FINE writes, pages 2-4, COPY / REMAIN
+  (mute group, bank, protected bank, empty pad), effect knobs, the save timer and the save on close, a later
+  stage's page through `env_more_pages`;
+- the screen and its static layer, byte for byte: page 1 with stock settings is the parent's (after opening,
+  every knob turn and a return from the other pages); every page for 8 kinds of settings, after every turn, a
+  refresh and a pad change, is a reference drawn on the parent with stock's own calls from the settings alone
+  (labels, values, every fine time, the graph from a Python model of the envelope, the bottom line); the module
+  shows no popups. Two broken builds (labels not in the static layer, the graph a row off) fail it.
 
 Cost (Unicorn instructions, stereo): stock pads unchanged (unity 41, attack ramp 119, release 54 per frame; the
 hook adds about 25 per 2048-frame call). Shaped pads: ramps 41 per frame with any curve, sustain 20, unity 0.
+A knob turn's redraw on the page: about 125-140k instructions (stock's 27k).
 Stack: the shaped applicator path uses about 100 bytes more than stock's (172-212 bytes), the recompute about
 160 more (240); the charge task has a 16 KB stack.
 
@@ -159,7 +192,9 @@ threshold checks pass while its structural checks expect the start fix to be the
 
 ## Not known (the hardware test, or later)
 
-- How it sounds: the curves, the FINE times near the click threshold, the pluck.
+- How it sounds: the curves, the FINE times near the click threshold, the pluck (test 1: "sound fine").
+- The screen on the unit: the emulator draws into the screen surface and stops there (the display transfer
+  isn't run); which events refresh the page on the unit (event 4 and the pad change go through the module).
 - Stock behaviour the design leans on but the unit hasn't confirmed (REPORT E0): every LOOP pass faded, the
   reverse swap, the silent run-on after HOLD. LOOP-ONCE takes a read that jumps back against its direction, or a
   turn, as the end of the first pass; loop crossfade reads might end it a little early.

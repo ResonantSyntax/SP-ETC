@@ -27,16 +27,19 @@
  *              env_fwd_apply / env_rev_apply; anything else runs the displaced instructions and goes on
  *              in ITCM
  *   0x8002315a (16 bytes) -> env_release: r6 = release frames x 127 for a FINE voice, else R x 144000
- *   ENVELOPE page vtable 0x8021ec14: +0x04 (leave) env_ui_leave, +0xD0 (tick) env_ui_poll,
- *              +0xE4 (knob) env_ui_knob
+ *   ENVELOPE page vtable 0x8021ec14: +0x04 (leave) env_ui_leave, +0xC8 (pad change) env_ui_pad,
+ *              +0xCC (redraw) env_ui_draw, +0xD0 (tick) env_ui_poll, +0xE4 (knob) env_ui_knob
  *
  * The ENVELOPE page (SHIFT + PITCH/SPEED) gets four pages; tap SHIFT (press and release, nothing else
- * touched) for the next:
- *   1 A-H-R  CTRL 1-3 stock ATTACK / HOLD / RELEASE; with FINE on, ATTACK and RELEASE are fine indices
- *            (the stock fields get the nearest stock value) and the popup shows the time
+ * touched) for the next. The screen shows them, no popups: the CTRL 1-3 labels on top, their values under
+ * them, the pad's real envelope in the graph, and on pages 2-4 "A-1 SHAPE 2/4" at the bottom:
+ *   1 A-H-R  stock's page: CTRL 1-3 ATTACK / HOLD / RELEASE; with FINE on, ATTACK and RELEASE are fine
+ *            indices (the stock fields get the nearest stock value) and the screen shows the times
  *   2 SHAPE  CTRL 1 attack curve, CTRL 2 TIME: STOCK / FINE, CTRL 3 release curve
  *   3 DECAY  CTRL 1 decay (OFF, 0.5 ms - 8 s), CTRL 2 sustain 0-100 %, CTRL 3 decay curve
- *   4 MODE   CTRL 1 LOOP: EVERY PASS / FIRST PASS, CTRL 3 REVERSE: MIRROR / TIME
+ *   4 MODE   CTRL 1 LOOP: EVERY / FIRST (pass), CTRL 3 REVERSE: MIRROR / TIME
+ * Later stages add pages through env_more_pages[]. A pad with stock settings keeps stock's graph, and on
+ * page 1 the whole stock screen.
  * Holding COPY or REMAIN applies a turn to the mute group or bank, as stock's apply 0x800f5df0 does.
  * Like stock's setter, nothing is written for a pad without a sample it edits (0x800d9e30).
  * A change sets the stock Edited flag; command 0xD (save) goes out 1 s after the last turn, or when
@@ -80,7 +83,6 @@ typedef unsigned long long u64;
 #define SETTER ((void (*)(u32, s32, s32, s32))0x800DA721u)    /* (CSmplPrm, param, value, pad) */
 #define FANOUT ((void (*)(u32, s32, s32, s32))0x800D7A81u)    /* (SmplMgr, pad, param, value): every
                                                                  voice of the pad gets the param again */
-#define POPUP ((void (*)(const char *, s32))0x800D3FF1u)
 #define POST ((void (*)(s32, s32, s32))0x800E25C1u)           /* (command, a, b); 0xD 1 0 = save */
 #define P_ATK 0x7D
 #define P_REL 0x7F
@@ -578,16 +580,58 @@ __attribute__((naked)) EXPORT void env_release(void) {
 
 /* ---------------------------------------------------------------- the ENVELOPE page */
 
-#define PAGES 4
 #define TAP_MS 1000          /* a longer SHIFT hold is not a tap */
 #define SAVE_MS 1000         /* quiet time before command 0xD */
-#define VALUE_MS 1500
-#define PAGE_MS 2000
+#define BUILT_IN 3           /* pages 2-4; page 1 is stock's */
+#define MORE_PAGES 4         /* room for later stages' pages */
+
+/* The screen (128 x 64), laid out as stock's ENVELOPE page draws it: rows 0-7 the CTRL 1-3 labels (drawn in
+ * the static layer too, which stock copies back over the screen), 8-16 their values, 17-32 the graph (y 32 =
+ * silent, y 17 = full level, x 0-127 = START-END), 49-57 the static S and E marks (x 4-10, 117-123) around the
+ * pad name at (64, 53). */
+#define LABEL_Y 2
+#define VALUE_Y 10
+#define GRAPH_TOP 17
+#define GRAPH_ZERO 32
+#define NAME_Y 53
+#define WHITE 0xFFFFFFu
+#define FONT_ID 0x1D
+
+#define STOCK_DRAW ((void (*)(void *))0x800F5F01u)       /* ENVELOPE redraw: values, graph, pad name */
+#define STOCK_PAD ((void (*)(void *))0x800F5A61u)        /* ENVELOPE pad change: START/END again, redraw */
+#define CTX_INIT ((void (*)(void *, u32))0x800D88E1u)    /* (context memory, surface): a context on it */
+#define CTX_FREE ((void (*)(void *))0x800D8921u)
+#define COLOR ((void (*)(u32, u32, u32))0x800D8019u)     /* (context, foreground, background) */
+#define FILL ((void (*)(u32, const s32 *))0x800CE511u)   /* (context, x0 y0 x1 y1 inclusive) in the foreground */
+#define FONT ((void (*)(u32, s32))0x800D80D9u)
+#define TEXT ((void (*)(u32, s32, s32, const char *))0x800D4FA1u)   /* centered on x, top at y */
+#define LINE ((void (*)(u32, const s32 *, const s32 *))0x800C0661u)  /* (context, {x, y}, {x, y}) */
+#define PAGE_CTX(page) (*(u32 *)((u8 *)(page) + 0x34))       /* the page's context on the screen */
+#define PAGE_LAYER(page) (*(u32 *)((u8 *)(page) + 0xC00))    /* its static layer's surface */
+#define PAGE_START(page) (*(s32 *)((u8 *)(page) + 0x1A70))   /* START and END as the page read them */
+#define PAGE_END(page) (*(s32 *)((u8 *)(page) + 0x1A74))
+#define PAGE_LAST_PAD(page) (*(s32 *)((u8 *)(page) + 0x1A78))
+#define RECORD(pad) ((const u32 *)(CSMPLPRM + 0xD0u + (pad) * 0xACu))  /* the pad record */
+#define R_LOOP (0x14 / 4)    /* LOOP */
+#define R_PLAY (0x3C / 4)    /* PLAY: bit 0 reverse (the fill takes the reverse charge for 1 and 3) */
+#define P_HOLD 0x7E
 
 enum { SH_ARMING, SH_UP, SH_DOWN };
 
+/* A page after the stock one: its name, its CTRL 1-3 labels, and what a turn does and shows. Later stages
+ * add theirs to env_more_pages[] (a pointer each, 0 = none); they come after MODE, in order. */
+struct env_page {
+    const char *name;                                    /* the bottom line: "A-1 SHAPE 2/4" */
+    const char *label[3];                                /* the top line ("" none) */
+    void (*value)(u32 pad, u32 ctrl, char *out);         /* CTRL ctrl's value as text, out[16] */
+    void (*turn)(u32 pad, u32 ctrl, s32 raw);            /* CTRL ctrl turned to raw (0-127) */
+    void (*graph)(u32 ctx, u32 pad, s32 start, s32 end); /* its own graph in rows 17-32; 0: the amplitude */
+};
+
+EXPORT const struct env_page *volatile env_more_pages[MORE_PAGES];
+
 struct env_ui_state {
-    u8 page;             /* 0 A-H-R, 1 SHAPE, 2 DECAY, 3 MODE */
+    u8 page;             /* 0 stock A-H-R, 1 SHAPE, 2 DECAY, 3 MODE, then env_more_pages */
     u8 shift;            /* SH_*: ARMING until SHIFT has been seen up on this page */
     u8 used;             /* this SHIFT press touched something else */
     u8 dirty;            /* a change not yet saved */
@@ -595,20 +639,26 @@ struct env_ui_state {
     u32 held_ms, quiet_ms;
     u32 saves;           /* command 0xD posts, since boot */
     u8 keys[KEY_BYTES];  /* the other keys at the last tick SHIFT was up */
+    u8 labels;           /* the page whose labels are on the screen */
+    u8 bottom;           /* the screen shows our bottom line */
+    u32 draws;           /* screens drawn, since boot */
 };
 
 EXPORT struct env_ui_state env_ui;
 EXPORT char env_text[48];
 
 static const char *const curve_names[4] = {"LIN", "EXP", "LOG", "S"};
-static const char *const page_text[PAGES] = {
-    "ENV 1/4 A-H-R\nATTACK HOLD REL", "ENV 2/4 SHAPE\nCURVE TIME CURVE",
-    "ENV 3/4 DECAY\nDECAY SUST CURVE", "ENV 4/4 MODE\nLOOP  -  REVERSE"};
+static const char *const stock_labels[3] = {"C1:ATTACK", "C2:HOLD", "C3:RELEASE"};
+static const s32 column[3] = {22, 63, 105};
 
 static char *put(char *p, const char *s) {
     while (*s)
         *p++ = *s++;
     return p;
+}
+
+static void put0(char *p, const char *s) {
+    *put(p, s) = 0;
 }
 
 static char *number(char *p, u32 v) {
@@ -644,22 +694,10 @@ static char *time_text(char *p, u32 f) {
     return put(p, "s");
 }
 
-static char *pad_name(char *p, u32 pad) {
+static char *pad_name(char *p, u32 pad) {       /* as stock's screen: A-1 .. J-16 */
     *p++ = (char)('A' + pad / 16);
     *p++ = '-';
-    *p++ = (char)('0' + (pad % 16 + 1) / 10);
-    *p++ = (char)('0' + (pad % 16 + 1) % 10);
-    return p;
-}
-
-static void popup(u32 pad, const char *what, const char *value, u32 frames, s32 ms) {
-    char *p = pad_name(env_text, pad);
-    *p++ = ' ';
-    p = put(p, what);
-    *p++ = '\n';
-    p = value ? put(p, value) : time_text(p, frames);
-    *p = 0;
-    POPUP(env_text, ms);
+    return number(p, pad % 16 + 1);
 }
 
 static s32 page_pad(void *page) {
@@ -668,6 +706,12 @@ static s32 page_pad(void *page) {
 
 static u32 protected(u32 pad) {
     return ((s32 (*)(u32, s32, s32))((*(u32 **)PROJECT)[2]))(PROJECT, 0x17 + (s32)(pad >> 4), -1) != 0;
+}
+
+/* a setting as it counts: 0 unless the layout version is 1 */
+static u32 setting(u32 pad, u32 byte) {
+    const u8 *b = ext(pad);
+    return b[B_VERSION] == 1 ? b[byte] : 0;
 }
 
 /* the current pad, then the pads stock's apply 0x800f5df0 reaches: COPY held, the other pads of its
@@ -723,7 +767,7 @@ static void fine_on(u32 pad, u32 byte, s32 param) {
         SETTER(CSMPLPRM, param, env_fine_stock[i], (s32)pad);
 }
 
-/* knob turns on pages 2-4: (byte, mask, value) for the current pad and its targets */
+/* a turn on pages 2-4: (byte, mask, value) for the current pad and its targets */
 static void store(u32 pad, u32 byte, u32 mask, u32 value) {
     u8 list[PADS];
     u32 n = targets(pad, list);
@@ -747,76 +791,270 @@ static u32 zone(s32 raw, u32 n) {
     return v * n >> 7;
 }
 
-static s32 knob_page_a(void *page, u32 pad, s32 ctrl, s32 raw) {
-    u8 *b = ext(pad);
-    if ((ctrl != 1 && ctrl != 3) || !(b[B_FLAGS] & F_FINE) || b[B_VERSION] != 1 || !EDITABLE((s32)pad))
+/* ---- the pages after the stock one */
+
+static void shape_value(u32 pad, u32 ctrl, char *out) {
+    if (ctrl == 2)
+        put0(out, setting(pad, B_FLAGS) & F_FINE ? "FINE" : "STOCK");
+    else
+        put0(out, curve_names[setting(pad, B_CURVES) >> (ctrl == 1 ? 0 : 4) & 3]);
+}
+
+static void shape_turn(u32 pad, u32 ctrl, s32 raw) {
+    if (ctrl == 2)
+        store(pad, B_FLAGS, F_FINE, zone(raw, 2) ? F_FINE : 0);
+    else
+        store(pad, B_CURVES, 3u << (ctrl == 1 ? 0 : 4), zone(raw, 4) << (ctrl == 1 ? 0 : 4));
+}
+
+static void decay_value(u32 pad, u32 ctrl, char *out) {
+    u32 dec = setting(pad, B_FLAGS) & F_ADSR ? setting(pad, B_DEC) & 127 : 0, sus = setting(pad, B_SUS);
+    if (ctrl == 1) {
+        if (dec)
+            *time_text(out, env_fine_frames[dec]) = 0;
+        else
+            put0(out, "OFF");
+    } else if (ctrl == 2) {
+        *put(number(out, sus > 100 ? 100 : sus), "%") = 0;
+    } else {
+        put0(out, curve_names[setting(pad, B_CURVES) >> 2 & 3]);
+    }
+}
+
+static void decay_turn(u32 pad, u32 ctrl, s32 raw) {
+    if (ctrl == 1) {
+        u32 v = zone(raw, 128);
+        store(pad, B_DEC, 0xFF, v);
+        store(pad, B_FLAGS, F_ADSR, v ? F_ADSR : 0);
+    } else if (ctrl == 2) {
+        store(pad, B_SUS, 0xFF, zone(raw, 101));
+    } else {
+        store(pad, B_CURVES, 3u << 2, zone(raw, 4) << 2);
+    }
+}
+
+static void mode_value(u32 pad, u32 ctrl, char *out) {
+    u32 f = setting(pad, B_FLAGS);
+    put0(out, ctrl == 1 ? (f & F_ONCE ? "FIRST" : "EVERY") : ctrl == 3 ? (f & F_REV ? "TIME" : "MIRROR") : "");
+}
+
+static void mode_turn(u32 pad, u32 ctrl, s32 raw) {
+    if (ctrl == 1)
+        store(pad, B_FLAGS, F_ONCE, zone(raw, 2) ? F_ONCE : 0);
+    else if (ctrl == 3)
+        store(pad, B_FLAGS, F_REV, zone(raw, 2) ? F_REV : 0);
+}
+
+static const struct env_page built_in[BUILT_IN] = {
+    {"SHAPE", {"C1:ATTACK", "C2:TIME", "C3:RELEASE"}, shape_value, shape_turn, 0},
+    {"DECAY", {"C1:DECAY", "C2:SUSTAIN", "C3:CURVE"}, decay_value, decay_turn, 0},
+    {"MODE", {"C1:LOOP", "", "C3:REVERSE"}, mode_value, mode_turn, 0},
+};
+
+static u32 page_count(void) {
+    u32 n = 1 + BUILT_IN;
+    for (u32 i = 0; i < MORE_PAGES; i++)
+        if (env_more_pages[i])
+            n++;
+    return n;
+}
+
+static u32 page_now(void) {
+    return env_ui.page < page_count() ? env_ui.page : 0;
+}
+
+/* page n's description; 0 for the stock page */
+static const struct env_page *page_at(u32 n) {
+    if (!n)
+        return 0;
+    if (n <= BUILT_IN)
+        return &built_in[n - 1];
+    n -= BUILT_IN + 1;
+    for (u32 i = 0; i < MORE_PAGES; i++)
+        if (env_more_pages[i] && !n--)
+            return env_more_pages[i];
+    return 0;
+}
+
+/* ---- drawing, with stock's own calls on the page's context */
+
+static void fill(u32 ctx, s32 x0, s32 y0, s32 x1, s32 y1) {
+    s32 r[4] = {x0, y0, x1, y1};
+    COLOR(ctx, 0, WHITE);
+    FILL(ctx, r);
+    COLOR(ctx, WHITE, 0);
+}
+
+static void text(u32 ctx, s32 x, s32 y, const char *s) {
+    if (*s) {
+        FONT(ctx, FONT_ID);
+        TEXT(ctx, x, y, s);
+    }
+}
+
+static void label_row(u32 ctx, const char *const *label) {
+    fill(ctx, 0, 0, 127, 7);
+    for (u32 k = 0; k < 3; k++)
+        text(ctx, column[k], LABEL_Y, label[k]);
+}
+
+/* the labels on the screen and in the static layer (stock copies that back over the screen) */
+static void labels(void *page, const char *const *label) {
+    u32 local[0x30] __attribute__((aligned(8)));     /* a context: stock's own label pass gives it 0xb4 */
+    label_row(PAGE_CTX(page), label);
+    CTX_INIT(local, PAGE_LAYER(page));
+    label_row((u32)local, label);
+    CTX_FREE(local);
+}
+
+/* the level at evaluated position q, as the applicators compute it for that frame */
+static s32 level_at(const struct env_shape *sh, u32 mode, u32 q) {
+    struct run g;
+    segment(sh, mode, q, &g);
+    if (g.kind == K_ZERO)
+        return 0;
+    if (g.kind == K_UNITY)
+        return ONE;
+    if (g.kind == K_CONST)
+        return g.base;
+    u32 r, ph = g.len > 1 ? frac(q - g.lo, g.len, &r) : 0;
+    return g.base + ((g.scale * (s32)curve(g.t, ph)) >> 15);
+}
+
+/* The pad's envelope as the voices will play it, from the page's START/END and the pad's settings; 0 if
+ * it is stock's (then stock's graph stays). */
+static u32 graph_shape(void *page, u32 pad, struct env_shape *sh) {
+    s32 s = PAGE_START(page), len = PAGE_END(page) - s;
+    u32 a = (u32)GETTER(CSMPLPRM, P_ATK, (s32)pad), h = (u32)GETTER(CSMPLPRM, P_HOLD, (s32)pad);
+    u32 r = (u32)GETTER(CSMPLPRM, P_REL, (s32)pad), blk[11];
+    sh->on = 0;
+    if (len <= 0 || a > 127 || r > 127 || h > 100)
+        return 0;
+    blk[0] = (u32)len;                                  /* the block the recompute would write */
+    blk[2] = (u32)s;
+    blk[4] = (u32)s + a * 144000u / 127;
+    blk[6] = (u32)s + h * ((u32)len / 100) + h * ((u32)len % 100) / 100;
+    blk[10] = r * 144000u / 127;
+    struct env_call c = {(u8 *)blk, (u32)s, (u32)len, (s32)a, (s32)h, (s32)r, 2, 0, -1, (s32)pad};
+    shape(sh, &c);
+    return sh->on;
+}
+
+/* x 0-127 = START + x * length / 127; y = 32 - level * 15, up to the HOLD point (to END for a looping pad on
+ * FIRST PASS); mirrored for a reverse pad on REV-TIME */
+static void amp_graph(u32 ctx, void *page, u32 pad, const struct env_shape *sh) {
+    u32 len = (u32)(PAGE_END(page) - PAGE_START(page)), step = len / 127, rem = len % 127;
+    u32 mode = sh->once && RECORD(pad)[R_LOOP] ? 1 : 0, mirror = sh->rev && (RECORD(pad)[R_PLAY] & 1);
+    s32 a[2] = {0, 0}, b[2];
+    for (u32 x = 0; x < 128; x++) {
+        u32 q = sh->s + x * step + x * rem / 127;
+        b[0] = mirror ? 127 - (s32)x : (s32)x;
+        b[1] = GRAPH_ZERO - ((level_at(sh, mode, q) * 15 + 16384) >> 15);
+        if (x)
+            LINE(ctx, a, b);
+        a[0] = b[0];
+        a[1] = b[1];
+        if (!mode && q >= sh->he)
+            break;
+    }
+}
+
+static void value_row(u32 ctx, char v[3][16]) {
+    fill(ctx, 0, 8, 127, 16);
+    for (u32 k = 0; k < 3; k++)
+        text(ctx, column[k], VALUE_Y, v[k]);
+}
+
+static void bottom_line(u32 ctx, u32 pad, const struct env_page *pg, u32 n) {
+    char *p = pad_name(env_text, pad);
+    const char *s = pg->name;
+    *p++ = ' ';
+    for (u32 k = 0; k < 12 && s[k]; k++)
+        *p++ = s[k];
+    *p++ = ' ';
+    p = number(p, n + 1);
+    *p++ = '/';
+    *number(p, page_count()) = 0;
+    fill(ctx, 12, 48, 115, 63);
+    text(ctx, 64, NAME_Y, env_text);
+}
+
+/* ENVELOPE page redraw (vtable + 0xCC; stock's knob, the page's first draw and env_ui_pad come here). Stock
+ * draws first; page 1 with a stock pad is stock's alone. Otherwise the labels, values and bottom line are the
+ * page's, and the graph is the pad's real envelope. */
+EXPORT void env_ui_draw(void *page) {
+    if (FX_KNOBS(page))                  /* stock draws nothing while the knobs drive the effect */
+        return;
+    u32 n = page_now(), ctx = PAGE_CTX(page);
+    const struct env_page *pg = page_at(n);
+    s32 pad = page_pad(page);
+    if (env_ui.labels != n) {
+        labels(page, pg ? pg->label : stock_labels);
+        env_ui.labels = (u8)n;
+    }
+    if (env_ui.bottom) {
+        fill(ctx, 12, 48, 115, 63);
+        env_ui.bottom = 0;
+    }
+    STOCK_DRAW(page);
+    env_ui.draws++;
+    if ((u32)pad >= PADS)
+        return;
+    struct env_shape sh;
+    u32 shaped = graph_shape(page, (u32)pad, &sh);
+    if (pg && pg->graph) {
+        fill(ctx, 0, GRAPH_TOP, 127, GRAPH_ZERO);
+        pg->graph(ctx, (u32)pad, PAGE_START(page), PAGE_END(page));
+    } else if (shaped) {
+        fill(ctx, 0, GRAPH_TOP, 127, GRAPH_ZERO);
+        amp_graph(ctx, page, (u32)pad, &sh);
+    }
+    char v[3][16];
+    if (!pg) {                           /* page 1: stock's, with FINE times in place of the steps */
+        if (shaped && sh.fine) {
+            *time_text(v[0], sh.atk) = 0;
+            *number(v[1], (u32)GETTER(CSMPLPRM, P_HOLD, pad)) = 0;
+            *time_text(v[2], sh.rel) = 0;
+            value_row(ctx, v);
+        }
+        return;
+    }
+    for (u32 k = 0; k < 3; k++) {
+        v[k][0] = 0;
+        if (pg->value)
+            pg->value((u32)pad, k + 1, v[k]);
+        v[k][15] = 0;
+    }
+    value_row(ctx, v);
+    bottom_line(ctx, (u32)pad, pg, n);
+    env_ui.bottom = 1;
+}
+
+/* ENVELOPE page pad change (vtable + 0xC8): stock reads the new pad's START/END and draws; then ours */
+EXPORT void env_ui_pad(void *page) {
+    s32 before = PAGE_LAST_PAD(page);
+    STOCK_PAD(page);
+    if (PAGE_LAST_PAD(page) != before)
+        env_ui_draw(page);
+}
+
+static s32 knob_stock_page(void *page, u32 pad, s32 ctrl, s32 raw) {
+    if ((ctrl != 1 && ctrl != 3) || !(setting(pad, B_FLAGS) & F_FINE) || !EDITABLE((s32)pad))
         return STOCK_KNOB(page, ctrl, raw);
     u32 i = zone(raw, 128), byte = ctrl == 1 ? B_ATK : B_REL;
     u8 list[PADS];
     u32 n = targets(pad, list);
-    for (u32 k = 0; k < n; k++) {
-        u8 *t = ext(list[k]);
-        if ((t[B_FLAGS] & F_FINE) && t[B_VERSION] == 1)
-            t[byte] = (u8)i;
-    }
-    s32 result = STOCK_KNOB(page, ctrl, env_fine_stock[i]);
     for (u32 k = 0; k < n; k++)
-        if ((ext(list[k])[B_FLAGS] & F_FINE) && ext(list[k])[B_VERSION] == 1)
+        if (setting(list[k], B_FLAGS) & F_FINE)
+            ext(list[k])[byte] = (u8)i;
+    s32 result = STOCK_KNOB(page, ctrl, env_fine_stock[i]);   /* the stock field, apply and redraw */
+    for (u32 k = 0; k < n; k++)
+        if (setting(list[k], B_FLAGS) & F_FINE)
             changed(list[k]);
-    popup(pad, ctrl == 1 ? "ATTACK" : "RELEASE", 0, env_fine_frames[i], VALUE_MS);
     return result;
 }
 
-static void knob_pages(u32 pad, s32 ctrl, s32 raw) {
-    u32 v;
-    if (env_ui.page == 1) {
-        if (ctrl == 2) {
-            v = zone(raw, 2);
-            store(pad, B_FLAGS, F_FINE, v ? F_FINE : 0);
-            popup(pad, "TIME", v ? "FINE" : "STOCK", 0, VALUE_MS);
-        } else {
-            u32 shift = ctrl == 1 ? 0 : 4;
-            v = zone(raw, 4);
-            store(pad, B_CURVES, 3u << shift, v << shift);
-            popup(pad, ctrl == 1 ? "ATK CURVE" : "REL CURVE", curve_names[v], 0, VALUE_MS);
-        }
-    } else if (env_ui.page == 2) {
-        if (ctrl == 1) {
-            v = zone(raw, 128);
-            store(pad, B_DEC, 0xFF, v);
-            store(pad, B_FLAGS, F_ADSR, v ? F_ADSR : 0);
-            if (v)
-                popup(pad, "DECAY", 0, env_fine_frames[v], VALUE_MS);
-            else
-                popup(pad, "DECAY", "OFF", 0, VALUE_MS);
-        } else if (ctrl == 2) {
-            char pct[8];
-            v = zone(raw, 101);
-            store(pad, B_SUS, 0xFF, v);
-            *put(number(pct, v), "%") = 0;
-            popup(pad, "SUSTAIN", pct, 0, VALUE_MS);
-        } else {
-            v = zone(raw, 4);
-            store(pad, B_CURVES, 3u << 2, v << 2);
-            popup(pad, "DEC CURVE", curve_names[v], 0, VALUE_MS);
-        }
-    } else {
-        if (ctrl == 2) {
-            POPUP(page_text[3], VALUE_MS);
-            return;
-        }
-        v = zone(raw, 2);
-        if (ctrl == 1) {
-            store(pad, B_FLAGS, F_ONCE, v ? F_ONCE : 0);
-            popup(pad, "LOOP", v ? "FIRST PASS" : "EVERY PASS", 0, VALUE_MS);
-        } else {
-            store(pad, B_FLAGS, F_REV, v ? F_REV : 0);
-            popup(pad, "REVERSE", v ? "TIME" : "MIRROR", 0, VALUE_MS);
-        }
-    }
-}
-
-/* ENVELOPE page knob (vtable 0x8021ec14 + 0xE4): page 1 is stock's (plus FINE); pages 2-4 are ours */
+/* ENVELOPE page knob (vtable 0x8021ec14 + 0xE4): page 1 is stock's (plus FINE); the others are the table's */
 EXPORT s32 env_ui_knob(void *page, s32 ctrl, s32 raw) {
     if (env_ui.shift == SH_DOWN)
         env_ui.used = 1;
@@ -825,10 +1063,12 @@ EXPORT s32 env_ui_knob(void *page, s32 ctrl, s32 raw) {
     s32 pad = page_pad(page);
     if ((u32)pad >= PADS)
         return STOCK_KNOB(page, ctrl, raw);
-    if (env_ui.page == 0)
-        return knob_page_a(page, (u32)pad, ctrl, raw);
-    if (EDITABLE(pad))                   /* an empty pad: nothing, as stock's setter */
-        knob_pages((u32)pad, ctrl, raw);
+    const struct env_page *pg = page_at(page_now());
+    if (!pg)
+        return knob_stock_page(page, (u32)pad, ctrl, raw);
+    if (EDITABLE(pad) && pg->turn)       /* an empty pad: nothing, as stock's setter */
+        pg->turn((u32)pad, (u32)ctrl, raw);
+    env_ui_draw(page);
     return 1;
 }
 
@@ -861,8 +1101,8 @@ EXPORT void env_ui_poll(void *page, s32 ms) {
         if (!down) {
             env_ui.shift = SH_UP;
             if (!env_ui.used) {
-                env_ui.page = (u8)((env_ui.page + 1) % PAGES);
-                POPUP(page_text[env_ui.page], PAGE_MS);
+                env_ui.page = (u8)((page_now() + 1) % page_count());
+                env_ui_draw(page);
             }
         }
     }
@@ -878,6 +1118,8 @@ EXPORT void *env_ui_leave(void *page) {
     if (env_ui.dirty)
         save();
     env_ui.page = 0;
+    env_ui.labels = 0;
+    env_ui.bottom = 0;
     env_ui.shift = SH_ARMING;
     return STOCK_LEAVE(page);
 }
