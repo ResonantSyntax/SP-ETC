@@ -16,6 +16,11 @@
  *                       the popup names it ("Roll 1/16"), and it is the pad's own Roll setting
  *   ROLL + VALUE press  the current pad follows ROLL or ignores it (saved with the pad: PADCONF reserved
  *                       byte 0x70, bit 0 set = ignores; zero, the default, follows)
+ *   HOLD while rolling  held rolls: every roll going on keeps going until its pad is hit again (a press the
+ *                       page plays, or stock's HOLD lets the pad go on), HOLD is pressed again with no pad
+ *                       down, or EXIT + ROLL; ROLL let go, tapped or unlatched and other pads leave it alone.
+ *                       Its pad blinks (in the pad's bank, outside DOOM OS) and HOLD is lit. HOLD with
+ *                       nothing rolling, and SHIFT + HOLD, are stock's
  *
  * Each repeat is a note-off then a note-on at the press's velocity, at the last repeat + one division
  * (288000000 x beats / BPMx100 frames, the remainder carried) on the audio clock, sent at the first UI
@@ -28,9 +33,9 @@
  *
  * Bridges (build_note_repeat.py writes a 10-byte movw/movt/bx ip at each entry):
  *   0x8003b530 UI dispatcher   -> nr_event: pads and SUB PAD down/up (whatever the page), ROLL down/up,
- *                                 VALUE turns and VALUE + ROLL; the rest goes on
+ *                                 HOLD down, VALUE turns and VALUE + ROLL; the rest goes on
  *   0x800cdbd0 stock pad note  -> nr_pad: which pad a page plays for the pad event; then the stock body
- *   0x8003c5f0 UI tick (1 ms)  -> nr_tick: the repeats, the latch light, the save
+ *   0x8003c5f0 UI tick (1 ms)  -> nr_tick: the repeats, the lights, the save
  *   0x80135d40 ROLL let go     -> nr_release: stock's release handling only while the module is off
  *   0x800d9f20 key held?       -> nr_key_gate: "ROLL held" is no for the note-on's three roll starts
  *                                 (0x800aec48) while the module runs; everything else goes on to the
@@ -63,6 +68,9 @@ typedef unsigned char u8;
 #define SOUNDING ((s32 (*)(s32))0x800D8C09u)               /* a voice slot plays the pad */
 #define RING_ROLL ((void (*)(s32, s32, s32, s32))0x800163A9u)  /* (pad, 0x7f on / 0 off, 0, 0): stock roll */
 #define POST ((void (*)(s32, s32, s32))0x800E25C1u)        /* SMPL TASK command; 0xd saves the pads */
+#define REPAINT ((volatile u16 *)0x802496F0u)              /* stock's light and draw requests: 2 pads, 0x10 keys */
+#define PAGE ((const volatile u16 *)0x80245880u)            /* the current page; DOOM OS's own is 0x5f */
+#define DOOM_PAGE 0x5F
 #define EXT(pad) ((volatile u8 *)(SMPL + 0xF800u + (u32)(pad) * 0x80u))    /* PADCONF.BIN's 128 bytes */
 /* The audio clock: the DMA interrupt (0x80003408 -> 0x80004f70) adds 32 to it every 64-frame block and notes
  * the cycle counter; the stock MIDI clock (0x80009de0) interpolates between blocks at 32 per 798000 cycles. */
@@ -73,7 +81,9 @@ typedef unsigned char u8;
 
 #define PRESS_PAD 0x800C904Fu       /* the stock pad note's callers in the page pad handler 0x800c7db8: */
 #define PRESS_SUBPAD 0x800C8D41u    /* a pad pressed, and SUB PAD (the last pad) pressed or let go */
+#define HOLD_LET_GO 0x80134193u     /* stock's HOLD (0x801340c8, from that handler) ends a held GATE pad on its press */
 
+#define KEY_HOLD 0x11
 #define KEY_ROLL 0x21
 #define KEY_EXIT 0x22
 #define KEY_SHIFT 0x2A
@@ -118,6 +128,8 @@ struct nr_repeat {
     u8 ring;         /* KIND_RING: the stock roll was asked for */
     u8 seen;         /* the pad's Roll as last read: a change from elsewhere (SHIFT + ROLL) is taken */
     u8 phys;         /* the pad (0..15) or SUB PAD (16) whose press started it */
+    u8 stick;        /* held by HOLD: goes on until stopped */
+    u8 spare[3];
     u32 last;        /* the last hit (frames) */
     u32 next;        /* the next hit */
     u32 frac;        /* what a period leaves over, in 1/den frames */
@@ -139,6 +151,8 @@ struct nr_state {
     u32 hits;        /* re-hits since boot */
     u32 steps;       /* VALUE steps since boot */
     u32 latches;     /* latch toggles since boot */
+    u16 blink;       /* the pad lights (0..15) blinking for held rolls */
+    u8 hold_led;     /* HOLD lit for held rolls */
 };
 
 EXPORT volatile u8 nr_enabled;     /* not DJ mode; read from other tasks by the gates */
@@ -276,6 +290,7 @@ static void start(u32 pad, u32 vel, u32 phys, u32 hit_now) {
     r->seen = (u8)div;
     r->hold = nr.held;
     r->phys = (u8)phys;
+    r->stick = 0;
     r->ring = 0;
     r->hits = 0;
     r->key = 0;
@@ -304,11 +319,74 @@ static void stop_all(void) {
             stop(&nr_rep[i]);
 }
 
-/* A pad held repeats while ROLL is held or latched; one let go, while ROLL is still held from its start. */
+/* A pad held repeats while ROLL is held or latched; one let go, while ROLL is still held from its start; a held
+ * roll until it is stopped. */
 static u32 alive(const struct nr_repeat *r) {
     if (!nr_enabled || !follows(r->pad))
         return 0;
+    if (r->stick)
+        return 1;
     return held(r) ? nr.held || nr.latched : nr.held && r->hold;
+}
+
+/* HOLD pressed (no SHIFT): rolls going on become held rolls; with only held rolls going on and no pad down,
+ * they stop. Stock's HOLD runs as well, whatever this does. */
+static void hold_key(void) {
+    u32 loose = 0, down = 0, any = 0;
+    for (u32 i = 0; i < REPEATS; i++) {
+        if (nr_rep[i].kind) {
+            any = 1;
+            loose |= !nr_rep[i].stick;
+        }
+    }
+    if (!any)
+        return;
+    if (loose) {
+        for (u32 i = 0; i < REPEATS; i++)
+            if (nr_rep[i].kind)
+                nr_rep[i].stick = 1;
+        say("Roll Held", "");
+        return;
+    }
+    for (u32 i = 0; i < PHYS; i++)
+        down |= nr_phys_down[i];
+    if (down)
+        return;
+    stop_all();
+    say("Roll Hold Off", "");
+}
+
+static u32 sticky(void) {
+    for (u32 i = 0; i < REPEATS; i++)
+        if (nr_rep[i].kind && nr_rep[i].stick)
+            return 1;
+    return 0;
+}
+
+/* Held rolls show: their pads blink white (page 6; stock blinks a pad the same way) when their bank is the
+ * current one and DOOM OS's page isn't up, and HOLD is lit. Written again after anything else writes those
+ * lights (the writer keeps the last value); when a held roll ends stock repaints the pads and keys. */
+static void held_lights(void) {
+    u32 blink = 0, any = sticky();
+    if (any && *PAGE != DOOM_PAGE) {
+        s32 bank = PAD_GET(SMPL, P_CUR_BANK, 0);
+        for (u32 i = 0; i < REPEATS; i++)
+            if (nr_rep[i].kind && nr_rep[i].stick && nr_rep[i].pad / 16 == (u32)bank)
+                blink |= 1u << (nr_rep[i].pad % 16);
+    }
+    for (u32 k = 0; k < 16; k++)
+        if (blink >> k & 1)
+            LED((s32)k, 2, 0xFFFFFF);
+    if (nr.blink & ~blink)
+        *REPAINT |= 2;
+    nr.blink = (u16)blink;
+    if (any) {
+        LED(KEY_HOLD, 1, 0xFF);
+        nr.hold_led = 1;
+    } else if (nr.hold_led) {
+        *REPAINT |= 0x10;
+        nr.hold_led = 0;
+    }
 }
 
 static void hit(struct nr_repeat *r) {
@@ -439,6 +517,8 @@ EXPORT s32 nr_event_c(const s16 *ev) {
             follow_toggle();
             return 1;
         }
+        if (what == KEY_HOLD && !key_down(KEY_SHIFT))
+            hold_key();                            /* and on to stock's HOLD */
         return 0;
     }
     if (type == EV_KEY_UP) {
@@ -446,12 +526,16 @@ EXPORT s32 nr_event_c(const s16 *ev) {
             nr.ate_value = 0;
             return 1;
         }
+        if (what == KEY_ROLL && key_down(KEY_EXIT)) {   /* EXIT + ROLL, whichever went down first: stock's */
+            nr.held = 0;                                /* all rolls off, and these */
+            nr.tap = 0;
+            nr.latched = 0;
+            stop_all();
+            return 0;
+        }
         if (what == KEY_ROLL && nr.held) {
             nr.held = 0;
-            if (key_down(KEY_EXIT)) {              /* EXIT + ROLL: stock's all rolls off, and these */
-                nr.latched = 0;
-                stop_all();
-            } else if (nr.tap) {
+            if (nr.tap) {
                 nr.latched ^= 1;
                 nr.latches++;
                 say("Roll Latch ", nr.latched ? "On" : "Off");
@@ -477,11 +561,22 @@ EXPORT s32 nr_event_c(const s16 *ev) {
 }
 
 /* The stock pad note (0x800cdbd0), before its body: the pad a page plays for the pad (or SUB PAD) event
- * being dispatched. */
+ * being dispatched. A press that plays a held roll's pad, or that stock's HOLD takes to let that pad go,
+ * stops the roll and starts nothing (stock then plays the press, or ends the pad, its own way). */
 EXPORT void nr_pad_c(s32 pad, s32 vel, s32 mode, u32 caller) {
     (void)mode;
     u32 i = nr.cur_phys;
-    if ((u32)pad >= PADS || vel <= 0 || i >= PHYS || (caller != PRESS_PAD && caller != PRESS_SUBPAD))
+    u32 press = vel > 0 && (caller == PRESS_PAD || caller == PRESS_SUBPAD);
+    if ((u32)pad >= PADS || i >= PHYS || !(press || caller == HOLD_LET_GO))
+        return;
+    struct nr_repeat *r = find((u32)pad);
+    if (r && r->stick) {
+        if (caller == HOLD_LET_GO)
+            r->hits = 0;                           /* this call is the pad's note-off */
+        stop(r);
+        return;
+    }
+    if (!press)
         return;
     nr_phys_pad[i] = (u8)pad;
     nr_phys_vel[i] = (u8)(vel > 127 ? 127 : vel);
@@ -492,7 +587,7 @@ EXPORT void nr_pad_c(s32 pad, s32 vel, s32 mode, u32 caller) {
 
 /* The UI tick, every millisecond (0x8003c5f0(1)). */
 EXPORT void nr_tick_c(s32 ms) {
-    if (!nr.active && !nr.held && !nr.latched && !nr.led && !nr.save_ms)
+    if (!nr.active && !nr.held && !nr.latched && !nr.led && !nr.save_ms && !nr.blink && !nr.hold_led)
         return;
     clock_frames();
     if (nr.save_ms > 0 && (nr.save_ms -= ms) <= 0) {
@@ -544,6 +639,7 @@ EXPORT void nr_tick_c(s32 ms) {
         LED(KEY_ROLL, 0, 0x1F);
         nr.led = 0;
     }
+    held_lights();
 }
 
 __attribute__((naked)) EXPORT void nr_event(void) {

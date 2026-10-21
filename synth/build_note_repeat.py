@@ -4,7 +4,8 @@ A stage on Sound Generator + Kits v9.46 (APP1 7b5fbcb4...684a; NOTE_REPEAT.md). 
 slice of the pad's voice; here ROLL re-hits the pad through the stock pad note at the pad's Roll division:
 ROLL + pad repeats until ROLL is released, a ROLL tap latches (pads then repeat while held, ROLL lit), VALUE
 steps the division at once, ROLL + VALUE press makes the current pad follow or ignore ROLL (PADCONF reserved
-byte 0x70, bit 0). LOOP pads without GATE keep the stock ring roll. DJ mode stays stock.
+byte 0x70, bit 0), HOLD while rolling holds the rolls (test2). LOOP pads without GATE keep the stock ring
+roll. DJ mode stays stock.
 
 Five changes in 5.52 space, each a 10-byte movw ip / movt ip / bx ip at an entry (a nop after it where the
 displaced instructions take 12 bytes); the module runs the displaced instructions and goes on:
@@ -38,7 +39,7 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'note-repeat-test1'
+REVISION = 'note-repeat-test2'
 SLOT = 0x2000                       # reserved: [base, base + SLOT)
 GAP = (0x83FC9000, 0x83FF0000)      # above the fork's rows (end 0x83FC8450), below the end of cacheable SDRAM
 # Every other fork module's reserved RAM (branch, start, end).
@@ -88,6 +89,7 @@ CALLERS = {
     0x800AF06F: (0x800AF068, bytes.fromhex('21202af059ff'), 'movs r0, #0x21; bl 0x800d9f20: a PAD LINK pad (group)'),
     0x800C904F: (0x800C904A, bytes.fromhex('04f0c1fd'), 'bl 0x800cdbd0: the page pad handler plays a pressed pad'),
     0x800C8D41: (0x800C8D3C, bytes.fromhex('04f048ff'), 'bl 0x800cdbd0: SUB PAD plays the last pad, or lets it go'),
+    0x80134193: (0x8013418E, bytes.fromhex('99f71ffd'), 'bl 0x800cdbd0: stock\'s HOLD lets a held GATE pad go'),
 }
 
 # Stock 5.52 code and data the module calls, reads or relies on, as in v9.46 (stock in DOOM OS ED5E and the
@@ -121,7 +123,8 @@ GUARDS = [
      'note-on: with ROLL held (0x800d9f20(0x21)), a pad and its PAD LINK pads start the stock roll (0x8001a378); '
      'nothing else there asks for ROLL'),
     (0x800C7DB8, 0x800C9788, '605e47bd66fad7c0d1d86c271dd7f44bfce9e28b3f098c7a989613d127def4f1',
-     'page pad handler: a press plays (abs pad, velocity, 1) from 0x800c904a, SUB PAD from 0x800c8d3c'),
+     'page pad handler: a press plays (abs pad, velocity, 1) from 0x800c904a, SUB PAD from 0x800c8d3c; first, '
+     'without SHIFT, a pad goes by stock\'s HOLD (0x801340c8, from 0x800c829e)'),
     (0x800C9788, 0x800CC030, '7eec6950ceb91b89e1170d37f3a869d997c0e55f1c41a69941cf8421e7c4d0fe',
      'generic key handler: ROLL let go without SHIFT or EXIT calls 0x80135d40; VALUE with ROLL held halves or '
      'doubles the stock rolls; SHIFT + ROLL steps the current pad\'s Roll'),
@@ -173,6 +176,13 @@ GUARDS = [
      'the stock MIDI clock between blocks: 0x8059226c + (cycles since 0x80592264) x 32 / 798000'),
     (0x80009F04, 0x80009F0C, '5bc2cb4440d6b8eaec65fa278d1b88f6d9c9b46dcd091732105045248e96fb8c',
      'its constants 32.0 and 798000.0'),
+    (0x801340C8, 0x80134218, 'fcf60ed49c31ec398f84933f5170fbdaf13bca8c1908387a7143adeef82a60d7',
+     'a pad and HOLD (settings 10: 1 down, 2 held): a press on a held GATE pad lets it go without playing (its '
+     'note-off from 0x8013418e); on any other held pad it goes on to play'),
+    (0x80182BC8, 0x80182C38, 'b0d4c97cc8a0b8a4388300b168e501c4c7bef30c442ab807d64d523677529a0f',
+     'the UI tick hands the light and draw requests (0x802496f0) to 0x800d5370'),
+    (0x800D5370, 0x800D5430, '650eb5b983a8c4fd7d1a7c88f3a3fe6de2366c05c51fbb902ac9abc35ce03709',
+     'the light updater (DOOM OS ED5E jumps in first): request bit 2 repaints the pads, 0x10 the keys'),
 ]
 MD = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB | capstone.CS_MODE_MCLASS)
 
@@ -409,7 +419,8 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
         description='ROLL as an MPC-style note repeat: ROLL + pad re-hits the pad through the stock pad note at the '
                     'pad\'s Roll division until ROLL is let go; a ROLL tap latches (pads repeat while held, ROLL '
                     'lit); VALUE steps the division at once; ROLL + VALUE press: the current pad follows or ignores '
-                    'ROLL (saved with the pad); LOOP pads without GATE keep the stock roll; DJ mode stays stock',
+                    'ROLL (saved with the pad); HOLD while rolling: held rolls, until the pad is hit again, HOLD '
+                    'again or EXIT + ROLL; LOOP pads without GATE keep the stock roll; DJ mode stays stock',
         parent_app1=str(inp), parent_sha256=sha(inp.read_bytes()),
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
         if parent_manifest.exists() else None,
@@ -430,10 +441,19 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
             follow='ROLL + VALUE press: the current pad follows or ignores ROLL; PADCONF reserved byte 0x70 bit 0 '
                    '(set = ignores), saved with command 0xd a second after the last change; popup "A-01 IGNORES '
                    'ROLL"',
-            stock='SHIFT + ROLL (the Roll popup), EXIT + ROLL (all rolls off), DJ Mixer Mode (all of ROLL), '
-                  'patterns\' recorded rolls, LOOP pads without GATE (the stock ring roll, started by the module)'),
-        timing='each repeat at last + beats x 288000000 / (BPM x 100) frames (48 per ms), the remainder carried, '
-               'from the UI tick (1 ms); the tempo is 0x80047dd0(pad), 120 BPM if it is not 20..300',
+            hold='HOLD (no SHIFT) while rolls go on: they become held rolls (popup "Roll Held") and go on whatever '
+                 'ROLL does and whatever other pads do, until their pad is hit again (that press starts no roll), '
+                 'HOLD is pressed again with only held rolls going on and no pad down (popup "Roll Hold Off"), or '
+                 'EXIT + ROLL; a held roll\'s pad blinks white (light page 6) when its bank is the current one and '
+                 'the page is not DOOM OS\'s (0x5f), HOLD is lit; stock repaints pads and keys after (0x802496f0 '
+                 'bits 2, 0x10); stock\'s HOLD runs as well, every time',
+            stock='SHIFT + ROLL (the Roll popup), EXIT + ROLL (all rolls off), DJ Mixer Mode (all of ROLL and HOLD), '
+                  'HOLD with nothing rolling, SHIFT + HOLD, patterns\' recorded rolls, LOOP pads without GATE (the '
+                  'stock ring roll, started by the module)'),
+        timing='each repeat at last + beats x 288000000 / (BPM x 100) frames, the remainder carried, on the audio '
+               'clock (0x8059226c, 64 frames a block, between blocks by the cycle counter at 798000 a block as the '
+               'stock MIDI clock does), sent at the first UI tick at or after it; the tempo is 0x80047dd0(pad), '
+               '120 BPM if it is not 20..300',
         tool='synth/build_note_repeat.py', bridges=bridges)
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8', newline='\n')
     sums = ''.join(f'{sha((out / n).read_bytes())}  {n}\n' for n in ('SP404MKII_APP0.bin', 'SP404MKII_APP1.bin',

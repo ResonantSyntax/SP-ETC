@@ -2,7 +2,8 @@
 
 usage: python synth/test_note_repeat.py OUT_DIR [SECTIONS]      (unicorn, keystone, capstone on PYTHONPATH)
 
-SECTIONS: a comma list of static, names, timing, value, roll, ring, subpad, gate, release, dj, recorder, passthrough.
+SECTIONS: a comma list of static, names, timing, value, roll, ring, subpad, hold, gate, release, dj, recorder,
+passthrough.
 
 Reads OUT_DIR/manifest.json for the parent APP1. Static checks first: only the header's scatter pointer, the five
 entry jumps and the appended tail differ from the parent; the guards and the recognised call sites hold on the
@@ -39,15 +40,19 @@ Checks:
   and posts the save (0xd) a second after the last change; an ignoring pad plays once, as without ROLL;
 - LOOP pads without GATE: the stock roll asked for once the pad sounds (also when tapped again while it
   rolls), turned off at the end, no re-hits; with GATE they re-hit; SUB PAD repeats the last pad;
+- HOLD while a pad rolls (test2): the roll goes on after the pad, ROLL, a ROLL tap and other pads; the pad
+  blinks (not on DOOM OS's page) and HOLD is lit; hitting the pad again stops it (that press plays once,
+  stock's way, and starts no roll), as do HOLD again with no pad down, and EXIT + ROLL; stock's own HOLD
+  runs as well (the held pad's HOLD state as on the parent); a pad held without rolling keeps a held roll;
 - the stock roll start in the note-on hears "ROLL not held" from its three call sites only while the module
   runs; every other key query is the kits' answer, as on the parent; ROLL's stock release handling
   (0x80135d40) does not run while the module runs, and does on the parent and in DJ mode;
-- DJ Mixer Mode: ROLL, VALUE and pads exactly as on the parent;
+- DJ Mixer Mode: ROLL, VALUE, HOLD and pads exactly as on the parent;
 - the pattern recorder: each repeat reaches it (0x80030700) as a note-off and a note-on of that pad, the way a
   real tap of the pad does;
 - every other key and pad path as on the parent: each key alone, with SHIFT, with EXIT and while ROLL is held,
-  VALUE turns and presses, pads, SUB PAD, knobs, HOLD, SHIFT + ROLL, EXIT + ROLL; the same pad events, popups,
-  chip bytes, DOOM OS calls, held keys and page.
+  VALUE turns and presses, pads, SUB PAD, knobs, HOLD (pads held and let go by it), SHIFT + HOLD, SHIFT + ROLL,
+  EXIT + ROLL; the same pad events, popups, chip bytes, DOOM OS calls, held keys and page.
 """
 import hashlib
 import json
@@ -357,6 +362,19 @@ class Machine:
 
     def roll(self, pad):
         return self.get(P_ROLL, pad)
+
+    def repeats(self):
+        """The module's repeats in use: (pad, held by HOLD)."""
+        b = bytes(self.uc.mem_read(self.sym['nr_rep'], 16 * 32))
+        return [(b[32 * i + 1], b[32 * i + 8]) for i in range(16) if b[32 * i]]
+
+    def hold_state(self, pad):
+        """Stock's per-pad HOLD state (settings 10): 1 down, 2 held."""
+        return s32(self.call(0x800D94D8, 0x82E01144, 10, pad))
+
+    def lights(self):
+        b = bytes(v for p, v in self.uart if p == 3)
+        return [b[i:i + 4] for i in range(0, len(b) - 3, 4) if b[i] == 1]
 
 
 def frames_period(div, bpm100):
@@ -732,6 +750,20 @@ def roll_checks(img, man):
           f'EXIT + ROLL let go: our repeats stop, the latch goes, stock\'s all rolls off (0x800163a8(-1, 0)) runs '
           f'({m.rolls})')
     m.pad_up(3)
+    # the same with EXIT down first
+    m = Machine(img, man['entries'], tempo=12000)
+    m.set(P_ROLL, 4, 3)
+    m.tap(KEY_ROLL)
+    m.pad(3)
+    m.run(200)
+    m.press(KEY_EXIT)
+    m.tap(KEY_ROLL)
+    m.let_go(KEY_EXIT)
+    m.run(400)
+    check(m.state()['latched'] == 0 and m.state()['active'] == 0 and len(m.ons(3)) == 2 and
+          [r[1:] for r in m.rolls] == [(-1, 0, 0, 0)],
+          f'EXIT held, then ROLL: the same (test2; on test1 our repeats and the latch went on) ({m.rolls})')
+    m.pad_up(3)
     # follow
     m = Machine(img, man['entries'], tempo=12000)
     m.set(P_ROLL, 4, 3)
@@ -825,6 +857,236 @@ def ring_checks(img, man):
           f'a LOOP pad with GATE on re-hits like any other ({m.get(P_GATE, 3)}, {m.get(P_LOOP, 3)}, {m.rolls})')
 
 
+HOLD_LIT = bytes.fromhex('010031ff')
+REPAINT = 0x802496F0
+
+
+def blink(pad_index):
+    """The three light messages of a pad (0..15) blinking white: page 6, its R, G and B."""
+    return [bytes([1, 6, 3 * pad_index + k, 0xFF]) for k in range(3)]
+
+
+def hold_checks(img, parent, man):
+    # latched, a hat held and rolling, HOLD: a held roll
+    m = Machine(img, man['entries'], tempo=12000)
+    m.set(P_ROLL, 4, 3)
+    m.tap(KEY_ROLL)
+    m.pad(3)
+    m.run(130)                                          # repeat at 125
+    m.uart = []
+    m.uc.mem_write(REPAINT, b'\0\0')
+    m.tap(KEY_HOLD)
+    m.run(2)
+    lit = m.lights()
+    m.pad_up(3)
+    m.run(400)                                          # 250, 375, 500
+    n1 = len(m.ons(3))
+    check(m.repeats() == [(3, 1)] and m.popups[-1][1] == 'Roll Held' and n1 == 5 and m.hold_state(3) == 2 and
+          blink(3) == [x for x in lit if x[1] == 6] and HOLD_LIT in lit,
+          f'latched, a pad held and rolling, HOLD: a held roll (popup "Roll Held"), it goes on after the pad is let '
+          f'go; its pad blinks white, HOLD lit; stock\'s HOLD held the pad as always ({m.repeats()}, {n1} hits, '
+          f'{[x.hex() for x in lit]})')
+    m.tap(KEY_ROLL)                                     # unlatch
+    m.pad(5)
+    m.pad_up(5)
+    m.run(260)
+    n2 = len(m.ons(3))
+    check(not m.state()['latched'] and m.repeats() == [(3, 1)] and n2 == n1 + 2 and len(m.ons(5)) == 1,
+          f'a held roll goes on when ROLL is unlatched and another pad is played ({n2 - n1} more repeats)')
+    m.tap(KEY_ROLL)                                     # latched again: the next press would roll
+    t = m.ms
+    m.pad(3)                                            # hit it again
+    m.uc.mem_write(REPAINT, b'\0\0')                    # (the press itself asks stock for a full repaint)
+    m.run(1)
+    asked = m.r16(REPAINT)
+    m.run(299)
+    m.pad_up(3)
+    m.run(200)
+    after = m.ons(3, since=t)
+    check(not m.repeats() and after == [(t, 3, 100)] and asked == 0x12,
+          f'hitting its pad again stops it: that press plays once (stock\'s press), starts no roll though ROLL is '
+          f'latched; at the next tick stock is asked to repaint the pads and keys, nothing else ({after}, '
+          f'{asked:#x})')
+    m = Machine(img, man['entries'], tempo=12000)
+    m.run(5)
+    m.uc.mem_write(REPAINT, b'\0\0')
+    m.run(5)
+    check(m.r16(REPAINT) == 0, 'idle, the module asks stock for no repaint')
+    # a GATE pad: stock's HOLD takes the press to let the pad go (its note-off, nothing played)
+    out = []
+    for image in (parent, img):
+        m = Machine(image, man['entries'] if image is img else None, tempo=12000)
+        m.set(P_GATE, 1, 3)
+        m.set(P_ROLL, 4, 3)
+        m.tap(KEY_ROLL)
+        m.pad(3)
+        m.run(130)
+        m.tap(KEY_HOLD)
+        m.pad_up(3)
+        m.run(200)
+        t = m.ms
+        m.pad(3)
+        m.run(300)
+        m.pad_up(3)
+        m.run(50)
+        out.append((m.notes(3, since=t), m.hold_state(3), m.repeats() if image is img else []))
+    check(out[0] == out[1] and out[1][0] == [(t, 3, 0)],
+          f'a GATE pad\'s held roll: hitting the pad again (stock\'s HOLD lets it go) stops it with stock\'s one '
+          f'note-off, as on the parent ({out})')
+    # SHIFT + pad: TOP does not play the pad, the held roll goes on
+    m = Machine(img, man['entries'], tempo=12000)
+    m.set(P_ROLL, 4, 3)
+    m.tap(KEY_ROLL)
+    m.pad(3)
+    m.tap(KEY_HOLD)
+    m.pad_up(3)
+    m.tap(KEY_ROLL)
+    m.run(10)
+    t = m.ms
+    m.press(KEY_SHIFT)
+    m.pad(3)
+    m.pad_up(3)
+    m.let_go(KEY_SHIFT)
+    m.run(300)
+    check(m.repeats() == [(3, 1)] and m.ons(3, since=t) == [(125, 3, 100), (250, 3, 100)],
+          f'a press the page does not play (SHIFT + pad on TOP) leaves the held roll alone ({m.ons(3, since=t)})')
+    m.tap(KEY_ROLL)                                     # latched again
+    t = m.ms
+    m.pad(0x13, 70)                                     # SUB PAD plays the last pad, 3
+    m.run(300)
+    m.pad_up(0x13)
+    m.run(50)
+    check(not m.repeats() and m.ons(3, since=t) == [(t, 3, 70)],
+          f'SUB PAD playing a held roll\'s pad stops it the same way: one hit, no roll ({m.ons(3, since=t)})')
+    # ROLL held, a pad tapped, HOLD while ROLL is still down; ROLL let go; HOLD again stops it
+    m = Machine(img, man['entries'], tempo=12000)
+    m.set(P_ROLL, 4, 3)
+    m.press(KEY_ROLL)
+    m.pad(3)
+    m.pad_up(3)
+    m.run(130)
+    m.tap(KEY_HOLD)
+    m.let_go(KEY_ROLL)
+    m.run(260)
+    n1 = len(m.ons(3))
+    m.tap(KEY_HOLD)
+    m.run(300)
+    check(n1 == 4 and m.popups[-1][1] == 'Roll Hold Off' and not m.repeats() and len(m.ons(3)) == 4 and
+          not m.state()['latched'],
+          f'ROLL held, a pad tapped and rolling, HOLD, ROLL let go: it goes on (no latch from that ROLL press); HOLD '
+          f'again with no pad down stops it ("Roll Hold Off") ({n1}, {m.popups[-1:]})')
+    # two pads held, HOLD holds both; EXIT + ROLL stops held rolls
+    m = Machine(img, man['entries'], tempo=12000)
+    m.set(P_ROLL, 4, 3)
+    m.set(P_ROLL, 3, 5)
+    m.tap(KEY_ROLL)
+    m.pad(3)
+    m.pad(5)
+    m.run(50)
+    m.tap(KEY_HOLD)
+    m.pad_up(3)
+    m.pad_up(5)
+    m.tap(KEY_ROLL)                                     # unlatch
+    m.run(300)
+    both = sorted(m.repeats())
+    m.press(KEY_ROLL)
+    m.press(KEY_EXIT)
+    m.let_go(KEY_ROLL)
+    m.let_go(KEY_EXIT)
+    m.run(300)
+    check(both == [(3, 1), (5, 1)] and not m.repeats() and len(m.ons(3)) == 3 and len(m.ons(5)) == 2,
+          f'two pads rolling, HOLD: both held, they go on unlatched; EXIT + ROLL stops them ({both})')
+    m = Machine(img, man['entries'], tempo=12000)
+    m.set(P_ROLL, 4, 3)
+    m.tap(KEY_ROLL)
+    m.pad(3)
+    m.tap(KEY_HOLD)
+    m.pad_up(3)
+    m.run(130)
+    m.press(KEY_EXIT)
+    m.tap(KEY_ROLL)
+    m.let_go(KEY_EXIT)
+    m.run(300)
+    check(not m.repeats() and len(m.ons(3)) == 2 and not m.state()['latched'],
+          f'EXIT held first, then ROLL, stops a held roll too ({m.ons(3)})')
+    # a LOOP pad without GATE: its held stock roll goes on, a hit stops it (and stock's press stops the loop)
+    m = Machine(img, man['entries'], tempo=12000)
+    m.set(P_LOOP, 1, 3)
+    m.set(P_ROLL, 4, 3)
+    m.tap(KEY_ROLL)
+    m.pad(3)
+    m.sounding.add(3)
+    m.run(5)
+    m.tap(KEY_HOLD)
+    m.pad_up(3)
+    m.tap(KEY_ROLL)                                     # unlatch
+    m.run(300)
+    kept = [r[1:] for r in m.rolls]
+    t = m.ms
+    m.pad(3)
+    m.pad_up(3)
+    m.run(5)
+    check(kept == [(3, 0x7F, 0, 0)] and [r[1:] for r in m.rolls] == [(3, 0x7F, 0, 0), (3, 0, 0, 0)] and
+          not m.repeats() and m.ons(3, since=t) == [(t, 3, 100)],
+          f'a LOOP pad\'s held stock roll goes on unlatched; hitting the pad turns it off, the press goes to stock '
+          f'({m.rolls})')
+    # HOLD with held rolls and a pad down that does not roll: the held rolls stay (stock's HOLD holds that pad)
+    m = Machine(img, man['entries'], tempo=12000)
+    m.set(P_ROLL, 4, 3)
+    m.tap(KEY_ROLL)
+    m.pad(3)
+    m.tap(KEY_HOLD)
+    m.pad_up(3)
+    m.tap(KEY_ROLL)                                     # unlatched: pad 6 plays plainly
+    m.pad(6)
+    m.tap(KEY_HOLD)
+    m.run(10)
+    check(m.repeats() == [(3, 1)] and m.hold_state(6) == 2,
+          'held roll on, another pad down (not rolling), HOLD: the held roll stays, stock holds that pad')
+    m.pad_up(6)
+    # outside the bank, on DOOM OS's page: no blink, HOLD still lit
+    m = Machine(img, man['entries'], tempo=12000)
+    m.set(P_ROLL, 4, 3)
+    m.tap(KEY_ROLL)
+    m.pad(3)
+    m.tap(KEY_HOLD)
+    m.pad_up(3)
+    m.uc.mem_write(PAGE_ID, struct.pack('<H', 0x5F))
+    m.run(2)
+    m.uart = []
+    m.call(0x800D4910, 3, 1, 0x00FF00)                  # something else lights pad 4
+    m.call(0x800D4910, 0x11, 0, 0x1F)                   # and dims HOLD
+    m.uart = []
+    m.run(3)
+    lit = m.lights()
+    check(lit == [HOLD_LIT] and m.repeats() == [(3, 1)],
+          f'on DOOM OS\'s page a held roll\'s pad does not blink; HOLD is lit again ({[x.hex() for x in lit]})')
+    m.uc.mem_write(PAGE_ID, struct.pack('<H', 1))
+    m.uart = []
+    m.run(2)
+    check([x for x in m.lights() if x[1] == 6] == blink(3), 'back on TOP the held roll\'s pad blinks again')
+    # stock's HOLD itself: the same per-pad states as on the parent through a held roll
+    states = []
+    for image in (parent, img):
+        m = Machine(image, man['entries'] if image is img else None, tempo=12000)
+        m.set(P_ROLL, 4, 3)
+        m.tap(KEY_ROLL)
+        m.pad(3)
+        m.pad(7)
+        m.tap(KEY_HOLD)
+        s1 = (m.hold_state(3), m.hold_state(7))
+        m.pad_up(3)
+        m.pad_up(7)
+        m.run(300)
+        s2 = (m.hold_state(3), m.hold_state(7))
+        m.tap(KEY_HOLD)
+        m.run(5)
+        states.append((s1, s2, (m.hold_state(3), m.hold_state(7))))
+    check(states[0] == states[1] and states[0][0] == (2, 2) and states[0][2] == (0, 0),
+          f'stock\'s HOLD keeps its own meaning alongside: pads down held, let go still held, HOLD again lets them '
+          f'go, as on the parent ({states})')
+
+
 def gate_checks(img, parent, man):
     """The key-held query from the note-on's three roll starts, and from elsewhere."""
     out = {}
@@ -864,9 +1126,9 @@ def release_checks(img, parent, man):
 
 def dj_checks(img, parent, man):
     """DJ Mixer Mode on: ROLL, VALUE and pads as on the parent."""
-    script = [('k', KEY_ROLL), ('p', 3), ('r', 300), ('t', 1), ('t', -2), ('u', 3), ('K', KEY_ROLL), ('r', 300),
-              ('k', KEY_ROLL), ('K', KEY_ROLL), ('p', 3), ('r', 500), ('u', 3), ('k', KEY_ROLL), ('k', KEY_VALUE),
-              ('K', KEY_VALUE), ('K', KEY_ROLL)]
+    script = [('k', KEY_ROLL), ('p', 3), ('r', 300), ('t', 1), ('t', -2), ('k', KEY_HOLD), ('K', KEY_HOLD),
+              ('u', 3), ('K', KEY_ROLL), ('r', 300), ('k', KEY_ROLL), ('K', KEY_ROLL), ('p', 3), ('r', 500), ('u', 3),
+              ('k', KEY_HOLD), ('K', KEY_HOLD), ('k', KEY_ROLL), ('k', KEY_VALUE), ('K', KEY_VALUE), ('K', KEY_ROLL)]
     out = []
     for image in (parent, img):
         m = Machine(image, man['entries'] if image is img else None, tempo=12000)
@@ -874,9 +1136,12 @@ def dj_checks(img, parent, man):
         m.set(P_ROLL, 4, 3)
         run_steps(m, script)
         out.append(trace(m))
-    check(out[0] == out[1] and len(out[0]['doom']) == 14 and len(out[0]['seen']) == 10,
-          f'DJ Mixer Mode: ROLL + pad, VALUE, a ROLL tap, ROLL + VALUE press, exactly as on the parent (every event '
-          f'to DOOM OS\'s filter and on to the generic key handler; the pads go to the DJ handler, not to SMPL TASK)')
+    events = len([s for s in script if s[0] != 'r'])
+    keys = len([s for s in script if s[0] in 'kKt'])
+    check(out[0] == out[1] and len(out[0]['doom']) == events and len(out[0]['seen']) == keys,
+          f'DJ Mixer Mode: ROLL + pad, VALUE, HOLD, a ROLL tap, ROLL + VALUE press, exactly as on the parent (every '
+          f'event to DOOM OS\'s filter, the keys and turns on to the generic key handler; the pads go to the DJ '
+          f'handler, not to SMPL TASK)')
 
 
 def run_steps(m, script):
@@ -959,6 +1224,10 @@ SCRIPTS = (
     ('SHIFT + VALUE', [('k', KEY_SHIFT), ('t', 2), ('k', KEY_VALUE), ('K', KEY_VALUE), ('K', KEY_SHIFT)]),
     ('EXIT + VALUE', [('k', KEY_EXIT), ('k', KEY_VALUE), ('K', KEY_VALUE), ('K', KEY_EXIT), ('t', 1)]),
     ('HOLD + pads', [('k', KEY_HOLD), ('p', 3), ('u', 3), ('K', KEY_HOLD), ('k', KEY_HOLD), ('K', KEY_HOLD)]),
+    ('a pad held by HOLD, let go by HOLD and by its pad', [('p', 3), ('p', 6), ('k', KEY_HOLD), ('K', KEY_HOLD),
+                                                           ('u', 3), ('u', 6), ('r', 100), ('p', 6), ('u', 6),
+                                                           ('k', KEY_HOLD), ('K', KEY_HOLD), ('r', 10)]),
+    ('SHIFT + HOLD', [('k', KEY_SHIFT), ('k', KEY_HOLD), ('K', KEY_HOLD), ('K', KEY_SHIFT), ('r', 10)]),
     ('knobs', [('n', 1, 40), ('n', 2, 90), ('n', 3, 127)]),
     ('ROLL + pad, the stock hit', [('k', KEY_ROLL), ('p', 3, 90)]),
 )
@@ -1025,7 +1294,7 @@ def main():
     for name, fn, args in (('static', static_checks, (out, man, img, parent)), ('names', firmware_names_check, (parent,)),
                            ('timing', timing_checks, (img, man)), ('value', value_checks, (img, man)),
                            ('roll', roll_checks, (img, man)), ('ring', ring_checks, (img, man)),
-                           ('subpad', subpad_checks, (img, man)),
+                           ('subpad', subpad_checks, (img, man)), ('hold', hold_checks, (img, parent, man)),
                            ('gate', gate_checks, (img, parent, man)), ('release', release_checks, (img, parent, man)),
                            ('dj', dj_checks, (img, parent, man)), ('recorder', recorder_checks, (img, man)),
                            ('passthrough', passthrough_checks, (img, parent, man))):

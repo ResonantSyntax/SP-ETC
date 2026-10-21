@@ -1,9 +1,10 @@
 # Note repeat: ROLL as an MPC-style note repeat
 
-A study of the stock ROLL and a hardware test build (`note-repeat-test1`) on the published Sound Generator +
-Kits v9.46 (APP1 `7b5fbcb4…684a`: stock 5.52 + DOOM OS 0.6.1 ED5E + the fork). Addresses are 5.52 runtime
-addresses. **Verified** means read in the code (Ghidra decompilation and capstone) or, where marked, run in
-Unicorn; **inferred** means it follows from the code but wasn't run; **unknown** needs the unit.
+A study of the stock ROLL and two hardware test builds (`note-repeat-test1`; `note-repeat-test2` adds HOLD
+for rolls, section 6) on the published Sound Generator + Kits v9.46 (APP1 `7b5fbcb4…684a`: stock 5.52 +
+DOOM OS 0.6.1 ED5E + the fork). Addresses are 5.52 runtime addresses. **Verified** means read in the code
+(Ghidra decompilation and capstone) or, where marked, run in Unicorn; **inferred** means it follows from the
+code but wasn't run; **unknown** needs the unit.
 
 What the build does, in short:
 
@@ -13,6 +14,7 @@ What the build does, in short:
 | turn VALUE while rolling | halves or doubles the slice at the end of a pass | steps through the Roll divisions, at once; popup `Roll 1/16` |
 | tap ROLL | rolls the current pad if it is sounding (until the next tap) | latch: held pads repeat, ROLL lit; tap again to unlatch |
 | ROLL + VALUE press | VALUE's usual press (no ROLL function) | the current pad follows ROLL or ignores it (saved with the pad) |
+| HOLD while rolling (test2) | holds the pads that are down | the rolls go on after you let go; hit the pad again, HOLD again or EXIT + ROLL to stop |
 | SHIFT + ROLL, EXIT + ROLL | the Roll popup / all rolls off | unchanged |
 
 ## 1. How stock ROLL works (5.52; all of it unchanged in v9.46)
@@ -241,6 +243,73 @@ the image; test_start_fix passes on its own release and, as on every stage image
 - The latch light inside DOOM OS's screens, where ROLL blinks for solo.
 - Whether the REC page's own ROLL + VALUE (note shift in a scale while recording) is missed: VALUE with ROLL
   held is the module's now.
+
+## 6. Test 2: HOLD keeps rolls going (note-repeat-test2)
+
+The user's ask after test1: keep a pad rolling without holding it, with HOLD, "the same idea as HOLD on gated
+pads". Stock's HOLD (verified): the generic key handler's HOLD case marks pads that are down as held (settings
+10 per pad: 1 down, 2 held); HOLD with no pad newly held lets every held pad go. In the page pad handler,
+without SHIFT, a press first goes through `0x801340c8` (from `0x800c829e`): on a held GATE pad it lets the
+pad go (note-off from `0x8013418e`) and takes the press; on any other held pad it clears the hold and the
+press plays on. DOOM OS uses SHIFT + HOLD (pattern follow).
+
+### 6.1 What it does
+
+- **HOLD** (no SHIFT) while any roll goes on (ROLL held, latched, or a LOOP pad's stock roll): every roll going
+  on becomes a **held roll**, popup `Roll Held`. Stock's HOLD runs as well, as always (it holds the pads that
+  are down).
+- A held roll **goes on** whatever ROLL does (let go, tapped, unlatched) and whatever other pads do. VALUE with
+  ROLL held (or latched) steps its division like any repeating pad's.
+- It **stops** when:
+  - **its pad is hit again**: a press the page plays (the stock pad note from the page pad handler, or SUB PAD
+    on the last pad), or one stock's HOLD takes to let that pad go (a held GATE pad). That press is stock's:
+    it plays once (a held GATE pad only ends; a LOOP pad's press stops its loop) and starts no roll, even with
+    ROLL latched or held. A press that reaches neither (SHIFT + pad on TOP, which plays nothing) leaves it
+    alone, as stock's HOLD leaves its held pads alone then;
+  - **HOLD** is pressed with only held rolls going on and no pad down: all stop, popup `Roll Hold Off` (stock
+    lets its held pads go at the same press). With a pad down, HOLD is stock's (it holds that pad) and held
+    rolls stay;
+  - **EXIT + ROLL**, either key first (test1 needed ROLL first: holding EXIT, then ROLL, ran stock's all rolls
+    off but left the module's repeats and latch going; fixed);
+  - DJ Mixer Mode, or the pad set to ignore ROLL.
+- **Lights:** a held roll's pad blinks white (key light page 6, as stock blinks a pad) when its bank is the
+  current one and the page isn't DOOM OS's (0x5f; DOOM OS paints the lights there); HOLD is lit (page 0, as
+  stock lights it for held pads). Both are written again each tick (the light writer sends only changes).
+  When held rolls end the module asks stock to repaint pads and keys (`0x802496f0` |= 2, |= 0x10, the
+  request stock's own code sets); DOOM OS's light hook (`0x800d5370`) handles it as it does any other.
+- **Stock:** HOLD with nothing rolling, SHIFT + HOLD, HOLD in DJ mode.
+
+### 6.2 Build
+
+No new patch site: HOLD comes in at the UI dispatcher like ROLL and VALUE, and the hit that stops a held roll
+at the stock pad note. The module recognises one more caller of the pad note, stock's HOLD let-go
+(`0x80134193`; six recognised call sites), and has 42 guards (three new: stock's per-pad HOLD `0x801340c8`,
+the UI tick's hand-off of the light requests `0x80182bc8`, the light updater `0x800d5370`). Module 4.3 KB, same
+slot. Cost (Unicorn, instructions; v9.46 / test2): idle UI tick 41 / 71, a key 1227 / 1313, a pad press
+7036 / 7353, HOLD with nothing rolling 4972 / 5160; a tick with a held roll and no repeat due 575.
+
+### 6.3 Checked in the emulator (not on hardware)
+
+`test_note_repeat.py` (section `hold`, and additions elsewhere): latched pad + HOLD (popup, blink and HOLD
+light on the chip link, stock's hold state 2), it goes on after the pad, through unlatching and another pad;
+hitting the pad again (one stock press, no new roll though latched; the repaint request); a GATE pad (stock's
+HOLD lets it go: one note-off, as on the parent); SHIFT + pad leaves it going; SUB PAD stops it; ROLL held +
+tap + HOLD + ROLL let go, then HOLD again (`Roll Hold Off`); two pads; EXIT + ROLL both orders; HOLD with a
+non-rolling pad down; a LOOP pad's held stock roll (kept unlatched, turned off by the hit); DOOM OS's page (no
+blink, HOLD relit) and back; stock's hold states as on the parent; idle asks for no repaint. HOLD added to the
+DJ-mode script and to the pass-through scripts (a pad held and let go by HOLD and by its pad, SHIFT + HOLD):
+all as on the parent. 89 checks in all (test1's 71 still pass); the new EXIT-first check fails on test1, as
+expected. Six mutants are caught: held rolls not kept, no stop from stock's HOLD let-go, a second note-off on
+it, HOLD stopping held rolls with a pad down, blinking on DOOM OS's page, no repaint request.
+
+### 6.4 Not known
+
+- How the blink looks on the unit: stock rewrites a pad's light when it plays or the screen changes, and the
+  module writes the blink back at the next tick, so a short flash each repeat is possible. Unicorn checks
+  the bytes and the repaint request, not the LEDs or stock's repaint itself.
+- Whether DOOM OS shows something on HOLD's light (its pattern follow) that the held-roll light covers.
+- Held rolls on pages whose pads don't use the stock pad note (chromatic, kits): they go on there, and their
+  pads' presses there don't stop them.
 
 ## Build
 
