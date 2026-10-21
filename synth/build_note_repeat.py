@@ -3,9 +3,9 @@
 A stage on Sound Generator + Kits v9.46 (APP1 7b5fbcb4...684a; NOTE_REPEAT.md). Stock 5.52 rolls by looping a
 slice of the pad's voice; here ROLL re-hits the pad through the stock pad note at the pad's Roll division:
 ROLL + pad repeats until ROLL is released, a ROLL tap latches (pads then repeat while held, ROLL lit), VALUE
-steps the division at once, ROLL + VALUE press makes the current pad follow or ignore ROLL (PADCONF reserved
-byte 0x70, bit 0), HOLD while rolling holds the rolls (test2). LOOP pads without GATE keep the stock ring
-roll. DJ mode stays stock.
+steps the division at once (six triplets too, test2: PADCONF reserved byte 0x70 bits 1-3), ROLL + VALUE press
+makes the current pad follow or ignore ROLL (byte 0x70, bit 0), HOLD while rolling holds the rolls (test2).
+LOOP pads without GATE keep the stock ring roll. DJ mode stays stock.
 
 Five changes in 5.52 space, each a 10-byte movw ip / movt ip / bx ip at an entry (a nop after it where the
 displaced instructions take 12 bytes); the module runs the displaced instructions and goes on:
@@ -56,7 +56,7 @@ KNOWN_SLOTS = [
 KIT_GATE = 0x83FA5AE5               # the kits' key-query gate (mov r1, lr; b.w kit_ui_key_query), Thumb
 EXPORTS = ('nr_event', 'nr_pad', 'nr_pad_stock', 'nr_tick', 'nr_release', 'nr_key_gate', 'nr_event_c', 'nr_pad_c',
            'nr_tick_c', 'nr', 'nr_enabled', 'nr_rep', 'nr_phys_down', 'nr_phys_pad', 'nr_phys_vel', 'nr_text',
-           'nr_div_names', 'nr_div_order')
+           'nr_div_names', 'nr_div_order', 'nr_trip_stock')
 ENTRIES = ('nr_event', 'nr_pad', 'nr_pad_stock', 'nr_tick', 'nr_release', 'nr_key_gate')
 # (address, the bytes there in the parent, what they are, the entry symbol, where the module's copy goes on)
 SITES = [
@@ -418,7 +418,8 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
         revision=REVISION, status='hardware-unverified', published=False,
         description='ROLL as an MPC-style note repeat: ROLL + pad re-hits the pad through the stock pad note at the '
                     'pad\'s Roll division until ROLL is let go; a ROLL tap latches (pads repeat while held, ROLL '
-                    'lit); VALUE steps the division at once; ROLL + VALUE press: the current pad follows or ignores '
+                    'lit); VALUE steps the division at once, triplets included; ROLL + VALUE press: the current pad '
+                    'follows or ignores '
                     'ROLL (saved with the pad); HOLD while rolling: held rolls, until the pad is hit again, HOLD '
                     'again or EXIT + ROLL; LOOP pads without GATE keep the stock roll; DJ mode stays stock',
         parent_app1=str(inp), parent_sha256=sha(inp.read_bytes()),
@@ -436,11 +437,14 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
             latch='a ROLL tap (nothing else touched while it was down) latches: pads repeat while they are held, '
                   'ROLL lit (LED key 0x21, page 0, 0xff); another tap unlatches',
             value='VALUE turned while ROLL is held, or while latched with a pad repeating: each repeating pad\'s '
-                  'Roll moves along 1/2 3/8 1/4 3/16 1/8 3/32 1/16 3/64 1/32 1/64 at once (none repeating: the '
-                  'current pad\'s); popup "Roll 1/16"',
+                  'division moves along 1/2 3/8 1/2T 1/4 3/16 1/4T 1/8 3/32 1/8T 1/16 3/64 1/16T 1/32 1/32T 1/64 '
+                  '1/64T at once (none repeating: the current pad\'s); popup "Roll 1/16T"; kept with the pad: Roll '
+                  '(0x7b) gets it, or for a triplet its nearest stock division (1/2T 3/8, 1/4T 3/16, 1/8T 3/32, '
+                  '1/16T 3/64, 1/32T and 1/64T 1/64), and the triplet goes in PADCONF reserved byte 0x70 bits 1-3 '
+                  '(1..6), counted while Roll holds that neighbour; saved as the follow flag is',
             follow='ROLL + VALUE press: the current pad follows or ignores ROLL; PADCONF reserved byte 0x70 bit 0 '
-                   '(set = ignores), saved with command 0xd a second after the last change; popup "A-01 IGNORES '
-                   'ROLL"',
+                   '(set = ignores), saved with command 0xd a second after the last change once no pad repeats; '
+                   'popup "A-01 IGNORES ROLL"',
             hold='HOLD (no SHIFT) while rolls go on: they become held rolls (popup "Roll Held") and go on whatever '
                  'ROLL does and whatever other pads do, until their pad is hit again (that press starts no roll), '
                  'HOLD is pressed again with only held rolls going on and no pad down (popup "Roll Hold Off"), or '

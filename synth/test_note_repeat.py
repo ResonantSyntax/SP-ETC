@@ -2,8 +2,8 @@
 
 usage: python synth/test_note_repeat.py OUT_DIR [SECTIONS]      (unicorn, keystone, capstone on PYTHONPATH)
 
-SECTIONS: a comma list of static, names, timing, value, roll, ring, subpad, hold, gate, release, dj, recorder,
-passthrough.
+SECTIONS: a comma list of static, names, timing, value, triplet, roll, ring, subpad, hold, gate, release, dj,
+recorder, passthrough.
 
 Reads OUT_DIR/manifest.json for the parent APP1. Static checks first: only the header's scatter pointer, the five
 entry jumps and the appended tail differ from the parent; the guards and the recognised call sites hold on the
@@ -24,7 +24,8 @@ the card (every file open fails). Not here: the voices, the SMPL and audio tasks
 tick runs every millisecond here unless a check makes it late), the screen, the effects chip.
 
 Checks:
-- timing: every Roll division at 60, 87.5, 120, 140, 174 and 300 BPM, 48 repeats each: the k-th repeat comes
+- timing: every division (stock's ten and the module's six triplets) at 60, 87.5, 120, 140, 174 and 300 BPM, 48
+  repeats each: the k-th repeat comes
   at the first millisecond tick at or after the press + k x beats x 60 / BPM (to the frame), no drift; each
   repeat is a note-off then a note-on at the press's velocity; the first repeat comes a division after the
   press, and the pad's own hit is the stock one; 2000 repeats without drift; UI ticks late and bunched, and a
@@ -32,6 +33,10 @@ Checks:
 - VALUE while rolling: the division steps along the list at once (shorter: the next tick if already due),
   the popup names it with the firmware's own names, the pad's Roll setting follows; several pads at once;
   the ends of the list; SHIFT + ROLL's change of the pad's Roll is taken while rolling;
+- triplets (test2): VALUE a step at a time through all sixteen divisions and back, the ends; what the pad keeps
+  (Roll the nearest stock division, the triplet in PADCONF byte 0x70 bits 1-3, the follow bit untouched, the
+  pads marked edited, the save a second after the last change once no pad repeats); a kept triplet rolls; Roll
+  set elsewhere drops it (rolling or not); VALUE into a triplet mid-roll;
 - ROLL + pad: goes on after the pad is let go until ROLL is let go (as stock), and a GATE pad gets its
   note-off then; pads held when ROLL goes down start at once; latch on a tap (popup, ROLL lit on the chip link),
   pads repeat only while held, a second tap unlatches (light back to stock's dim); a press with anything else
@@ -59,7 +64,7 @@ import json
 import struct
 import sys
 from fractions import Fraction
-from math import ceil
+from math import ceil, log
 from pathlib import Path
 
 from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_PROT_ALL, UC_HOOK_CODE
@@ -92,9 +97,15 @@ EV_KEY, EV_KEY_UP, EV_ENCODER, EV_KNOB, EV_PAD, EV_PAD_UP = 5, 6, 7, 9, 0x10, 0x
 KEY_ROLL, KEY_EXIT, KEY_SHIFT, KEY_VALUE, KEY_HOLD = 0x21, 0x22, 0x2A, 0x31, 0x11
 P_GATE, P_LOOP, P_ROLL = 0x6A, 0x6B, 0x7B
 BEATS = {1: Fraction(2), 2: Fraction(1), 3: Fraction(1, 2), 4: Fraction(1, 4), 5: Fraction(1, 8), 6: Fraction(1, 16),
-         7: Fraction(3, 2), 8: Fraction(3, 4), 9: Fraction(3, 8), 10: Fraction(3, 16)}
+         7: Fraction(3, 2), 8: Fraction(3, 4), 9: Fraction(3, 8), 10: Fraction(3, 16),
+         11: Fraction(4, 3), 12: Fraction(2, 3), 13: Fraction(1, 3), 14: Fraction(1, 6), 15: Fraction(1, 12),
+         16: Fraction(1, 24)}                           # 11..16: the module's triplets (test2)
 NAMES = ['Off', '1/2', '1/4', '1/8', '1/16', '1/32', '1/64', '3/8', '3/16', '3/32', '3/64']
-ORDER = [1, 7, 2, 8, 3, 9, 4, 10, 5, 6]                  # slowest first
+TRIPLET_NAMES = ['1/2T', '1/4T', '1/8T', '1/16T', '1/32T', '1/64T']
+ALL_NAMES = NAMES + TRIPLET_NAMES
+ORDER = [1, 7, 11, 2, 8, 12, 3, 9, 13, 4, 10, 14, 5, 15, 6, 16]  # slowest first
+TRIP_STOCK = {11: 7, 12: 8, 13: 9, 14: 10, 15: 6, 16: 6}  # a triplet's Roll: the nearest stock division
+FOLLOW_BYTE, TRIP_MASK = 0x70, 0x0E
 LED_LIT, LED_DIM = bytes.fromhex('010042ff'), bytes.fromhex('0101421f')
 fails = []
 cases = [0]
@@ -363,6 +374,18 @@ class Machine:
     def roll(self, pad):
         return self.get(P_ROLL, pad)
 
+    def set_div(self, div, pad):
+        """A division kept with the pad the module's way: Roll (a triplet's nearest stock division), and the
+        triplet (1..6) in byte 0x70's bits 1-3."""
+        self.set(P_ROLL, TRIP_STOCK.get(div, div), pad)
+        b = self.ext(pad, FOLLOW_BYTE) & ~TRIP_MASK & 0xFF
+        self.uc.mem_write(EXT + pad * 0x80 + FOLLOW_BYTE, bytes([b | ((div - 10) << 1 if div > 10 else 0)]))
+
+    def kept(self, pad):
+        """What the pad keeps: (Roll, the triplet in byte 0x70 bits 1-3, the follow bit)."""
+        b = self.ext(pad, FOLLOW_BYTE)
+        return self.roll(pad), (b & TRIP_MASK) >> 1, b & 1
+
     def repeats(self):
         """The module's repeats in use: (pad, held by HOLD)."""
         b = bytes(self.uc.mem_read(self.sym['nr_rep'], 16 * 32))
@@ -442,10 +465,16 @@ def static_checks(out, man, img, parent):
     table = [struct.unpack_from('<f', rt.read(0x801A9F18 + 4 * i, 4))[0] for i in range(11)]
     check(table[1:] == [float(BEATS[d]) for d in range(1, 11)], f'the firmware\'s Roll table (0x801a9f18) is the '
                                                                    f'test\'s beats per division ({table})')
-    names = [nrt.read(e['nr_div_names'] + 5 * i, 5).split(b'\0')[0].decode() for i in range(11)]
-    order = list(nrt.read(e['nr_div_order'], 10))
-    check(names == NAMES and order == ORDER and sorted(ORDER, key=lambda d: -BEATS[d]) == ORDER,
-          f'the module\'s names are the test\'s, its VALUE order runs slowest to fastest ({names}, {order})')
+    names = [nrt.read(e['nr_div_names'] + 6 * i, 6).split(b'\0')[0].decode() for i in range(17)]
+    order = list(nrt.read(e['nr_div_order'], 16))
+    check(names == ALL_NAMES and order == ORDER and sorted(ORDER, key=lambda d: -BEATS[d]) == ORDER and
+          sorted(ORDER) == list(range(1, 17)),
+          f'the module\'s names are the test\'s, stock\'s ten then six triplets; its VALUE order runs slowest to '
+          f'fastest through all sixteen ({names}, {order})')
+    near = {t: min(range(1, 11), key=lambda d: abs(log(BEATS[d] / BEATS[t]))) for t in range(11, 17)}
+    stock = list(nrt.read(e['nr_trip_stock'], 6))
+    check(near == TRIP_STOCK and stock == [TRIP_STOCK[t] for t in range(11, 17)],
+          f'each triplet\'s Roll value is the nearest stock division ({stock})')
 
 
 def firmware_names_check(parent):
@@ -464,9 +493,9 @@ def firmware_names_check(parent):
 def timing_checks(img, man):
     bad, n_hits, worst = [], 0, Fraction(0)
     for bpm100 in (6000, 8750, 12000, 14000, 17400, 30000):
-        for div in range(1, 11):
+        for div in range(1, 17):
             m = Machine(img, man['entries'], tempo=bpm100)
-            m.set(P_ROLL, div, 3)
+            m.set_div(div, 3)
             m.run(5)
             m.press(KEY_ROLL)
             m.run(3)
@@ -487,7 +516,8 @@ def timing_checks(img, man):
             if first != [(t0, 3, 90), (t0, 3, 0)] or got != want or [t for t, _, _ in offs][:n] != want or \
                     any(v != 90 for _, _, v in ons) or len(ons) < n:
                 bad.append((bpm100, div, first, got[:4], want[:4]))
-    check(not bad and worst < Fraction(49, 48), f'every division at 60, 87.5, 120, 140, 174 and 300 BPM: the pad\'s '
+    check(not bad and worst < Fraction(49, 48), f'every division (stock\'s ten, the six triplets) at 60, 87.5, 120, '
+                                                 f'140, 174 and 300 BPM: the pad\'s '
                                                  f'own hit and release (stock), then each repeat (a note-off and a note-on at its '
                                                  f'velocity) at the first tick at or after press + k x beats x 60 / BPM '
                                                  f'({n_hits} repeats; worst {float(worst):.3f} ms after its exact '
@@ -567,22 +597,23 @@ def value_checks(img, man):
     m.run(5)
     t1 = m.ms
     last = [t for t, _, _ in m.ons(3)][-1]
-    m.turn(-3)                                          # 3/64 -> 1/16 -> 3/32 -> 1/8 (250 ms)
+    m.turn(-4)                                          # 3/64 -> 1/16 -> 1/8T -> 3/32 -> 1/8 (250 ms)
     m.run(600)
     got = [t for t, _, _ in m.ons(3, since=t1)]
     check(got[:2] == [last + 250, last + 500] and m.popups[-1][1] == 'Roll 1/8' and m.roll(3) == 3,
-          f'VALUE three left at once: 1/8, the next repeat a 1/8 after the last ({got[:2]}, last {last})')
+          f'VALUE four left at once: 1/8, the next repeat a 1/8 after the last ({got[:2]}, last {last})')
     t2 = m.ms
     last = [t for t, _, _ in m.ons(3)][-1]
-    m.turn(5)                                           # 1/8 -> 1/64 (31.25): long past due -> the next tick
+    m.turn(8)                                           # 1/8 -> 1/64 (31.25): long past due -> the next tick
     m.run(100)
     got = [t for t, _, _ in m.ons(3, since=t2)]
     check(got[:3] == [t2 + 1, t2 + 32, t2 + 63], f'VALUE to 1/64 with the next one long due: a repeat at the next '
                                                 f'tick, then every 1/64 from the turn ({[x - t2 for x in got[:3]]})')
     m.turn(5)
-    check(m.popups[-1][1] == 'Roll 1/64' and m.roll(3) == 6, 'the fast end stays at 1/64')
+    check(m.popups[-1][1] == 'Roll 1/64T' and m.kept(3) == (6, 6, 0),
+          f'the fast end stays at 1/64T (Roll 1/64, triplet 6) {m.kept(3)}')
     m.turn(-20)
-    check(m.popups[-1][1] == 'Roll 1/2' and m.roll(3) == 1, 'the slow end stays at 1/2')
+    check(m.popups[-1][1] == 'Roll 1/2' and m.kept(3) == (1, 0, 0), f'the slow end stays at 1/2 {m.kept(3)}')
     # several pads: each steps its own division
     m = Machine(img, man['entries'], tempo=12000)
     m.set(P_ROLL, 4, 3)
@@ -618,6 +649,107 @@ def value_checks(img, man):
     got = [t - t0 for t, _, _ in m.ons(3, since=t0 + 1)]
     check(got[:3] == [500, 625, 750], f'the pad\'s Roll changed while rolling (SHIFT + ROLL): taken at the next tick '
                                       f'({got[:3]})')
+
+
+# ---- triplets (test2) ----
+def triplet_checks(img, man):
+    # VALUE one step at a time through the whole list while a pad rolls, and back
+    m = Machine(img, man['entries'], tempo=12000)
+    m.set_div(1, 3)
+    m.press(KEY_ROLL)
+    m.pad(3)
+    m.run(5)
+    up, down = [], []
+    for _ in range(16):
+        m.turn(1)
+        up.append((m.popups[-1][1], m.kept(3)))
+    for _ in range(16):
+        m.turn(-1)
+        down.append((m.popups[-1][1], m.kept(3)))
+    want = [('Roll ' + ALL_NAMES[d], (TRIP_STOCK.get(d, d), d - 10 if d > 10 else 0, 0)) for d in ORDER]
+    check(up == want[1:] + want[-1:] and down == want[-2::-1] + want[:1],
+          f'VALUE a step at a time from 1/2: {" ".join(p[5:] for p, _ in up)}, staying at 1/64T; back down, staying '
+          f'at 1/2; Roll holds each stock division or a triplet\'s nearest one, byte 0x70 bits 1-3 the triplet')
+    m.run(1500)                                         # still rolling, well past a second
+    saves = [p for p in m.posts if p[1] == 0xD]
+    m.let_go(KEY_ROLL)
+    t = m.ms
+    m.run(1100)
+    after = [p[0] - t for p in m.posts if p[1] == 0xD]
+    check(not saves and after == [1000] and m.r8(SMPL + 0x1C) == 1,
+          f'the pads are marked edited and saved (0xd) a second after the last change, not while a pad repeats '
+          f'(1.5 s of rolling first: {saves}; {after})')
+    # the current pad, nothing rolling: its follow bit stays, a triplet alone (Roll unchanged) marks the pads edited
+    m = Machine(img, man['entries'], tempo=12000)
+    m.pad(6)
+    m.pad_up(6)                                         # A-07 current
+    m.set_div(10, 6)                                    # 3/64
+    m.uc.mem_write(EXT + 6 * 0x80 + FOLLOW_BYTE, bytes([m.ext(6, FOLLOW_BYTE) | 1]))   # A-07 ignores ROLL
+    m.uc.mem_write(SMPL + 0x1C, b'\0')
+    m.posts = []
+    m.press(KEY_ROLL)
+    m.turn(1)                                           # 3/64 -> 1/16T: Roll stays 3/64
+    k1, edited = m.kept(6), m.r8(SMPL + 0x1C)
+    m.press(KEY_VALUE)                                  # ROLL + VALUE press: A-07 follows again
+    m.let_go(KEY_VALUE)
+    k2 = m.kept(6)
+    m.turn(1)                                           # 1/16T -> 1/32
+    k3 = m.kept(6)
+    m.let_go(KEY_ROLL)
+    m.run(1100)
+    check(k1 == (10, 4, 1) and edited == 1 and k2 == (10, 4, 0) and k3 == (5, 0, 0) and
+          m.popups[-1][1] == 'Roll 1/32' and [p[1:] for p in m.posts] == [(0xD, 1, 0)],
+          f'ROLL held, nothing rolling: the current pad steps 3/64 -> 1/16T (Roll stays 3/64, triplet 4, its follow '
+          f'bit kept, marked edited) -> 1/32 (triplet gone); the follow toggle leaves the triplet; one save '
+          f'({k1}, {k2}, {k3}, {m.posts})')
+    # a triplet kept with the pad: ROLL + pad rolls at it; SHIFT + ROLL setting Roll drops it
+    m = Machine(img, man['entries'], tempo=12000)
+    m.set_div(14, 3)                                    # 1/16T (Roll 3/64)
+    m.press(KEY_ROLL)
+    t0 = m.ms
+    m.pad(3)
+    m.run(260)                                          # 1/16T at 120: 83.33 ms
+    m.set(P_ROLL, 4, 3)                                 # what SHIFT + ROLL's cycle writes: 1/16
+    m.run(300)
+    got = [t - t0 for t, _, _ in m.ons(3, since=t0 + 1)]
+    check(got[:5] == [84, 167, 250, 375, 500] and m.kept(3) == (4, 0, 0),
+          f'a pad keeping 1/16T rolls at 1/16T; Roll changed while rolling (SHIFT + ROLL): 1/16 at the next tick and '
+          f'the triplet dropped ({got[:5]}, {m.kept(3)})')
+    m = Machine(img, man['entries'], tempo=12000)
+    m.set_div(14, 3)
+    m.set(P_ROLL, 5, 3)                                 # Roll set to 1/32 elsewhere, not rolling
+    m.press(KEY_ROLL)
+    t0 = m.ms
+    m.pad(3)
+    m.run(200)
+    got = [t - t0 for t, _, _ in m.ons(3, since=t0 + 1)]
+    check(got[:3] == [63, 125, 188] and m.kept(3) == (5, 0, 0),
+          f'Roll no longer the triplet\'s neighbour (set elsewhere): the pad rolls at Roll, the triplet dropped '
+          f'({got[:3]}, {m.kept(3)})')
+    m = Machine(img, man['entries'], tempo=12000)
+    m.pad(6)
+    m.pad_up(6)                                         # A-07 current
+    m.set_div(14, 6)
+    m.set(P_ROLL, 5, 6)                                 # the same, nothing rolling: VALUE steps from Roll's 1/32
+    m.press(KEY_ROLL)
+    m.turn(1)
+    m.let_go(KEY_ROLL)
+    check(m.popups[-1][1] == 'Roll 1/32T' and m.kept(6) == (6, 5, 0),
+          f'and VALUE on the current pad steps from Roll (1/32 -> 1/32T: Roll 1/64, triplet 5), not from the old '
+          f'triplet ("{m.popups[-1][1]}", {m.kept(6)})')
+    # VALUE into a triplet mid-roll
+    m = Machine(img, man['entries'], tempo=12000)
+    m.set_div(4, 3)                                     # 1/16: 125 ms
+    m.press(KEY_ROLL)
+    t0 = m.ms
+    m.pad(3)
+    m.run(130)                                          # a repeat at 125
+    m.turn(2)                                           # 1/16 -> 3/64 -> 1/16T (83.33 ms)
+    m.run(300)
+    got = [t - t0 for t, _, _ in m.ons(3, since=t0 + 1)]
+    check(got[:4] == [125, 209, 292, 375] and m.popups[-1][1] == 'Roll 1/16T' and m.kept(3) == (10, 4, 0),
+          f'VALUE two right while rolling 1/16: 1/16T, the next repeat a 1/16T after the last, then every 1/16T '
+          f'({got[:4]})')
 
 
 # ---- ROLL, latch, follow ----
@@ -1293,6 +1425,7 @@ def main():
     only = sys.argv[2].split(',') if len(sys.argv) > 2 else None
     for name, fn, args in (('static', static_checks, (out, man, img, parent)), ('names', firmware_names_check, (parent,)),
                            ('timing', timing_checks, (img, man)), ('value', value_checks, (img, man)),
+                           ('triplet', triplet_checks, (img, man)),
                            ('roll', roll_checks, (img, man)), ('ring', ring_checks, (img, man)),
                            ('subpad', subpad_checks, (img, man)), ('hold', hold_checks, (img, parent, man)),
                            ('gate', gate_checks, (img, parent, man)), ('release', release_checks, (img, parent, man)),

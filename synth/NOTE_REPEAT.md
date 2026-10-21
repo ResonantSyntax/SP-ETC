@@ -1,8 +1,8 @@
 # Note repeat: ROLL as an MPC-style note repeat
 
 A study of the stock ROLL and two hardware test builds (`note-repeat-test1`; `note-repeat-test2` adds HOLD
-for rolls, section 6) on the published Sound Generator + Kits v9.46 (APP1 `7b5fbcb4…684a`: stock 5.52 +
-DOOM OS 0.6.1 ED5E + the fork). Addresses are 5.52 runtime addresses. **Verified** means read in the code
+for rolls and triplet divisions, sections 6 and 7) on the published Sound Generator + Kits v9.46 (APP1
+`7b5fbcb4…684a`: stock 5.52 + DOOM OS 0.6.1 ED5E + the fork). Addresses are 5.52 runtime addresses. **Verified** means read in the code
 (Ghidra decompilation and capstone) or, where marked, run in Unicorn; **inferred** means it follows from the
 code but wasn't run; **unknown** needs the unit.
 
@@ -11,7 +11,7 @@ What the build does, in short:
 | Gesture | Stock 5.52 | This build |
 | --- | --- | --- |
 | ROLL + pad | loops the first slice of the pad's sound until ROLL is let go | re-hits the pad at its Roll division until ROLL is let go |
-| turn VALUE while rolling | halves or doubles the slice at the end of a pass | steps through the Roll divisions, at once; popup `Roll 1/16` |
+| turn VALUE while rolling | halves or doubles the slice at the end of a pass | steps through the Roll divisions and (test2) six triplets, at once; popup `Roll 1/16T` |
 | tap ROLL | rolls the current pad if it is sounding (until the next tap) | latch: held pads repeat, ROLL lit; tap again to unlatch |
 | ROLL + VALUE press | VALUE's usual press (no ROLL function) | the current pad follows ROLL or ignores it (saved with the pad) |
 | HOLD while rolling (test2) | holds the pads that are down | the rolls go on after you let go; hit the pad again, HOLD again or EXIT + ROLL to stop |
@@ -284,8 +284,8 @@ press plays on. DOOM OS uses SHIFT + HOLD (pattern follow).
 No new patch site: HOLD comes in at the UI dispatcher like ROLL and VALUE, and the hit that stops a held roll
 at the stock pad note. The module recognises one more caller of the pad note, stock's HOLD let-go
 (`0x80134193`; six recognised call sites), and has 42 guards (three new: stock's per-pad HOLD `0x801340c8`,
-the UI tick's hand-off of the light requests `0x80182bc8`, the light updater `0x800d5370`). Module 4.3 KB, same
-slot. Cost (Unicorn, instructions; v9.46 / test2): idle UI tick 41 / 71, a key 1227 / 1313, a pad press
+the UI tick's hand-off of the light requests `0x80182bc8`, the light updater `0x800d5370`). Module 4.6 KB with
+the triplets, same slot. Cost (Unicorn, instructions; v9.46 / test2): idle UI tick 41 / 71, a key 1227 / 1313, a pad press
 7036 / 7353, HOLD with nothing rolling 4972 / 5160; a tick with a held roll and no repeat due 575.
 
 ### 6.3 Checked in the emulator (not on hardware)
@@ -298,8 +298,8 @@ tap + HOLD + ROLL let go, then HOLD again (`Roll Hold Off`); two pads; EXIT + RO
 non-rolling pad down; a LOOP pad's held stock roll (kept unlatched, turned off by the hit); DOOM OS's page (no
 blink, HOLD relit) and back; stock's hold states as on the parent; idle asks for no repaint. HOLD added to the
 DJ-mode script and to the pass-through scripts (a pad held and let go by HOLD and by its pad, SHIFT + HOLD):
-all as on the parent. 89 checks in all (test1's 71 still pass); the new EXIT-first check fails on test1, as
-expected. Six mutants are caught: held rolls not kept, no stop from stock's HOLD let-go, a second note-off on
+all as on the parent. 89 checks with HOLD (test1's 71 still pass), 97 with the triplets (section 7); the new
+EXIT-first check fails on test1, as expected. Six mutants are caught: held rolls not kept, no stop from stock's HOLD let-go, a second note-off on
 it, HOLD stopping held rolls with a pad down, blinking on DOOM OS's page, no repaint request.
 
 ### 6.4 Not known
@@ -310,6 +310,51 @@ it, HOLD stopping held rolls with a pad down, blinking on DOOM OS's page, no rep
 - Whether DOOM OS shows something on HOLD's light (its pattern follow) that the held-roll light covers.
 - Held rolls on pages whose pads don't use the stock pad note (chromatic, kits): they go on there, and their
   pads' presses there don't stop them.
+
+## 7. Test 2: triplet divisions (note-repeat-test2)
+
+The user's second ask: triplets (trap hats use 1/16T and 1/32T). Stock's Roll list (0x7b, 0..10) has none.
+
+### 7.1 What it does
+
+- **VALUE** (ROLL held, or latched with a pad repeating) steps through sixteen divisions, slowest first,
+  stopping at the ends: 1/2, 3/8, 1/2T, 1/4, 3/16, 1/4T, 1/8, 3/32, 1/8T, 1/16, 3/64, 1/16T, 1/32, 1/32T,
+  1/64, 1/64T (2 beats down to 1/24). Popup `Roll 1/16T`. A triplet is two thirds of its straight division
+  (1/16T = 1/6 beat: 83.3 ms at 120 BPM). Everything else (the change at once, the carried remainder, tempo
+  changes) is as for stock's ten.
+- **1/64T stays:** 8.3 ms at 300 BPM. On the emulator's 1 ms tick every repeat of every division comes within
+  a millisecond of its exact time, without drift. On the unit the UI tick's rate is unknown (section 5); a
+  slow tick would bunch 1/64T first.
+- **SHIFT + ROLL** keeps its stock list and behaviour.
+
+### 7.2 Where the choice is kept
+
+- **Roll (0x7b) always holds a stock value 1..10**, so stock reads it as before (SHIFT + ROLL's popup, a LOOP
+  pad's stock roll, patterns). For a triplet it holds the nearest stock division by ratio (`nr_trip_stock`):
+  1/2T → 3/8, 1/4T → 3/16, 1/8T → 3/32, 1/16T → 3/64, 1/32T → 1/64, 1/64T → 1/64.
+- **The triplet** is in PADCONF reserved byte **0x70, bits 1-3** (1..6 = 1/2T .. 1/64T, 0 none), beside the
+  follow flag (bit 0). Bits 4-7 stay free; 0x71-0x7F are not touched (pad envelopes may take them). Stock
+  saves, loads, copies, moves and exchanges the byte with the pad and clears it for a new sample.
+- **It counts only while Roll holds that triplet's neighbour.** Roll set to anything else drops it: the module
+  clears the bits when it next reads the pad (within a tick while the pad rolls). SHIFT + ROLL setting the same
+  neighbour while the pad isn't rolling can't be told apart, and keeps it.
+- **Saving:** stock's pad setter marks the pads edited when Roll changes and posts no save (run in Unicorn).
+  The module marks them itself when only the triplet bits change, and posts the save (0xd) a second after
+  the last change, as for the follow flag, **but not while a pad repeats** (a card write in SMPL TASK could
+  delay repeats). The follow flag's save waits the same way now. Test1 never saved VALUE's changes itself.
+- LOOP pads without GATE keep the stock ring roll at Roll's stock division, so a triplet on one rolls at its
+  neighbour.
+
+### 7.3 Checked in the emulator
+
+Section `triplet`, the timing section over all sixteen divisions (16 x 6 tempos x 48 repeats = 4608, the worst
+0.98 ms after its exact time), test1's VALUE checks moved to the new list, and the static checks (names, order,
+each neighbour the nearest): 97 checks pass on the release; the kit suites as on test1. Mutants caught: the period key without room for the 4 of 1/2T's 4/3, the neighbour
+rule, the bits not written, the bits not dropped when Roll changes, the save while a pad repeats.
+
+### 7.4 Not known
+
+- How the fast triplets sound with the unit's real UI tick and SMPL TASK load (1/64T, 1/32T at fast tempos).
 
 ## Build
 

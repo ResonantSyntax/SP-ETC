@@ -12,8 +12,11 @@
  *   tap ROLL            latch (a press with nothing else touched): pads repeat while they are held; tap
  *                       again to unlatch. ROLL is lit while latched
  *   turn VALUE          while ROLL is held, or while latched and a pad repeats: the next or previous
- *                       division for every repeating pad (or for the current pad if none), at once;
- *                       the popup names it ("Roll 1/16"), and it is the pad's own Roll setting
+ *                       division for every repeating pad (or for the current pad if none), at once, along
+ *                       stock's ten and six triplets (1/2T .. 1/64T); the popup names it ("Roll 1/16T").
+ *                       It is kept with the pad: Roll gets it, or a triplet's nearest stock division (what
+ *                       stock rolls and SHIFT + ROLL show), and the triplet goes in PADCONF byte 0x70, bits
+ *                       1-3, counted only while Roll still holds that neighbour
  *   ROLL + VALUE press  the current pad follows ROLL or ignores it (saved with the pad: PADCONF reserved
  *                       byte 0x70, bit 0 set = ignores; zero, the default, follows)
  *   HOLD while rolling  held rolls: every roll going on keeps going until its pad is hit again (a press the
@@ -103,7 +106,8 @@ typedef unsigned char u8;
 #define P_GATE 0x6A
 #define P_LOOP 0x6B
 #define P_ROLL 0x7B                 /* pad: Roll, 0 Off, 1..10 */
-#define FOLLOW_BYTE 0x70            /* PADCONF reserved byte: bit 0 set = the pad ignores ROLL */
+#define FOLLOW_BYTE 0x70            /* PADCONF reserved byte: bit 0 set = the pad ignores ROLL; bits 1-3 a triplet */
+#define TRIP_MASK 0x0E              /* 1..6: division 11..16 while Roll holds nr_trip_stock[n - 1] */
 #define PADS 160
 #define REPEATS 16
 #define KIND_HIT 1
@@ -111,29 +115,31 @@ typedef unsigned char u8;
 #define TEMPO_DEFAULT 12000
 #define SAVE_MS 1000
 
-/* Roll value -> beats (0x801a9f18: 2, 1, 1/2 .. 1/16, 3/2 .. 3/16) as NUM / DEN; its name as stock shows
- * it (0x800bf788); the order VALUE steps through, slowest first. */
-static const u8 div_num[11] = {0, 2, 1, 1, 1, 1, 1, 3, 3, 3, 3};
-static const u8 div_den[11] = {1, 1, 1, 2, 4, 8, 16, 2, 4, 8, 16};
-EXPORT const char nr_div_names[11][5] = {"Off", "1/2", "1/4", "1/8", "1/16", "1/32", "1/64", "3/8", "3/16",
-                                         "3/32", "3/64"};
-EXPORT const u8 nr_div_order[10] = {1, 7, 2, 8, 3, 9, 4, 10, 5, 6};
+/* Division -> beats as NUM / DEN: Roll's values 0..10 (0x801a9f18: 2, 1, 1/2 .. 1/16, 3/2 .. 3/16), then the
+ * module's triplets 11..16 (4/3, 2/3, 1/3, 1/6, 1/12, 1/24); the names (0..10 as stock shows them,
+ * 0x800bf788); the order VALUE steps through, slowest first; each triplet's nearest stock division. */
+static const u8 div_num[17] = {0, 2, 1, 1, 1, 1, 1, 3, 3, 3, 3, 4, 2, 1, 1, 1, 1};
+static const u8 div_den[17] = {1, 1, 1, 2, 4, 8, 16, 2, 4, 8, 16, 3, 3, 3, 6, 12, 24};
+EXPORT const char nr_div_names[17][6] = {"Off", "1/2", "1/4", "1/8", "1/16", "1/32", "1/64", "3/8", "3/16",
+                                         "3/32", "3/64", "1/2T", "1/4T", "1/8T", "1/16T", "1/32T", "1/64T"};
+EXPORT const u8 nr_div_order[16] = {1, 7, 11, 2, 8, 12, 3, 9, 13, 4, 10, 14, 5, 15, 6, 16};
+EXPORT const u8 nr_trip_stock[6] = {7, 8, 9, 10, 6, 6};
 
 struct nr_repeat {
     u8 kind;         /* 0 free, KIND_HIT, KIND_RING */
     u8 pad;
     u8 vel;
-    u8 div;          /* 1..10 */
+    u8 div;          /* 1..16 */
     u8 hold;         /* started while ROLL was held: goes on while ROLL is held */
     u8 ring;         /* KIND_RING: the stock roll was asked for */
-    u8 seen;         /* the pad's Roll as last read: a change from elsewhere (SHIFT + ROLL) is taken */
+    u8 seen;         /* the pad's Roll as last read or written: a change from elsewhere (SHIFT + ROLL) is taken */
     u8 phys;         /* the pad (0..15) or SUB PAD (16) whose press started it */
     u8 stick;        /* held by HOLD: goes on until stopped */
     u8 spare[3];
     u32 last;        /* the last hit (frames) */
     u32 next;        /* the next hit */
     u32 frac;        /* what a period leaves over, in 1/den frames */
-    u32 key;         /* what the period was worked out from: den << 2 | num (0: work it out again) */
+    u32 key;         /* what the period was worked out from: den << 3 | num (0: work it out again) */
     u32 hits;
 };
 
@@ -146,7 +152,7 @@ struct nr_state {
     u8 active;       /* repeats in use */
     u8 last_pad;     /* the pad VALUE's popup shows */
     u8 cur_phys;     /* the pad event being dispatched: 0..16, NONE */
-    s32 save_ms;     /* a follow change waits this long for the save */
+    s32 save_ms;     /* a follow or division change waits this long, with no pad repeating, for the save */
     u32 now;         /* the audio clock in frames, as last read */
     u32 hits;        /* re-hits since boot */
     u32 steps;       /* VALUE steps since boot */
@@ -201,6 +207,40 @@ static u32 follows(u32 pad) {
     return !(EXT(pad)[FOLLOW_BYTE] & 1);
 }
 
+/* What Roll holds for a division: itself, or a triplet's nearest stock division. */
+static u32 stock_div(u32 div) {
+    return div > 10 ? nr_trip_stock[div - 11] : div;
+}
+
+/* The pad's division: its triplet while Roll still holds that triplet's stock neighbour (a triplet Roll no
+ * longer matches, set elsewhere since, is dropped), else Roll; 0 for Off. */
+static u32 pad_div(u32 pad) {
+    volatile u8 *b = &EXT(pad)[FOLLOW_BYTE];
+    s32 roll = PAD_GET(SMPL, P_ROLL, (s32)pad);
+    u32 t = (*b & TRIP_MASK) >> 1;
+    if (t - 1 < 6 && (s32)nr_trip_stock[t - 1] == roll)
+        return 10 + t;
+    if (t)
+        *b &= (u8)~TRIP_MASK;
+    return (u32)(roll - 1) <= 9 ? (u32)roll : 0;
+}
+
+/* A division kept with the pad: Roll gets it or its stock neighbour (stock's setter marks the pads edited
+ * when Roll changes), the triplet goes in byte 0x70; saved like the follow flag. Returns Roll's value. */
+static u32 keep_div(u32 pad, u32 div) {
+    volatile u8 *b = &EXT(pad)[FOLLOW_BYTE];
+    u32 roll = stock_div(div);
+    u8 v = (u8)((*b & ~TRIP_MASK) | (div > 10 ? (div - 10) << 1 : 0));
+    if (PAD_GET(SMPL, P_ROLL, (s32)pad) != (s32)roll || *b != v)
+        nr.save_ms = SAVE_MS;
+    PAD_SET(SMPL, P_ROLL, (s32)roll, (s32)pad);
+    if (*b != v) {
+        *b = v;
+        *EDITED = 1;
+    }
+    return roll;
+}
+
 static u32 current_pad(void) {
     return (u32)(PAD_GET(SMPL, P_CUR_BANK, 0) * 16 + PAD_GET(SMPL, P_CUR_PAD, 0));
 }
@@ -227,17 +267,17 @@ static void say(const char *a, const char *b) {
     POPUP(nr_text, POPUP_TIME(0));
 }
 
-/* A period is NUM / DEN beats at the pad's tempo: key = DEN x BPMx100 << 2 | NUM. */
+/* A period is NUM / DEN beats at the pad's tempo: key = DEN x BPMx100 << 3 | NUM. */
 static u32 period_key(const struct nr_repeat *r) {
     s32 t = PAD_TEMPO(r->pad);
     if (t < 2000 || t > 30000)
         t = TEMPO_DEFAULT;
-    return (div_den[r->div] * (u32)t) << 2 | div_num[r->div];
+    return (div_den[r->div] * (u32)t) << 3 | div_num[r->div];
 }
 
 /* One period of r's division at the pad's tempo, carried exactly: 288000000 / BPMx100 frames a beat. */
 static void schedule(struct nr_repeat *r) {
-    u32 key = period_key(r), den = key >> 2, num = 288000000u * (key & 3);
+    u32 key = period_key(r), den = key >> 3, num = 288000000u * (key & 7);
     if (key != r->key) {
         r->key = key;
         r->frac = 0;
@@ -278,16 +318,16 @@ static void start(u32 pad, u32 vel, u32 phys, u32 hit_now) {
             return;
         nr.active++;
     }
-    s32 div = PAD_GET(SMPL, P_ROLL, (s32)pad);
-    if ((u32)(div - 1) > 9) {
+    u32 div = pad_div(pad);
+    if (!div) {
         div = 2;                                   /* as stock's ROLL + pad: Off becomes 1/4 */
-        PAD_SET(SMPL, P_ROLL, div, (s32)pad);
+        PAD_SET(SMPL, P_ROLL, (s32)div, (s32)pad);
     }
     r->kind = PAD_GET(SMPL, P_LOOP, (s32)pad) && !PAD_GET(SMPL, P_GATE, (s32)pad) ? KIND_RING : KIND_HIT;
     r->pad = (u8)pad;
     r->vel = (u8)vel;
     r->div = (u8)div;
-    r->seen = (u8)div;
+    r->seen = (u8)stock_div(div);
     r->hold = nr.held;
     r->phys = (u8)phys;
     r->stick = 0;
@@ -408,10 +448,10 @@ static void retime(struct nr_repeat *r) {
 
 static u32 step_div(u32 div, s32 delta) {
     s32 i = 0;
-    while (i < 9 && nr_div_order[i] != div)
+    while (i < 15 && nr_div_order[i] != div)
         i++;
     i += delta;
-    return nr_div_order[i < 0 ? 0 : i > 9 ? 9 : i];
+    return nr_div_order[i < 0 ? 0 : i > 15 ? 15 : i];
 }
 
 /* VALUE turned: every repeating pad's division (or the current pad's) moves along the list at once. */
@@ -423,8 +463,7 @@ static void step(s32 delta) {
         if (r->kind != KIND_HIT)
             continue;
         r->div = (u8)step_div(r->div, delta);
-        r->seen = r->div;
-        PAD_SET(SMPL, P_ROLL, r->div, r->pad);
+        r->seen = (u8)keep_div(r->pad, r->div);
         retime(r);
         if (!any || r->pad == nr.last_pad)
             shown = r->div;
@@ -434,9 +473,9 @@ static void step(s32 delta) {
         u32 pad = current_pad();
         if (pad >= PADS)
             return;
-        s32 div = PAD_GET(SMPL, P_ROLL, (s32)pad);
-        shown = step_div((u32)(div - 1) > 9 ? 2 : (u32)div, delta);
-        PAD_SET(SMPL, P_ROLL, (s32)shown, (s32)pad);
+        u32 div = pad_div(pad);
+        shown = step_div(div ? div : 2, delta);
+        keep_div(pad, shown);
     }
     say("Roll ", nr_div_names[shown]);
 }
@@ -590,7 +629,7 @@ EXPORT void nr_tick_c(s32 ms) {
     if (!nr.active && !nr.held && !nr.latched && !nr.led && !nr.save_ms && !nr.blink && !nr.hold_led)
         return;
     clock_frames();
-    if (nr.save_ms > 0 && (nr.save_ms -= ms) <= 0) {
+    if (nr.save_ms > 0 && !nr.active && (nr.save_ms -= ms) <= 0) {     /* not while pads repeat */
         nr.save_ms = 0;
         POST(0xD, 1, 0);
     }
@@ -608,10 +647,12 @@ EXPORT void nr_tick_c(s32 ms) {
             continue;
         }
         s32 div = PAD_GET(SMPL, P_ROLL, r->pad);
-        if (div != r->seen) {                      /* SHIFT + ROLL changed it */
+        if (div != r->seen) {                      /* SHIFT + ROLL changed it: that division, no triplet */
             r->seen = (u8)div;
-            if ((u32)(div - 1) <= 9)
+            if ((u32)(div - 1) <= 9) {
                 r->div = (u8)div;
+                EXT(r->pad)[FOLLOW_BYTE] &= (u8)~TRIP_MASK;
+            }
         }
         if (r->kind == KIND_RING) {
             if (!r->ring && SOUNDING(r->pad)) {
