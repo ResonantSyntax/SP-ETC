@@ -78,10 +78,13 @@ RESAMPLE page's tick. Stage 1 is the bounce probe ([BOUNCE_PROBE.md](BOUNCE_PROB
   - **Flash:** APP1 sits 144 bytes below the kit PCM planning boundary. The module's put and
     put_uint are now out of line, which saves more than the comparison costs.
 
-**On the unit so far** (2026-10-21): a NO TAIL bounce's START–END window is exactly the source's
-length. The user truncated the bounced pad, and its length matched the original's. Still to come:
-whether START sits on the first sample (the name, and an intact attack), and the delayed hi-hat in
-LOOP mode.
+**On the unit** (2026-10-21), test6 passes both checks:
+- **NO TAIL**, the original closed hi-hat: the attack is intact, with nothing clipped before START,
+  and the START–END window is exactly the source's length (the user truncated the bounced pad and
+  compared). The name read `A1 L72 M72 P66.1 D-1`. There is no departure dash: this time the
+  return's first non-zero sample was its onset, at L.
+- **LOOP**, the hi-hat through a delay: the take keeps the delayed hits, and after TRUNCATE it is
+  the source's length.
 
 **bounce-3-test5** changes only the image under the bounce. The user found a normal RESAMPLE's
 START a few samples after the start of its wave. The cause is the RESAMPLE start fix (v2): it puts
