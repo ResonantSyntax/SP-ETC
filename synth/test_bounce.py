@@ -124,11 +124,12 @@ KEY_REC, KEY_RESAMPLE, KEY_EXIT, KEY_SHIFT, KEY_VALUE = 0x1B, 0x1C, 0x22, 0x2A, 
 EV_KEY, EV_KEY_UP, EV_ENCODER, EV_KNOB, EV_PAD, EV_PAD_UP = 5, 6, 7, 9, 0x10, 0x11
 FIELDS_A = ('tx_blocks rx_blocks phase quiet_rx quiet_tx pad mode skip measure armed_voices slot voice t0 f0 fed '
             'stop have_l cached l l_est l_meas p_n p0 p_sum p16 d tx_onset scan last_nz voice_end last_loud win '
-            'rx_now fail rx_onset l_win departed').split()
+            'rx_now fail rx_onset l_win departed settle k').split()
 FIELDS_U = ('state ms since shown refresh src dst mode modes loop_src loop_pin len1 len2 native saved_len saved_snap '
             'pinned msg waits last_mode cal_off cal_valid runs r_l r_est r_meas r_p16 r_d r_start r_end r_len '
             'r_mode r_exact target targets last_target scratch lp_off ext_pin saved_ext link_pin link_src swap_kind '
-            'swap_a swap_b want_len_a want_ch_a want_len_b want_ch_b fence undo_slot undo_next partial err dropped').split()
+            'swap_a swap_b want_len_a want_ch_a want_len_b want_ch_b fence undo_slot undo_next partial err dropped r_k '
+            'r_settle').split()
 UNDO_FIELDS = 'used pad keep len_pad ch_pad len_keep ch_keep link'.split()
 UNDOS = 8
 SIGNED = {'l', 'l_est', 'l_meas', 'p0', 'p_sum', 'p16', 'd', 'saved_len', 'saved_snap', 'cal_off', 'r_l',
@@ -282,6 +283,7 @@ class Machine:
         self.trigger_ignored = False
         self.fx = dict(L=77, gain=1.0, echo=None, noise=0, input=0)
         self.stem_floor = 0         # stem samples this small read 0 to the module but still reach the return
+        self.fb_y = {}              # fx['feedback'] = (d, g): the effect's output, y(R) = x(R) + g y(R - d)
         self.tx_mix = {}
         self.tx_n = self.rx_n = 0
         self.gate_calls = []
@@ -766,6 +768,11 @@ class Machine:
             for tt in (t - k, t + k):
                 a, b = self.tx_mix.get(tt, (0, 0))
                 l, r = l + a * gk, r + b * gk
+        if fx.get('feedback'):                         # a delay with feedback: every repeat, however late
+            d, g = fx['feedback']
+            yl, yr = self.fb_y.get(R - d, (0, 0))
+            l, r = l + g * yl, r + g * yr
+            self.fb_y[R] = (l, r)
         if fx['noise']:
             l, r = l + self.rng.choice((-1, 1)) * fx['noise'], r + self.rng.choice((-1, 1)) * fx['noise']
         if fx['input'] and self.settings.get(0x25):     # music on the input, heard while EXT SOURCE is on
@@ -1388,15 +1395,70 @@ def runs(img, man):
     m, res = unit_case(unit_source(n, (1, -1, 1)), n, 1, 2, ring6, floor=1)
     t0, f0, st, end = m.a('t0'), m.a('f0'), m.u('r_start') - 384, m.u('r_end') - 384
     kept = m.tx_mix
-    m.tx_mix = {t: v for t, v in kept.items() if t < t0 + 2 * n}           # the next pass off
+    m.tx_mix = {t: v for t, v in kept.items() if t < f0 + n}               # the next pass off
     alone = [m.rx_value(f0 + end - 6 + i) for i in range(7)]
     m.tx_mix = kept
     window_end, after = m.take[end - 6:end], m.take[end] if end < len(m.take) else None
+    name, k = m.name(1), m.a('k')
+    check(name == f'A1 L72-3 M69 P66 D-1x{k}' and k >= 10,
+          f'a LOOP name over 23 characters loses P\'s tenth, then the space before x, never the pass ({name!r})')
     check(res['popup'] == 'BOUNCED A-1\nON A-2' and st == 69 and end == st + n and window_end == alone[:6] and
           after is not None and after != alone[6],
           f'LOOP through the same return: the window starts on its departure ({st}) and ends on the frame before the next '
           f'pass\'s return departs ({end}: last 6 frames without it {window_end == alone[:6]}, the next frame with it '
           f'{after != alone[6]})')
+    # LOOP takes a pass of the loop's steady state (bounce-3-test6 on the unit: a delayed hi-hat bounced as LOOP missed
+    # the delayed hit). A short hit looped at its own length (2000 frames) through a delay with feedback
+    def echo_case(n, d, g, amp=8000, budget=6000, exit_at=None):
+        mm = boot(img, man, seed=rng.randint(0, 1 << 30))
+        mm.fx['feedback'] = (d, g)
+        hit = [(amp, -amp) if i % 2 else (-amp, amp) for i in range(64)] + [(0, 0)] * (n - 64)
+        mm.load_pad(0, n)
+        mm.voice = Voice(mm, 0, hit, 0, n, 0, 1)
+        return mm, run_bounce(mm, 0, 2, budget=budget, exit_at=exit_at)
+
+    def mean_abs(frames):
+        return sum(abs(l) + abs(r) for l, r in frames) / (2 * len(frames)) if frames else 0
+
+    def loop_window(m, n):
+        st = m.u('r_start') - 384
+        win = m.take[st:st + n]
+        f0 = m.a('f0')
+        prev = [m.rx_value(f0 + st - n + i) for i in range(n)]     # the pass before, as the RX stream had it
+        return st, win, prev
+
+    n = 2000
+    # an echo 2.5 passes late, feedback 0.5: test5 took pass 1, which the first repeat (pass 2) has not reached yet
+    m, res = echo_case(n, 5000, 0.5)
+    st, win, prev = loop_window(m, n)
+    k = m.a('k')
+    echo = mean_abs(win[1000:1064]) / 8000                    # the repeats land half a pass in: 0.5 + 0.125 + ...
+    check(res['popup'] == 'BOUNCED A-1\nON A-2' and m.u('r_settle') == 2 and k > 3 and 0.6 < echo < 0.7 and
+          max(max(abs(a - c), abs(b - d)) for (a, b), (c, d) in zip(win, prev)) <= 2 and
+          m.name(1).endswith(f' x{k}') and m.voice.loop,
+          f'LOOP through a delay 2.5 passes long with feedback 0.5: the take is pass {k} of the steady state (the '
+          f'repeats at half a pass {echo:.3f} of the hit), the same as the pass before it, so it loops seamlessly; '
+          f'{m.name(1)!r}')
+    # an echo inside one pass: the steady state comes after the passes that wrap their repeats into the next
+    m, res = echo_case(n, 600, 0.5)
+    st, win, prev = loop_window(m, n)
+    echo = mean_abs(win[600:664]) / 8000
+    check(res['popup'] == 'BOUNCED A-1\nON A-2' and m.u('r_settle') == 2 and 0.45 < echo < 0.7 and
+          max(max(abs(a - c), abs(b - d)) for (a, b), (c, d) in zip(win, prev)) <= 2,
+          f'LOOP through a delay inside one pass: the take is a pass of the steady state ({m.a("k")}; the first repeat '
+          f'{echo:.3f} of the hit), the same as the pass before it')
+    # feedback that never decays (1.0) never settles: the pass at 30 s, and the popup says so
+    m, res = echo_case(n, 5000, 1.0, amp=60, budget=24000)
+    k = m.a('k')
+    check(res['popup'] == 'LOOP NOT SETTLED\nON A-2' and m.u('r_settle') == 3 and
+          1440000 <= m.a('f0') - m.a('t0') <= 1440000 + 3 * n and m.name(1).endswith(f' x{k}'),
+          f'LOOP through feedback 1.0: not settled at 30 s, the next pass taken ({k}, {m.name(1)!r}), '
+          f'popup {res["popup"]!r}')
+    # EXIT while the passes are compared: nothing written, nothing changed, the voice stopped, the source a one-shot
+    m, res = echo_case(n, 5000, 0.5, exit_at=(U_RUN, 400))
+    check(res['popup'] == 'BOUNCE CANCELLED\nNOTHING CHANGED' and m.finalized == [] and not m.voice.active and
+          m.pad_get(0x6B, 0) == 0 and m.u('state') == U_IDLE,
+          f'EXIT while LOOP compares passes: cancelled, nothing changed ({res["popup"]!r}, finalized {m.finalized})')
     # the name with all its fields: from A-12, after a take that calibrated the boot, it reads 24 characters
     # (as 'A12 L73-7C M73 P65.5 D-1') and the stock name keeps 23. P's tenth goes, so D stays
     m, res = ring_case(3000, 0, 0)
@@ -1442,7 +1504,8 @@ def runs(img, man):
     # LOOP, a looped pad with a loop point: pass 2 from the loop point, including pass 1's echo
     m, pcm, res = native_case('LOOP', LOOP, 2, n=5000, loop=1, lp=1200, echo=(700, 0.5))
     check_take(m, 'LOOP, loop point 1200', None, 77, LOOP, 3800)
-    check(m.a('f0') == m.a('t0') + 5000, 'LOOP: F0 = T0 + one pass')
+    check(m.a('k') >= 2 and m.a('f0') == m.a('t0') + 5000 + (m.a('k') - 1) * 3800,
+          f'LOOP: F0 = T0 + the first pass + loop passes up to the one taken ({m.a("k")})')
     check(m.pad_get(0x6B, 1) != 0 and m.pad_get(0x6B, 0) != 0, 'LOOP: the bounced pad loops; the source still loops')
     m.gesture(0)
     m.ui(1)

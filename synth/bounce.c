@@ -30,6 +30,8 @@
  *      frame at most; P can move between takes, so it is kept as an offset, not an L). The onset-
  *      measured value replaces it only within 1 frame (a threshold crossing moves with the attack
  *      and the levels);
+ *      LOOP: the pass after the loop has settled (each pass's return compared with the passes before it),
+ *      so the take holds every echo that wraps into a pass, however long;
  *   7. post REC_STOP (0x18); after the stock finalize, set START = F0 + where the return departs from
  *      silence (found on the RX side: the first non-zero frame after silence, at most 24 frames before
  *      the return's onset), END = START + length and
@@ -214,6 +216,14 @@ typedef s32 (*fn4_t)(u32, u32, u32, u32);
 #define DEPART 0                /* any sample not 0 is no longer silence (both sides; the unit's floor is 0) */
 #define DEPART_SPAN 24          /* the return departs at most this many frames before its onset */
 #define DEPART_QUIET 8          /* ... after this many frames of silence */
+/* LOOP: the take is a pass of the loop's steady state, which an echo longer than a pass reaches only after several
+ * passes. Each pass's return (from L) is summed per bin, |L| + |R|: a block a bin, wider for a long pass, at most
+ * ENV_BINS. A pass agrees when every bin is within about 0.5 dB of the same bin of the first pass of the current run
+ * of agreeing passes, so a growth that never stops never agrees. The take is the pass after a run of SETTLE_SPAN,
+ * longer than the SP's repeat times; at SETTLE_CAP without one, the next pass, and the popup says so. */
+#define ENV_BINS 256
+#define SETTLE_SPAN 144000      /* 3 s */
+#define SETTLE_CAP 1440000      /* 30 s */
 #define K16 2216                /* 16 x 138.5: bounce probe T1 read L - 64 D + (P mod 64) = 138 and 139 */
 #define L_CENTER 75             /* T1: L was 73..78; with D out of reach, the candidate nearest this */
 #define END_MARGIN 32
@@ -240,7 +250,8 @@ enum { T_PAD, T_REPLACE, T_UNDO, TARGETS };
 enum { A_IDLE, A_SILENCE, A_ARMED, A_RUN, A_DONE };
 enum { U_IDLE, U_SETUP, U_STANDBY, U_SILENCE, U_RECSTART, U_VOICE, U_RUN, U_FINAL, U_CANCEL, U_SWAP, U_STOCKSTOP };
 enum { M_NONE, M_DONE, M_NO_EMPTY, M_PATTERN, M_LOOPER, M_RINGING, M_FAILED, M_CANCELLED, M_REPLACED, M_UNDONE,
-       M_SWAP_FAILED, M_STORAGE, M_CUT, M_INPUT, M_PROTECTED, M_NO_UNDO };
+       M_SWAP_FAILED, M_STORAGE, M_CUT, M_INPUT, M_PROTECTED, M_NO_UNDO, M_UNSETTLED, M_UNSETTLED_R };
+enum { S_OFF, S_COMPARING, S_SETTLED, S_CAPPED };
 
 struct aud {
     u32 tx_blocks, rx_blocks;   /* blocks since boot */
@@ -268,7 +279,20 @@ struct aud {
     u32 rx_onset;               /* RX frame + 1 of the return's first frame above RX_ONSET, 0 = none */
     s32 l_win;                  /* the window's delay: where the return departs from silence, else L */
     u32 departed;               /* l_win is known */
+    u32 settle;                 /* LOOP: S_COMPARING until a pass is chosen, then S_SETTLED or S_CAPPED */
+    u32 k;                      /* LOOP: the pass the take holds (pass 0 starts at T0) */
     s16 hist[HIST_BLOCKS * FRAMES * 2];
+};
+
+/* LOOP: the passes compared (audio task only; the popup reads the pass) */
+struct env {
+    u32 size;                   /* frames a bin, 0 = not started */
+    u32 next;                   /* the next RX frame to sum */
+    u32 pass;                   /* the pass being summed */
+    u32 rest, bin, left, len;   /* frames left in the pass; the bin, its frames left, its length */
+    u32 acc, same, agreed;      /* the bin's sum; the pass agrees so far; passes that agreed in this run */
+    u32 base[ENV_BINS];         /* the bins of the first pass of the run */
+    u32 cur[ENV_BINS];          /* the bins of the pass being summed */
 };
 
 /* A REPLACE this session: the bounce sits on pad, the original on keep; both pads' sample sizes, so a
@@ -311,10 +335,12 @@ struct ui {
     u32 partial;                /* the stock recorder ended the take on its own and left it on the scratch pad */
     s32 err;                    /* the recorder's error word then */
     u32 dropped;                /* pad note-ons the gate dropped */
+    u32 r_k, r_settle;          /* the last run: the LOOP pass taken, and how it was chosen */
     struct undo undo[UNDOS];
 };
 
 EXPORT volatile struct aud bnc_aud;
+EXPORT struct env bnc_env;
 EXPORT volatile u32 bnc_own;    /* the recorder is this module's: the RX bridge clears the feed enable first */
 EXPORT volatile u32 bnc_page;   /* the RESAMPLE page's tick is not to see the recorder's states (bnc_tick) */
 EXPORT volatile u32 bnc_expect; /* the run's own trigger is on its way through the pad-event gate */
@@ -322,6 +348,7 @@ EXPORT volatile struct ui bnc_ui_state;
 EXPORT char bnc_text[64];
 
 #define A bnc_aud
+#define E bnc_env
 #define U bnc_ui_state
 
 /* |x| > t, and either channel of a stereo frame */
@@ -523,6 +550,89 @@ static void depart(u32 top) {
     A.departed = 1;
 }
 
+/* RX frame where pass q's return starts, at L. Pass 0 plays from START, the others from the loop point. */
+static u32 pass_at(u32 q) {
+    return A.t0 + (u32)A.l + (q ? U.len1 + (q - 1) * U.len2 : 0);
+}
+
+/* The take is pass k, or the one after if the RX frames from its F0 are no longer all kept (L above 190). */
+static void choose(u32 k, u32 how, u32 top) {
+    u32 f0 = pass_at(k) - (u32)A.l;
+    if (f0 + HIST_FRAMES < top + FRAMES) {
+        f0 += U.len2;
+        k++;
+    }
+    A.k = k;
+    A.f0 = f0;
+    A.skip = f0 - A.t0;
+    BARRIER();
+    A.settle = how;
+}
+
+static void pass_begin(u32 q) {
+    E.pass = q;
+    E.rest = U.len2;
+    E.bin = 0;
+    E.same = 1;
+}
+
+static void pass_end(u32 top) {
+    u32 q = E.pass;
+    if (E.same) {
+        E.agreed++;
+    } else {                                /* this pass starts a new run */
+        for (u32 b = 0; b < E.bin; b++)
+            E.base[b] = E.cur[b];
+        E.agreed = 0;
+    }
+    if (E.agreed * U.len2 >= SETTLE_SPAN)
+        choose(q + 1, S_SETTLED, top);
+    else if (E.next - A.t0 >= SETTLE_CAP)
+        choose(q + 1, S_CAPPED, top);
+    pass_begin(q + 1);
+}
+
+/* LOOP: sum each pass's return per bin, |L| + |R|, and compare it with the first pass of the current run, as the RX
+ * frames come in (from the history, so the first pass can start behind the block being processed; one that started
+ * further back than the history only becomes a run's first pass, which the next disagreeing pass replaces). Two bins
+ * agree within about 0.5 dB, or when both are near silence (a mean below RX_QUIET). */
+static void compare_passes(u32 top) {
+    if (!E.size) {                          /* the first pass disagrees with the cleared bins: a run's first */
+        u32 q = U.lp_off ? 1 : 0;           /* pass 0 is a loop pass only when the loop point is START */
+        for (u32 b = 0; b < ENV_BINS; b++)
+            E.base[b] = 0;
+        E.next = pass_at(q);
+        E.size = U.len2 > FRAMES * ENV_BINS ? (U.len2 + ENV_BINS - 1) / ENV_BINS : FRAMES;
+        E.acc = E.left = E.agreed = 0;
+        pass_begin(q);
+    }
+    u32 fr = E.next, acc = E.acc, left = E.left;
+    while (fr < top) {
+        if (!left)                          /* a bin begins */
+            E.len = left = E.rest < E.size ? E.rest : E.size;
+        volatile s16 *x = HIST(fr);
+        s32 l = x[0], r = x[1];
+        fr++;
+        acc += (u32)(l < 0 ? -l : l) + (u32)(r < 0 ? -r : r);
+        if (--left)
+            continue;
+        u32 b = E.bin, n = E.len, base = E.base[b], hi = acc > base ? acc : base;
+        E.cur[b] = acc;
+        if (2 * hi - acc - base > hi >> 4 && hi > n * 2 * RX_QUIET)
+            E.same = 0;
+        acc = 0;
+        E.bin = b + 1;
+        if (E.rest -= n)
+            continue;
+        pass_end(top);
+        if (A.settle != S_COMPARING)
+            break;
+    }
+    E.next = fr;
+    E.acc = acc;
+    E.left = left;
+}
+
 /* After the recorder feed has copied RX block rx_blocks into CAPTURE. */
 EXPORT void bnc_rx(void) {
     u32 block = A.rx_blocks;
@@ -591,6 +701,12 @@ EXPORT void bnc_rx(void) {
     }
     if (A.have_l && !A.departed)
         depart(top);
+    if (A.settle == S_COMPARING) {
+        if (A.have_l)
+            compare_passes(top);
+        if (A.settle == S_COMPARING)
+            return;                         /* no pass chosen yet: nothing to write */
+    }
     if (A.mode == TAIL && !A.win) {         /* TAIL: to the last loud frame, after 250 ms quiet */
         for (u32 f = 0; f < FRAMES; f++)
             if (LOUD2(cap + 2 * f, RX_QUIET))
@@ -662,13 +778,13 @@ EXPORT u32 bnc_gate(const volatile u8 *ev) {
  * UI task
  * ------------------------------------------------------------------------------------------- */
 
-static char *put(char *o, const char *s) {
+static OUTLINE char *put(char *o, const char *s) {
     while (*s)
         *o++ = *s++;
     return o;
 }
 
-static char *put_uint(char *o, u32 u) {
+static OUTLINE char *put_uint(char *o, u32 u) {
     char digits[12];
     u32 n = 0;
     if (u > 99999)
@@ -715,6 +831,8 @@ static const char *const MSG_TEXT[] = {
     [M_INPUT] = "INPUT TURNED ON\n\4",
     [M_PROTECTED] = "BANK PROTECTED\n\4",
     [M_NO_UNDO] = "CANNOT UNDO\nPADS CHANGED",
+    [M_UNSETTLED] = "LOOP NOT SETTLED\nON \2",
+    [M_UNSETTLED_R] = "LOOP NOT SETTLED\nORIG ON \2",
 };
 
 static char *put_text(char *o, const char *s) {
@@ -754,8 +872,12 @@ static void progress_text(void) {
         o = put(o, MODE_TEXT[U.mode]);
         *o++ = ' ';
         u32 done = 0, finished = U.state >= U_FINAL || A.phase == A_DONE;
+        if (A.phase == A_RUN && A.settle == S_COMPARING) {      /* LOOP: the passes so far, then the take's pass */
+            *put_uint(put(o, "x"), E.pass) = 0;
+            return;
+        }
         if (A.phase == A_RUN) {
-            u32 start = A.t0 + (u32)(A.departed ? A.l_win : A.have_l ? A.l : A.l_est);
+            u32 start = A.f0 + (u32)(A.departed ? A.l_win : A.have_l ? A.l : A.l_est);
             done = A.rx_now > start ? A.rx_now - start : 0;
         }
         if (U.mode == TAIL) {
@@ -765,7 +887,7 @@ static void progress_text(void) {
             o = put_uint(o, tenths % 10);
             *o++ = 's';
         } else {
-            u32 total = U.mode == LOOP ? U.len1 + U.len2 : A.win ? A.win : U.len1;
+            u32 total = U.mode == LOOP ? U.len2 : A.win ? A.win : U.len1;
             if (done > total)
                 done = total;
             /* 32-bit: done x 100 fits up to 42,949,672 frames (15 min) */
@@ -909,6 +1031,8 @@ static void restore_source(void) {
 
 /* Undo whatever the run pinned; then the popup. */
 static void finish(u32 msg) {
+    if (U.r_settle == S_CAPPED)
+        msg = msg == M_DONE ? M_UNSETTLED : msg == M_REPLACED ? M_UNSETTLED_R : msg;
     A.phase = A_IDLE;
     bnc_own = 0;
     bnc_expect = 0;
@@ -1067,6 +1191,9 @@ static void arm(void) {
     A.tx_onset = A.scan = A.voice_end = A.last_loud = 0;
     A.rx_onset = A.departed = 0;
     A.l_win = 0;
+    A.settle = U.mode == LOOP && U.len2 ? S_COMPARING : S_OFF;
+    A.k = 1;
+    E.size = E.pass = 0;
     A.stop = A.fed = A.fail = 0;
     A.rx_now = 0;
     BARRIER();
@@ -1106,6 +1233,8 @@ static u32 settle(void) {
     U.r_d = A.d;
     U.r_mode = U.mode;
     U.r_len = A.win;
+    U.r_k = U.mode == LOOP ? A.k : 0;
+    U.r_settle = A.settle;
     if (channels != 2 || data < offset)
         return 0;
     forget(dst);                            /* a record that still names this pad is stale */
@@ -1153,10 +1282,18 @@ static u32 settle(void) {
     o = put_uint(o, (((u32)A.p16 & 15) * 10 + 8) >> 4);
     dpart = o;
     o = put_int(put(o, " D"), A.d);
-    if (o - name > PADNAME_LEN) {              /* the stock name keeps 23 characters: P's tenth goes, not D */
+    char *x = o;
+    if (U.mode == LOOP)                     /* the pass the take holds */
+        o = put_uint(put(o, " x"), A.k);
+    if (o - name > PADNAME_LEN) {           /* the stock name keeps 23 characters: P's tenth goes, not D or x, */
         while (dpart < o)
             *tenth++ = *dpart++;
+        x -= o - tenth;
         o = tenth;
+        if (o - name > PADNAME_LEN && U.mode == LOOP) {     /* then the space before x */
+            for (o--; x < o; x++)
+                x[0] = x[1];
+        }
     }
     *o = 0;
     CALL3(F_PADNAME, SMPL, dst, name);      /* it marks the pads edited (the byte at SMPL + 0x1c) itself */

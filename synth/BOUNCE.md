@@ -12,9 +12,12 @@ RESAMPLE start fix v3 (the published v9.46 carries v2; see
 ran on the unit) on the same four sites, plus the pad-event dispatcher and, since bounce-3-test2, the
 RESAMPLE page's tick. Stage 1 is the bounce probe ([BOUNCE_PROBE.md](BOUNCE_PROBE.md)).
 
-**bounce-3-test6** follows the hardware run of bounce-3-test5 (2026-10-21). A NO TAIL bounce of a
-closed hi-hat read `D1 L72-3 M69 P66.1 D-1`, with START at 453 and the take's first non-zero sample
-at 450, 3 frames before START.
+**bounce-3-test6** follows the hardware run of bounce-3-test5 (2026-10-21). It has two findings:
+- A NO TAIL bounce of the original closed hi-hat (a sample, not a resample) read
+  `D1 L72-3 M69 P66.1 D-1`, with START at 453 and the take's first non-zero sample at 450, 3 frames
+  before START.
+- A hi-hat through a delay bounced in TAIL mode gave both hits, but in LOOP mode it missed the
+  delayed one.
 
 - **test4 and test5 searched for the departure from the TX side.** The search window was the 16
   frames before the return of the sound's first non-zero stem frame. Then START = the departure −
@@ -29,6 +32,13 @@ at 450, 3 frames before START.
 
   The alternative is a take whose frames sit 3 frames earlier in the file than the engine's data
   start says. Unicorn cannot model that, and dm-404's files show no such offset.
+
+  A plain sample's first frames can reach the stems as zeros. The pad's VOLUME scales the voice,
+  and quiet samples round to 0. In dm-404 (the real voice code), a lead-in of `1 −1 2 −2 3 −4`
+  shows in full at VOLUME 127, and its first stem frame is the first lead-in sample. At VOLUME 40
+  five of the six round to 0, and the first stem frame moves 5 frames later. The return lacks them
+  too, so that alone moves test5's START earlier. Together with a return whose earliest sample sits
+  well ahead of its main part, it moves test5's search window past that sample.
 - **test6 finds the departure in the return alone.** The take starts on the first non-zero RX frame
   that follows 8 silent frames, at most 24 frames before the return's onset. The onset is the RX
   onset, or the TX onset's frame plus L when no RX onset was measured. That frame is never before
@@ -42,6 +52,31 @@ at 450, 3 frames before START.
     unit did; test6 starts on it;
   - a LOOP take through the first return: test6's window ends on the frame before the next pass's
     return departs, test5's 3 frames earlier.
+- **LOOP waits for the loop's steady state.** test5 recorded the second pass. With an echo longer
+  than a pass, the first repeat comes back in a later pass, so the take missed it.
+  - **How test6 chooses the pass:** each pass's return, aligned at L, is summed per bin (|L| + |R|;
+    a block a bin, wider for a pass over 16,384 frames, at most 256 bins). The pass is compared bin
+    by bin with the first pass of the current run of agreeing passes.
+  - **When a pass agrees:** every bin is within about 0.5 dB, or both are near silence. A pass that
+    doesn't agree starts a new run. Comparing with the run's first pass rather than the previous one
+    means a slow growth never agrees.
+  - **Which pass is taken:** the one after a run that spans 3 s. 3 s is longer than the SP's repeat
+    times; until the first repeat comes back, the passes before it all agree.
+  - **The cap:** if no run reaches 3 s within 30 s, the next pass is taken anyway and the popup reads
+    `LOOP NOT SETTLED`.
+  - **Unchanged:** the window, START and the frame-exact take, with F0 = T0 + the first pass + the
+    loop passes before the one taken.
+  - **What you see:** while passes are compared the popup counts them (`LOOP x12`). The name ends
+    with the pass taken (`x80`).
+  - **Unicorn**, a 64-frame hit looped at 2,000 frames:
+    - an echo 2.5 passes late with feedback 0.5: test5's take holds none of it. test6 takes pass 80
+      (3.3 s). The repeats half a pass in are 0.667 of the hit, as in the steady state (2/3), and the
+      take equals the pass before it, so it loops seamlessly;
+    - an echo inside a pass: the steady state at pass 75;
+    - feedback 1.0: not settled at 30 s, pass 720, `LOOP NOT SETTLED`;
+    - EXIT while passes are compared: cancelled, nothing changed.
+  - **Flash:** APP1 sits 144 bytes below the kit PCM planning boundary. The module's put and
+    put_uint are now out of line, which saves more than the comparison costs.
 
 **bounce-3-test5** changes only the image under the bounce. The user found a normal RESAMPLE's
 START a few samples after the start of its wave. The cause is the RESAMPLE start fix (v2): it puts
@@ -300,7 +335,7 @@ says `NO EMPTY PAD` (unless the pad offers UNDO).
 | --- | --- | --- |
 | NO TAIL | exactly one pass of the pad: from its first frame for as long as it plays | loops that must keep their length; one-shots with the effect cut at the end |
 | TAIL | one pass and the effects ringing out, to the last frame above about −72 dBFS once 250 ms are quiet (at most 30 s) | one-shots through delay or reverb |
-| LOOP | the second pass of the pad: the pad loops, and the take is the pass that already carries the first pass's delay and reverb tails | seamless loops through time effects |
+| LOOP | a pass of the loop's steady state: the pad loops until its passes agree for 3 s (at most 30 s), so the take carries every echo and tail that wraps into a pass | seamless loops through time effects |
 
 Whether NO TAIL and LOOP can be exact depends on the pad. "At its own rate" means PITCH 0, FINE
 0, SPEED 100%, no BPM SYNC and no REVERSE.
@@ -315,7 +350,7 @@ Whether NO TAIL and LOOP can be exact depends on the pad. "At its own rate" mean
   and switched back off before the take is saved.
 - A loop in TAIL mode plays once: its LOOP is switched off for the run.
 - A pad with a loop point plays START to END first, then loops from the loop point. LOOP mode
-  records one loop-point-to-END pass.
+  records one loop-point-to-END pass, and compares only those passes.
 - Exact lengths for BPM SYNC loops (study §7.5) are not in this build. Such a loop is stretched
   to the bank tempo inside SMPL CHARGE TASK, out of the module's sight; a stretched pass need not
   be a whole number of frames, and whether the stretcher repeats exactly is unknown. They stay
@@ -413,9 +448,13 @@ A1 L73-7 M73 P65.1 D-1
 | `M73` | the onset-measured L; `M--` = no onset within 100 ms |
 | `P65.1` | the mean eDMA phase over the silence wait |
 | `D-1` | RX blocks minus TX blocks counted since boot |
+| `x80` | LOOP: the pass the take holds (pass 0 starts at the trigger) |
+
+A name over 23 characters loses P's tenth first, then the space before x
+(`A1 L72-3 M69 P66 D-1x30`); the pass is never cut.
 
 The stock name keeps 23 characters. A longer name loses P's tenth instead of D's end, for example
-`A12 L73-7C M73 P65 D-1`.
+`A12 L73-7C M73 P65 D-1`, and a LOOP name then the space before x.
 
 These stay in the bounce-3 test builds: the timing is being checked on the unit, and T3 reads L
 and M from every bounce. A REPLACE shows them on the replaced pad; the parked original
@@ -426,7 +465,8 @@ keeps its own name. The release names the pads instead (for example the source's
 
 | What happens | The run | The popup |
 | --- | --- | --- |
-| EXIT in the setup, the standby, the silence wait or the take | discards the take (cancel 0x1a, or 0x18 in standby), restores everything | `BOUNCE CANCELLED` / `NOTHING CHANGED` |
+| EXIT in the setup, the standby, the silence wait, while LOOP compares passes, or the take | discards the take (cancel 0x1a, or 0x18 in standby), restores everything | `BOUNCE CANCELLED` / `NOTHING CHANGED` |
+| LOOP: no run of agreeing passes reaches 3 s within 30 s (a feedback that never decays) | takes the next pass anyway | `LOOP NOT SETTLED` / `ON A-2` (or `ORIG ON A-2`) |
 | EXIT while the take is saved or the pads are swapped | ignored: these steps run to the end | |
 | the input never quiet for 200 ms in 10 s | discards | `FX STILL RINGING` |
 | a pattern running, or starting | refuses, or discards | `STOP PATTERN FIRST` |
@@ -571,7 +611,8 @@ finalize does. test2 did not, and its bounce played into those frames.
 - **Branch scan:** no direct branch anywhere in the ITCM or SDRAM code lands inside a patched
   span.
 - **Cost (emulator):** about 50 instructions per TX+RX block pair when idle; up to about 2,600
-  while bouncing, plus the stock engine writer that the stock gate would call anyway; up to about
+  while bouncing (LOOP's pass comparison adds about 15 a frame, about 1,000 a block, while it
+  runs), plus the stock engine writer that the stock gate would call anyway; up to about
   8,000 while a source with no onset is still being searched (its first 100 ms): about 1% of a
   block.
 
@@ -587,7 +628,7 @@ python synth/build_bounce.py out/kits-v946-sf3/SP404MKII_APP1.bin out/bounce --z
 python synth/test_bounce.py out/bounce
 ```
 
-bounce-3-test6 is APP1 `58882ddd…a142` (3,104,224 bytes) on start fix v3 `7d13c1e2…61cc`
+bounce-3-test6 is APP1 `cb5b5e46…b736` (3,104,624 bytes) on start fix v3 `7d13c1e2…61cc`
 (3,094,624 bytes). Both come out the same on the kit stage the published v9.46 was built from
 (`88384c3c…92ba`) and on a clean rebuild of every stage from stock 5.52 (v9.5 `d0919e40…`, v9.6
 `1b2d50e0…`, kits `88384c3c…`), and two builds are byte-identical.
@@ -595,6 +636,8 @@ bounce-3-test6 is APP1 `58882ddd…a142` (3,104,224 bytes) on start fix v3 `7d13
 `d6c86579…4da2`, 3,104,320 bytes, on the published v9.46 `7b5fbcb4…684a`;
 bounce-3-test3 `b9b11fb0…3c52b`, 3,103,872 bytes; bounce-3-test2 `26f594db…11bf`, 3,103,856
 bytes; bounce-3-test1 `59e061cf…221d`, 3,103,744 bytes. These builds were never handed over:
+`58882ddd…a142`, test6 with the RX departure alone; `3ef1e81b…5281`, test6 before a LOOP name kept
+its pass;
 `36d697c0…c2d7`, test4 before its name kept D; `97ff1a5f…fc97` and `e77aa89b…4369`, fixes (b) and
 (a) as prepared for the decision; `8995fd25…8927`, an earlier test3 with the charge fix alone;
 `571589da…20aa`, a test2 from before the third bug was known; and `9e438a84…0373`, the first test2
@@ -653,7 +696,7 @@ Modelled:
   system parameter stores;
 - the screen: drawing returns at once.
 
-The checks (514 cases):
+The checks (519 cases):
 
 - **Static:** only the header, the six sites and the appended tail differ from the parent. The
   scatter table is the parent's rows plus a copy row and a zero-fill row; APP1 ends below the PCM
@@ -702,6 +745,13 @@ The checks (514 cases):
   the boot, the name (24 characters in full) loses P's tenth, not D.
 - **P moving within a boot:** calibrated at P65.5 D −1 with L 73, then P 62.5 D 0 with L 76. The
   next take uses 76.
+- **LOOP waits for the steady state** (a 64-frame hit looped at 2,000 frames):
+  - an echo 2.5 passes late with feedback 0.5: the take is a pass of the steady state, with the
+    repeats half a pass in at 0.667 of the hit, equal to the pass before it;
+  - an echo inside a pass: the same;
+  - feedback 1.0: not settled at 30 s, the next pass, `LOOP NOT SETTLED`;
+  - EXIT while passes are compared: cancelled, nothing written;
+  - a LOOP name over 23 characters keeps the pass (`A1 L72-3 M69 P66 D-1x30`).
 - **The departure found in the return alone:**
   - three ±1 samples that the stems do not show, then an attack through a 6-frame pre-ring (M69
     against the estimate 72): START on the return's first non-zero frame;

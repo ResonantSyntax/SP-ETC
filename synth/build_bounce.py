@@ -574,8 +574,16 @@ def build(inp: Path, out: Path, zig: Path, base: int):
                  "most 24 frames before the return's onset (the RX onset; when none was measured, the TX onset's frame "
                  "plus L), not before T0; else L. test4 and test5 placed the search from the sound's first non-zero "
                  "TX frame, which says nothing of where the return begins (bounce-3-test5 on the unit: D1 L72-3 M69 "
-                 "P66.1 D-1, START 453, the take's first non-zero sample at 450). The pad's name shows where the take "
-                 "starts against L, before it (L72-3) or after it (L72+16)"],
+                 "P66.1 D-1, START 453, the take's first non-zero sample at 450; D1 the original hi-hat, whose quiet "
+                 "start can round to 0 in the stems at a pad VOLUME below 127). Never later than L, so a source that "
+                 "begins with silence keeps it",
+                 "LOOP takes a pass of the loop's steady state: each pass's return is summed per bin (|L| + |R|, a block "
+                 "a bin, at most 256) and compared with the first pass of the current run of agreeing passes (every bin "
+                 "within about 0.5 dB, or both near silence); the take is the pass after a run of 3 s, or at 30 s the "
+                 "next pass with the popup LOOP NOT SETTLED. test5 took the second pass, which an echo longer than a "
+                 "pass had not reached (the user: a delayed hi-hat as LOOP missed the delayed hit). The popup counts "
+                 "the passes (LOOP x12); the name ends with the pass taken (x80). put and put_uint out of line: APP1 "
+                 "stays below the kit PCM planning boundary"],
         changes_test5=["the parent is the published v9.46's kit stage plus the RESAMPLE start fix v3 (resample-startfix-3) "
                  "instead of the published v9.46 (v2): a normal RESAMPLE's START keeps the return's quiet lead-in, "
                  "8 frames before the first sample above -72 dBFS, where v2 put it on that sample. The bounce module, "
