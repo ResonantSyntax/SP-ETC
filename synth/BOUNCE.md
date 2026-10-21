@@ -78,6 +78,11 @@ RESAMPLE page's tick. Stage 1 is the bounce probe ([BOUNCE_PROBE.md](BOUNCE_PROB
   - **Flash:** APP1 sits 144 bytes below the kit PCM planning boundary. The module's put and
     put_uint are now out of line, which saves more than the comparison costs.
 
+**On the unit so far** (2026-10-21): a NO TAIL bounce's START–END window is exactly the source's
+length. The user truncated the bounced pad, and its length matched the original's. Still to come:
+whether START sits on the first sample (the name, and an intact attack), and the delayed hi-hat in
+LOOP mode.
+
 **bounce-3-test5** changes only the image under the bounce. The user found a normal RESAMPLE's
 START a few samples after the start of its wave. The cause is the RESAMPLE start fix (v2): it puts
 START on the take's first sample above −72 dBFS. The effects chip's return reaches the take with a
