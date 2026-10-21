@@ -52,7 +52,7 @@ HERE = Path(__file__).resolve().parent
 FLASH, COPY, ZERO = 0x60080000, 0x600800E4, 0x60080100   # scatter rows: copy, zero fill
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
 PUBLISHED_V946 = '7b5fbcb4c3ce1e8782fef4b5803be74c7d14eddf25a1b53682abe00c9ed3684a'
-REVISION = 'bounce-3-test5'
+REVISION = 'bounce-3-test6'
 SLOT = 0x5000                       # reserved: [base, base + SLOT)
 SLOT_CEILING = 0x83FED000           # the CPU meter test build's slot, then the start fix at 0x83FEF000
 BRIDGES = {'tx': 0x00, 'rx': 0x30, 'ui': 0x80, 'gate': 0xC0, 'tick': 0x100}
@@ -569,8 +569,14 @@ def build(inp: Path, out: Path, zig: Path, base: int):
         parent_app1=str(inp), parent_sha256=parent_sha, parent_is_published_v946=parent_sha == PUBLISHED_V946,
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
         if parent_manifest.exists() else None,
-        replaces='bounce-3-test4 (the same six sites, the same module)',
-        changes=["the parent is the published v9.46's kit stage plus the RESAMPLE start fix v3 (resample-startfix-3) "
+        replaces='bounce-3-test5 (the same six sites, the same parent)',
+        changes=["the take's start is found in the return alone: the first non-zero RX frame after 8 silent ones, at "
+                 "most 24 frames before the return's onset (the RX onset; when none was measured, the TX onset's frame "
+                 "plus L), not before T0; else L. test4 and test5 placed the search from the sound's first non-zero "
+                 "TX frame, which says nothing of where the return begins (bounce-3-test5 on the unit: D1 L72-3 M69 "
+                 "P66.1 D-1, START 453, the take's first non-zero sample at 450). The pad's name shows where the take "
+                 "starts against L, before it (L72-3) or after it (L72+16)"],
+        changes_test5=["the parent is the published v9.46's kit stage plus the RESAMPLE start fix v3 (resample-startfix-3) "
                  "instead of the published v9.46 (v2): a normal RESAMPLE's START keeps the return's quiet lead-in, "
                  "8 frames before the first sample above -72 dBFS, where v2 put it on that sample. The bounce module, "
                  "bridges and sites are test4's, byte for byte; a bounce never goes through the start fix (its take "
@@ -632,13 +638,13 @@ def build(inp: Path, out: Path, zig: Path, base: int):
         branch_scan=dict(bytes=scanned, result='no direct branch into a patched span'),
         guards=[dict(start=s, end=e, sha256=d, establishes=w) for s, e, d, w in GUARDS],
         table_guards=[dict(address=a, value=v, establishes=w) for a, v, w in TABLE_GUARDS],
-        latency=dict(k_chip=138.5, center=75, onset_accept=1, onset_calibrates=1, depart_span=16, depart_quiet=8,
+        latency=dict(k_chip=138.5, center=75, onset_accept=1, onset_calibrates=1, depart_span=24, depart_quiet=8,
                      estimate='138.5 - (P mod 64) + 64 D (T1: L - 64 D + (P mod 64) = 138 or 139) for this take\'s P '
                               'and D, plus this boot\'s calibration (an offset in 1/16 frames); outside 8..300 the '
                               'candidate nearest 75. P = eDMA phase as the probe read it, D = RX blocks - TX blocks',
-                     window='START = F0 + where the return departs from silence: the first RX frame not 0 in the 16 '
-                            'frames before L (from the sound\'s first TX frame not 0), after 8 silent RX frames; '
-                            'else F0 + L',
+                     window='START = F0 + where the return departs from silence, found in the return: the first RX '
+                            'frame not 0 after 8 silent ones, at most 24 frames before the RX onset (else the TX '
+                            'onset\'s frame plus L), not before T0; else F0 + L',
                      onset='TX stems above 128 within 100 ms of T0; RX above 128 8..300 frames later (the stems carry '
                            '16-bit samples, at the capture\'s scale); used only within 1 frame of the estimate, and '
                            'calibrates the boot only within 1 frame of the phase'),

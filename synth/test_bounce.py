@@ -124,7 +124,7 @@ KEY_REC, KEY_RESAMPLE, KEY_EXIT, KEY_SHIFT, KEY_VALUE = 0x1B, 0x1C, 0x22, 0x2A, 
 EV_KEY, EV_KEY_UP, EV_ENCODER, EV_KNOB, EV_PAD, EV_PAD_UP = 5, 6, 7, 9, 0x10, 0x11
 FIELDS_A = ('tx_blocks rx_blocks phase quiet_rx quiet_tx pad mode skip measure armed_voices slot voice t0 f0 fed '
             'stop have_l cached l l_est l_meas p_n p0 p_sum p16 d tx_onset scan last_nz voice_end last_loud win '
-            'rx_now fail tx_first l_win departed').split()
+            'rx_now fail rx_onset l_win departed').split()
 FIELDS_U = ('state ms since shown refresh src dst mode modes loop_src loop_pin len1 len2 native saved_len saved_snap '
             'pinned msg waits last_mode cal_off cal_valid runs r_l r_est r_meas r_p16 r_d r_start r_end r_len '
             'r_mode r_exact target targets last_target scratch lp_off ext_pin saved_ext link_pin link_src swap_kind '
@@ -281,6 +281,7 @@ class Machine:
         self.voice = None
         self.trigger_ignored = False
         self.fx = dict(L=77, gain=1.0, echo=None, noise=0, input=0)
+        self.stem_floor = 0         # stem samples this small read 0 to the module but still reach the return
         self.tx_mix = {}
         self.tx_n = self.rx_n = 0
         self.gate_calls = []
@@ -495,8 +496,9 @@ class Machine:
         n = self.tx_n
         frames = self.voice.tick(n) if self.voice else [(0, 0)] * 64
         buf = bytearray(64 * 14 * 4)
+        fl = self.stem_floor
         for f, (l, r) in enumerate(frames):
-            struct.pack_into('<2i', buf, f * 56, l, r)
+            struct.pack_into('<2i', buf, f * 56, l if abs(l) > fl else 0, r if abs(r) > fl else 0)
             self.tx_mix[64 * n + f] = (l, r)
         uc.mem_write(STEMS, bytes(buf))
         self._ret(1)
@@ -1341,8 +1343,62 @@ def runs(img, man):
     check(res['popup'] == 'BOUNCED A-1\nON A-2' and lw == 66 and tail == alone,
           f'LOOP through a return departing 7 frames early: the window starts on the departure ({lw}) and its last 7 '
           f'frames hold nothing of the next pass ({tail == alone})')
+    # The take's start is found in the return alone (bounce-3-test5 on the unit: D1 L72-3 M69 P66.1 D-1, START 453, the
+    # take's first non-zero sample at 450). A sharp attack after three +-1 samples that the stems do not show (they
+    # still reach the return), through a 6-frame pre-ring whose last 3 frames pass -48 dB, so the onset reads 69 against
+    # the estimate 72: the take starts on the return's first non-zero frame, no silence in front, nothing cut
+    ring6 = [(1, 0.06), (2, 0.03), (3, 0.017), (4, 0.004), (5, 0.0012), (6, 0.0002)]
+
+    def unit_source(n, lead, zeros=0):
+        rr = random.Random(77)
+        body = [(rr.randint(-3000, 3000), rr.randint(-3000, 3000)) for _ in range(n)]
+        return ([(0, 0)] * zeros + [(v, v) for v in lead] + [(8000, -8000)] + body)[:n]
+
+    def unit_case(src, n, loop, turns, rings, floor=0):
+        mm = boot(img, man, d=-1, p=66, L=72, seed=rng.randint(0, 1 << 30))
+        mm.fx['ring'] = rings
+        mm.stem_floor = floor
+        mm.load_pad(0, n, loop=loop)
+        mm.voice = Voice(mm, 0, src, 0, n, 0, 1)
+        return mm, run_bounce(mm, 0, turns)
+
+    def first_nz(take):
+        return next((i for i, f in enumerate(take) if f != (0, 0)), None)
+
+    m, res = unit_case(unit_source(6000, (1, -1, 1)), 6000, 0, 0, ring6, floor=1)
+    first, st = first_nz(m.take), m.u('r_start') - 384
+    check(res['popup'] == 'BOUNCED A-1\nON A-2' and m.u('r_l') == 72 and m.u('r_meas') == 69 and first == 69 and
+          st == first and m.u('r_end') - 384 == st + 6000,
+          f'three +-1 samples the stems do not show, then an attack through a 6-frame pre-ring: START on the return\'s '
+          f'first non-zero frame (first {first}, START {st}, {m.name(1)!r})')
+    # the unit's own numbers: on test5 this reads L72-3 M69 with START 3 frames after the take's first non-zero sample.
+    # The source's sound begins 19 frames into its first block; the return's main part passes -48 dB from its first
+    # frame, 3 before L; one isolated low sample 25 frames ahead of the main delay (a far tap of the pre-ring) is the
+    # take's first non-zero frame, 22 frames before the main part
+    ring_far = [(1, 0.06), (2, 0.03), (3, 0.017), (25, 0.00015)]
+    m, res = unit_case(unit_source(6000, (), zeros=19), 6000, 0, 0, ring_far)
+    first, st = first_nz(m.take), m.u('r_start') - 384
+    check(res['popup'] == 'BOUNCED A-1\nON A-2' and m.u('r_l') == 72 and m.u('r_meas') == 69 and first == 66 and
+          st == first,
+          f'the unit\'s L72-3 M69 (a source 19 frames into its block, an isolated sample 22 frames before the return\'s '
+          f'main part): START on the take\'s first non-zero frame (first {first}, START {st}, {m.name(1)!r})')
+    # LOOP through the first return: one pass from the departure, so the window ends exactly where the next pass's
+    # return departs (its pre-ring begins on the frame after the window)
+    n = 5000
+    m, res = unit_case(unit_source(n, (1, -1, 1)), n, 1, 2, ring6, floor=1)
+    t0, f0, st, end = m.a('t0'), m.a('f0'), m.u('r_start') - 384, m.u('r_end') - 384
+    kept = m.tx_mix
+    m.tx_mix = {t: v for t, v in kept.items() if t < t0 + 2 * n}           # the next pass off
+    alone = [m.rx_value(f0 + end - 6 + i) for i in range(7)]
+    m.tx_mix = kept
+    window_end, after = m.take[end - 6:end], m.take[end] if end < len(m.take) else None
+    check(res['popup'] == 'BOUNCED A-1\nON A-2' and st == 69 and end == st + n and window_end == alone[:6] and
+          after is not None and after != alone[6],
+          f'LOOP through the same return: the window starts on its departure ({st}) and ends on the frame before the next '
+          f'pass\'s return departs ({end}: last 6 frames without it {window_end == alone[:6]}, the next frame with it '
+          f'{after != alone[6]})')
     # the name with all its fields: from A-12, after a take that calibrated the boot, it reads 24 characters
-    # ('A12 L73-7C M73 P65.5 D-1') and the stock name keeps 23. P's tenth goes, so D stays
+    # (as 'A12 L73-7C M73 P65.5 D-1') and the stock name keeps 23. P's tenth goes, so D stays
     m, res = ring_case(3000, 0, 0)
     src = pcm_burst(3000, rng.randint(0, 1 << 30))
     m.load_pad(11, 3000)
@@ -1350,8 +1406,10 @@ def runs(img, man):
     m.take, m.finalized = [], []
     run_bounce(m, 11, 0)
     name = m.name(m.u('dst'))
-    check(m.u('cal_valid') == 1 and name.startswith('A12 L73-7C M73 P') and name.endswith(' D-1') and
-          '.' not in name and len(name) <= 23, f'a name longer than the stock 23 characters keeps D ({name!r})')
+    full = f'A12 L{m.u("r_l")}-{m.u("r_l") - (m.u("r_start") - 384)}C M{m.u("r_meas")} P'
+    check(m.u('cal_valid') == 1 and name.startswith(full) and name.endswith(' D-1') and '.' not in name and
+          len(full) + len('65.5 D-1') > 23 and len(name) <= 23,
+          f'a name longer than the stock 23 characters keeps D ({name!r})')
     # the other reading of the unit: a pure 66-frame return at P65.5 D-1, the estimate 73 seven frames long. The
     # departure finds the return's first frame there too (L stays the estimate; the window starts at 66)
     m, pcm, res = native_case('pure 66', NO_TAIL, 0, d=-1, p=65, L=66)

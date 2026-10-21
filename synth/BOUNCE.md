@@ -12,6 +12,37 @@ RESAMPLE start fix v3 (the published v9.46 carries v2; see
 ran on the unit) on the same four sites, plus the pad-event dispatcher and, since bounce-3-test2, the
 RESAMPLE page's tick. Stage 1 is the bounce probe ([BOUNCE_PROBE.md](BOUNCE_PROBE.md)).
 
+**bounce-3-test6** follows the hardware run of bounce-3-test5 (2026-10-21). A NO TAIL bounce of a
+closed hi-hat read `D1 L72-3 M69 P66.1 D-1`, with START at 453 and the take's first non-zero sample
+at 450, 3 frames before START.
+
+- **test4 and test5 searched for the departure from the TX side.** The search window was the 16
+  frames before the return of the sound's first non-zero stem frame. Then START = the departure −
+  (that frame − T0), so a stem frame later than the return's true start puts START earlier, with
+  zeros in front, never later. A source whose first ±1 samples the stems do not show lands 3 frames
+  early. For START to land after the first non-zero sample, the RX must hold a sample ahead of the
+  window that 8 or more zeros separate from the rest. One model reproduces the unit's numbers
+  exactly:
+  - the sound begins 19 frames into its first block;
+  - one isolated low sample sits 25 frames ahead of the main delay (a far tap of the pre-ring);
+  - the main part passes −48 dB from its first frame, 3 frames before L.
+
+  The alternative is a take whose frames sit 3 frames earlier in the file than the engine's data
+  start says. Unicorn cannot model that, and dm-404's files show no such offset.
+- **test6 finds the departure in the return alone.** The take starts on the first non-zero RX frame
+  that follows 8 silent frames, at most 24 frames before the return's onset. The onset is the RX
+  onset, or the TX onset's frame plus L when no RX onset was measured. That frame is never before
+  T0 and never later than L: the source's frame 0 returns at L, so a source that begins with
+  silence keeps it. Else, as before, L (a noise floor, a slow attack whose onset comes more than 24
+  frames after its first sample). The TX scan is test3's again, the onset alone.
+- **Unicorn:** test5 fails, and test6 passes, each of these cases:
+  - three ±1 samples that the stems do not show, then an attack through a 6-frame pre-ring (M69
+    against the estimate 72): test5 starts 3 frames early, test6 on the first non-zero frame;
+  - the model above: test5 reads `L72-3 M69` with START 3 frames after the first non-zero, as the
+    unit did; test6 starts on it;
+  - a LOOP take through the first return: test6's window ends on the frame before the next pass's
+    return departs, test5's 3 frames earlier.
+
 **bounce-3-test5** changes only the image under the bounce. The user found a normal RESAMPLE's
 START a few samples after the start of its wave. The cause is the RESAMPLE start fix (v2): it puts
 START on the take's first sample above −72 dBFS. The effects chip's return reaches the take with a
@@ -459,11 +490,11 @@ count both and call `bnc_tx` after the mixer and `bnc_rx` after the feed.
     also calibrates the boot: the onset minus T1's relation, kept in 1/16 frames. A threshold
     crossing moves with the attack's shape and with any level step between the stems and the
     return, so it only settles T1's one-frame spread.
-  - **The window's delay:** where the return departs from silence. That is the first RX frame not
-    0 in the 16 frames before L, from the sound's first TX frame not 0, after 8 silent RX frames;
-    otherwise L. The unit's return pre-rings each attack about 7 frames before L. The search runs
-    only when L is above 24, so its frames come after the sound's first TX frame. The unit's L has
-    been 69–77; dm-404's boots that read `L10 M8 P1.0 D-2` start at L.
+  - **The window's delay:** where the return departs from silence, found in the return. That is
+    the first RX frame not 0 after 8 silent RX frames, at most 24 frames before the RX onset (or the
+    TX onset's frame plus L when no RX onset was measured). It is never before T0 and never later
+    than L, so a source that begins with silence keeps it. Otherwise L. The unit's return pre-rings
+    an attack a few frames before L.
   - **Basis:** T1 read L − 64 D + (P mod 64) as 138 and 139 on two boots, with L 77 and 73. The
     unit has kept to it since: `L72 M72` at P66 with D −1 is 138.
 - **The stock recorder never writes:** before every feed call the RX bridge clears the feed's
@@ -556,11 +587,12 @@ python synth/build_bounce.py out/kits-v946-sf3/SP404MKII_APP1.bin out/bounce --z
 python synth/test_bounce.py out/bounce
 ```
 
-bounce-3-test5 is APP1 `51583df0…1c35` (3,104,320 bytes) on start fix v3 `7d13c1e2…61cc`
+bounce-3-test6 is APP1 `58882ddd…a142` (3,104,224 bytes) on start fix v3 `7d13c1e2…61cc`
 (3,094,624 bytes). Both come out the same on the kit stage the published v9.46 was built from
 (`88384c3c…92ba`) and on a clean rebuild of every stage from stock 5.52 (v9.5 `d0919e40…`, v9.6
 `1b2d50e0…`, kits `88384c3c…`), and two builds are byte-identical.
-(bounce-3-test4 was `d6c86579…4da2`, 3,104,320 bytes, on the published v9.46 `7b5fbcb4…684a`;
+(bounce-3-test5 was `51583df0…1c35`, 3,104,320 bytes, on the same start fix v3; bounce-3-test4
+`d6c86579…4da2`, 3,104,320 bytes, on the published v9.46 `7b5fbcb4…684a`;
 bounce-3-test3 `b9b11fb0…3c52b`, 3,103,872 bytes; bounce-3-test2 `26f594db…11bf`, 3,103,856
 bytes; bounce-3-test1 `59e061cf…221d`, 3,103,744 bytes. These builds were never handed over:
 `36d697c0…c2d7`, test4 before its name kept D; `97ff1a5f…fc97` and `e77aa89b…4369`, fixes (b) and
@@ -621,7 +653,7 @@ Modelled:
   system parameter stores;
 - the screen: drawing returns at once.
 
-The checks (511 cases):
+The checks (514 cases):
 
 - **Static:** only the header, the six sites and the appended tail differ from the parent. The
   scatter table is the parent's rows plus a copy row and a zero-fill row; APP1 ends below the PCM
@@ -670,6 +702,12 @@ The checks (511 cases):
   the boot, the name (24 characters in full) loses P's tenth, not D.
 - **P moving within a boot:** calibrated at P65.5 D −1 with L 73, then P 62.5 D 0 with L 76. The
   next take uses 76.
+- **The departure found in the return alone:**
+  - three ±1 samples that the stems do not show, then an attack through a 6-frame pre-ring (M69
+    against the estimate 72): START on the return's first non-zero frame;
+  - a source 19 frames into its block, with an isolated sample 22 frames before the return's main
+    part (test5 read `L72-3 M69` there, 3 frames after the first non-zero): START on that sample;
+  - a LOOP take through the first return ends on the frame before the next pass's return departs.
 - **Onsets a threshold crossing gets wrong,** with true L 77: a 32-frame attack, 20 ms attacks
   with RX +6 and −6 dB, a 10 ms attack through an echo with +3.5 dB, and a LOOP pass with a soft
   start. L stays 77, and is within a frame with the level step. An onset 5 frames or 20 frames

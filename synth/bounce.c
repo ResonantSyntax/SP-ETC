@@ -31,7 +31,8 @@
  *      measured value replaces it only within 1 frame (a threshold crossing moves with the attack
  *      and the levels);
  *   7. post REC_STOP (0x18); after the stock finalize, set START = F0 + where the return departs from
- *      silence (up to 16 frames before L: the return's low pre-ring), END = START + length and
+ *      silence (found on the RX side: the first non-zero frame after silence, at most 24 frames before
+ *      the return's onset), END = START + length and
  *      the loop point through the stock pad setter (the stock finalize snaps START), copy the source's
  *      performance settings and set the printed ones neutral, name the pad with the run's numbers, save,
  *      and restore everything pinned;
@@ -207,9 +208,11 @@ typedef s32 (*fn4_t)(u32, u32, u32, u32);
 #define L_ACCEPT 1              /* an onset L within this of the estimate is used, and calibrates the boot */
 /* L is the return's main delay (T1's clicks crossed -48 dB there); the return departs from silence a few frames
  * earlier, a low pre-ring of the attack (bounce-3-test3 on the unit: START 457, first non-zero 450). The take starts
- * where the return departs, so it holds the whole attack and a LOOP take ends before the next pass's pre-ring. */
+ * where the return departs, so it holds the whole attack and a LOOP take ends before the next pass's pre-ring. The
+ * departure is found in the return itself, from its onset back: the TX side does not say where the return begins
+ * (bounce-3-test5 on the unit: START 3 frames after the take's first non-zero sample). */
 #define DEPART 0                /* any sample not 0 is no longer silence (both sides; the unit's floor is 0) */
-#define DEPART_SPAN 16          /* the return departs at most this many frames before L */
+#define DEPART_SPAN 24          /* the return departs at most this many frames before its onset */
 #define DEPART_QUIET 8          /* ... after this many frames of silence */
 #define K16 2216                /* 16 x 138.5: bounce probe T1 read L - 64 D + (P mod 64) = 138 and 139 */
 #define L_CENTER 75             /* T1: L was 73..78; with D out of reach, the candidate nearest this */
@@ -262,7 +265,7 @@ struct aud {
     u32 win;                    /* the window's length, 0 = not known yet */
     u32 rx_now;                 /* RX frames seen */
     u32 fail;                   /* 1: the kept blocks were overwritten; 2: the stock recorder ended the take */
-    u32 tx_first;               /* TX frame + 1 of the first frame above DEPART, 0 = none */
+    u32 rx_onset;               /* RX frame + 1 of the return's first frame above RX_ONSET, 0 = none */
     s32 l_win;                  /* the window's delay: where the return departs from silence, else L */
     u32 departed;               /* l_win is known */
     s16 hist[HIST_BLOCKS * FRAMES * 2];
@@ -399,19 +402,9 @@ EXPORT void bnc_tx(void) {
     }
     u32 base = block * FRAMES;
     u32 live = A.voice_end == 0;
-    if (!A.tx_onset && base < A.t0 + ONSET_SEARCH) {       /* the sound's first frame out of silence, then above
-                                                               -48 dBFS (never earlier): one pass over the stems */
+    if (!A.tx_onset && base < A.t0 + ONSET_SEARCH) {       /* the sound's first frame above -48 dBFS */
         const volatile s32 *x = STEMS;
-        u32 i = 0;
-        if (!A.tx_first) {
-            for (; i < FRAMES * STEM_SLOTS; i++)
-                if (LOUD(x[i], DEPART)) {
-                    A.tx_first = base + i / STEM_SLOTS + 1;
-                    break;
-                }
-            i -= i % STEM_SLOTS;
-        }
-        for (; i < FRAMES * STEM_SLOTS; i++)
+        for (u32 i = 0; i < FRAMES * STEM_SLOTS; i++)
             if (LOUD(x[i], TX_ONSET)) {
                 A.tx_onset = base + i / STEM_SLOTS + 1;
                 break;
@@ -500,25 +493,31 @@ static void stock_ended(void) {
 #define HIST_FRAMES (HIST_BLOCKS * FRAMES)
 #define HIST(fr) (&A.hist[((fr) % HIST_FRAMES) * 2])
 
-/* The window's delay: where the return of the sound's first frame departs from silence, the first RX frame above
- * DEPART in the DEPART_SPAN frames before L, after DEPART_QUIET silent frames; else L itself (no departure seen,
- * a noisy floor, or the frames no longer kept). Waits until those RX frames are in. */
+/* The window's delay: where the return departs from silence, found in the return itself. That is the first RX
+ * frame above DEPART that follows DEPART_QUIET silent frames, at most DEPART_SPAN frames before the return's onset
+ * (the RX onset; when none was measured, the TX onset's frame plus L), and not before T0. Never later than L: the
+ * source's frame 0 returns there, so a source that begins with silence keeps it. Else L itself: a noisy floor, no
+ * onset, or the frames no longer kept. Waits until the onset's frame is in. */
 static void depart(u32 top) {
     u32 oldest = top > HIST_FRAMES ? top - HIST_FRAMES : 0;
+    u32 a = A.rx_onset ? A.rx_onset - 1 : A.tx_onset ? A.tx_onset - 1 + (u32)A.l : 0;
     A.l_win = A.l;
-    if (A.tx_first && (u32)A.l > DEPART_SPAN + DEPART_QUIET) {
-        u32 at = A.tx_first - 1 + (u32)A.l, lo = at - DEPART_SPAN, fr = lo - DEPART_QUIET;
-        if (at >= top)
+    if (a) {
+        if (a >= top)
             return;
-        if (fr >= oldest) {
-            while (fr < lo && !LOUD2(HIST(fr), DEPART))
-                fr++;
-            if (fr == lo) {
-                while (fr < at && !LOUD2(HIST(fr), DEPART))
-                    fr++;
-                A.l_win = A.l - (s32)(at - fr);
+        u32 fr = a > DEPART_SPAN + DEPART_QUIET ? a - DEPART_SPAN - DEPART_QUIET : 0, quiet = 0;
+        if (fr >= oldest)
+            for (; fr <= a; fr++) {
+                if (!LOUD2(HIST(fr), DEPART)) {
+                    quiet++;
+                } else if (quiet >= DEPART_QUIET && fr + DEPART_SPAN >= a && fr >= A.t0) {
+                    if (fr - A.t0 < (u32)A.l)
+                        A.l_win = (s32)(fr - A.t0);
+                    break;
+                } else {
+                    quiet = 0;
+                }
             }
-        }
     }
     BARRIER();
     A.departed = 1;
@@ -579,6 +578,7 @@ EXPORT void bnc_rx(void) {
                 A.scan = fr;
                 if (found) {
                     s32 meas = (s32)(found - 1 - txo);
+                    A.rx_onset = found;
                     A.l_meas = meas;
                     decide(agrees(meas, A.l_est) ? meas : A.l_est);
                 } else if (fr >= to) {
@@ -1065,7 +1065,7 @@ static void arm(void) {
     A.l = A.l_est = A.l_meas = 0;
     A.p16 = A.d = 0;
     A.tx_onset = A.scan = A.voice_end = A.last_loud = 0;
-    A.tx_first = A.departed = 0;
+    A.rx_onset = A.departed = 0;
     A.l_win = 0;
     A.stop = A.fed = A.fail = 0;
     A.rx_now = 0;
