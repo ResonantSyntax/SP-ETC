@@ -127,3 +127,23 @@ branches at these revisions and `claude/boot-anim` (the fast boot); `build_combi
   the dev folders.
 - **APP1** (after the fast boot): `adcb6f70…157f`, 3,151,616 bytes, in `analysis/kit_pr1_audit/release/combined-test4`.
 - **SUB PAD's slot** `0x83FD4000`-`0x83FD5000` comes from the top of pad FX's planned room, below kits save.
+
+**Checked** (Unicorn, 2026-10-22, `analysis/kit_pr1_audit/dev_combined4/run_suites.py`): every suite on the
+flashable APP1 (fast boot included), each feature suite with its step's manifest re-pointed at it.
+
+| Suite | Result | What fails |
+| --- | --- | --- |
+| `test_bounce.py` | 15 of 22 sections | 7 layout checks (the parent's bytes, the last rows, the PCM boundary, now 46,848 bytes over) |
+| `test_fx_deep_edit.py` | 66 of 69 | 2 layout checks; against its parent (bounce only), ROLL (key 0x21): it latches note repeat now |
+| `test_pad_env.py` (stage 1) | 29 | 2 layout checks; the UI section stops at page 5, which stage 2 adds (the test knows 4 pages) |
+| the same, on step 3's output (stage 1, before stage 2) | 64 of 64 | |
+| `test_pad_pitch_filter.py` | 42 of 44 | 2 layout checks |
+| `test_kits_save.py` | 167 of 169 | 2 layout checks |
+| `test_note_repeat.py` | 98 of 102 | the parent is not v9.46, 2 layout checks, its guard on bounce's gate (`SHARED`) |
+| `test_chroma.py` | 35 of 38 | 2 layout checks; ROLL + VALUE turned no longer moves the key: note repeat takes it for the roll speed, as chosen (the key is SHIFT + VALUE held and turned) |
+| `test_sg_subpad.py` | 24 of 25 | 1 layout check |
+| `test_start_fix.py` (v3) | every behaviour check | 4 layout checks (the last row) |
+| kit suites: kits, capture, chord, shortcut, midi, restart, hot resample, bounce (13 kits, 4 tweaked, flow) | 25 of 25 | |
+
+The patcher test (`node synth/test_browser.cjs`, branch `claude/publish-v9.47`) passes with v9.47 = combined-test4.
+**Not run:** dm-404, and the unit.
