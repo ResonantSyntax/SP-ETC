@@ -1,0 +1,108 @@
+# Chromatic mode: the 34 scales, folded, and a wider range
+
+A hardware test build on top of the published Sound Generator + Kits v9.46 (APP1 `7b5fbcb4…684a`). In
+chromatic mode:
+
+- **VALUE press** steps through the Sound Generator's 34 scales (stock: Chrom and six), and the screen names
+  them (the fork's eight-character labels from `scales.json`).
+- **The pads walk the scale**, the way the Sound Generator's pads do (`scales.c`): every pad plays the next
+  note of the scale, none is dark or silent. Chrom is stock's chromatic layout.
+- **The range is wider**: the pads reach 3 octaves below the sample's pitch (stock 1) and up to +18
+  semitones (stock +15). VALUE turns still move the pads a row (4 pads), SHIFT + VALUE one pad; with a scale
+  a pad is a scale note.
+- Every pad of the range plays, lights and shows its note (stock's chromatic page plays, lights and shows a
+  pad only within -12..+12).
+
+With Chrom and a stock shift (-8..4) the pads within -12..+12, MIDI out and recording are stock's, bit for
+bit; the pads above +12 (stock's top row at shifts -8..-5), which stock's page leaves dark and silent, play.
+
+## How stock does it (5.52, unchanged in ED5E / v9.46)
+
+- Chromatic mode is project param 0xBF (`[0x805923f8 + 0xc]`); the sample is pad 0xC1's. Pad p plays
+  `T[p] - shift` semitones, `T = {4..7, 0..3, -4..-1, -8..-5}` (top row to bottom row), shift = param 0xC0
+  (project `+0x2c`, range -8..4). The chromatic page is page 0x18 (key handler `0x801120d8`): a VALUE turn
+  moves the shift 4, SHIFT + VALUE 1, ROLL + VALUE moves the root (0xF2, `+0x11c`, 0-11), VALUE press steps
+  the scale (0xF1, `+0x118`) through 0-6 (`0x8011247e`; page 0x11 has the same code at `0x80083992`).
+- A scale only darkens and silences the pads outside it: `mask[(T[p] + 24 - shift - root) mod 12]` with the
+  six stock masks (`0x801ab4bc` for the lights, `0x801ab3b0` for the key handler; C's truncating mod).
+- Each user of the note has its own copy of T and subtracts the shift: the voice manager (`0x801aa0a0`, five
+  sites), the pad lights (`0x80028f64`), SMPL TASK's pad events and MIDI out (`0x80050ee0`), the last-note
+  display (`0x801aa0e0`), the key handler, pattern step entry and roll entry (`0x801aa120`).
+- The note becomes the voice's pitch through `0x8001fa20` param 0x73: `2^(n/12)` as a Q14 step, no limit.
+- A chromatic note-off finds its voice by the physical pad (slot `+0x48`), not by the note, so the mapping
+  can change while a pad is held without leaving a voice on.
+- MIDI out (`0x800549e0`) sends note 48 + n on channel 16. SMPL TASK keeps `n + 13` per pad (project
+  `+0x664`, a byte) and sends the note-off from it.
+- The chromatic page's pad handler (`0x80111b38`) plays a pad only if its note is within param 0x9b's range,
+  -12..12 (`0x80111c62`); the pad lights light it only within it (`0x800282f2`, `0x800283fa`) and the note
+  display shows "-" outside it (`0x8008d224`). Pattern step entry checks it too (`0x80111c16`, `0x80111cdc`).
+- The pattern recorder keeps the note as `n + 13` in 5 bits (-13..+18).
+
+## The design
+
+The module keeps all five copies of T at `T'[p] = note(T[p] - shift) + shift`, so every user reads the
+folded note through its own stock code. `note(k)` is the Sound Generator's fold: from the first scale note at
+or above the sample's pitch (0), k scale notes up or down; with Chrom it is k, so `T' = T`. The tables are
+written again whenever the shift, scale or root changes (the setter's cases); a scale or root change brings a
+shift outside the new range back to its nearest end, so the pads always play 16 notes within -36..+18.
+
+| Site | Stock | Now |
+|---|---|---|
+| `0x800df714`, `0x800dfc00`, `0x800dfc14` | the setter's SHIFT / SCALE / ROOT cases: compare, store | the same, then the tables |
+| `0x800d39e4` | SHIFT's range -8..4 | the range that keeps every pad within -36..+18 for the scale and root (Chrom: -11..28) |
+| `0x800d38c8` | -12..12 for params 0x73 / 0x9b | -36..+18 for the chromatic page's pad gate, the pad lights and the note display (by return address); -12..12 for every other caller (step entry) |
+| `0x800d39fc`, `0x800c5ca4` | the fork's jumps to the scale module's SCALE range and label bridges | in chromatic mode 0-33 and the names; elsewhere on to the scale module |
+| `0x8011247e`, `0x80083992` | VALUE press: next scale, 0-6 | 0-33 in chromatic mode, stock's elsewhere |
+| `0x80050e78` | MIDI note-off: stored byte - 13 | the byte read signed (notes below -13) |
+| `0x800bd644` | the recorder takes the note byte | a chromatic note outside -13..+18 is not recorded |
+| `0x801ab4bc`, `0x801ab3b0` (data) | stock's scale masks | the same masks with a period before each (negative indices) |
+
+The module (Zig 0.13.0, -Os, about 1.8 KB) is a new boot copy row in an 8 KB slot at
+**`0x83FD7000`-`0x83FD9000`**, from the top of pad FX's planned room. The builder checks the slot against every
+row of the input and every fork module's slot (KNOWN_SLOTS), and 28 guards (SHA-256 of every stock span the
+module relies on).
+
+Chromatic mode means param 0xBF on and not the Sound Generator page, which keeps the scale module's ways.
+
+## Checked in the emulator (not on hardware)
+
+`python synth/test_chroma.py OUT_DIR`: the parent and the image booted in Unicorn with their static
+constructors; the project setter, getter, range method and label formatter, the UI dispatcher with DOOM OS's
+page filter and the chromatic page (0x18), the pad handlers and the stock pad note, SMPL TASK's pad events,
+MIDI out (logged), the pattern recorder (logged) and the pad lights (logged) run for real; the voices are
+logged, not run.
+
+- static: only the sites above change; guards, displaced bytes, mask lists, slot;
+- tables: Chrom at every stock shift is stock's T, as on the parent; every scale x five roots x shifts
+  across the range (977 settings) after real setter changes matches an independent model of the fold; a
+  scale or root change at an extreme shift keeps 16 notes;
+- ranges: SHIFT's range for every scale and root keeps every pad within -36..+18 (and one more step would
+  leave it); VALUE turns move 4, SHIFT + VALUE 1, from -11 to 28 (stock -8 to 4); SCALE 0-33 in chromatic mode;
+- VALUE press: 1 .. 33, 0 in chromatic mode, the pads following; outside it as the parent;
+- names: stock's labels for 0-6, the scales' for 7-33 in chromatic mode; the parent's outside it;
+- pads: every pad through the chromatic page and SMPL TASK at several scales, roots and shifts (to -36 and
+  +18): MIDI out sends the model's note on and off, one voice note-on and note-off each; Chrom at stock shifts
+  is the parent's within -12..+12, and the pads above +12 (silent on the parent) play;
+- record: Chrom at stock shifts records as the parent; notes outside -13..+18 are not recorded;
+- lights: as the parent within -12..+12 with Chrom; with scales every pad lit as the parent lights a scale
+  note there.
+
+## Not known (the hardware test, or later)
+
+- How it sounds and plays: the folded layouts, the deep notes, the top notes (+16..+18 is above stock's +15;
+  stage 2's study saw the resampler's source run short from about 3x speed).
+- The VALUE press handler on page 0x11 (same code as page 0x18's) runs only in a state the emulator didn't set
+  up; it gets the same change.
+- A project saved with a scale and loaded: the tables follow the setter, which project load is expected to use
+  (not traced). Turning VALUE or pressing it sets them in any case.
+- Pattern step entry still takes only -12..12 (stock), the realtime recorder -13..+18.
+- DOOM OS's own pages (piano roll) with chromatic notes outside stock's range.
+
+## Build
+
+```sh
+python synth/build_chroma.py PATH/kits-v9.46-test3/SP404MKII_APP1.bin OUT_DIR --zig PATH/zig.exe [--build-dir DIR]
+python synth/test_chroma.py OUT_DIR
+```
+
+Stock APP0 must sit beside the input APP1. keystone, unicorn and capstone on PYTHONPATH, Zig 0.13.0.
