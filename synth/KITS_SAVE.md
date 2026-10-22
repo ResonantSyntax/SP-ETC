@@ -5,6 +5,9 @@ stock 5.52 + DOOM OS 0.6.1 ED5E + the fork). In v9.46 every drum-mode edit lives
 (README: "Kit edits reset at power-on"); a user lost a customised kit that way. This build saves the edits per
 project in a small file beside the project's `PADCONF.BIN`, so each project keeps its own kits.
 
+**Test 2** (section 7) saves the Sound Generator's own settings too, and gives drum mode and melodic mode
+each their own arp; sections 1-6 describe test 1.
+
 Addresses are 5.52 runtime addresses. **Verified** means read in the code (Ghidra decompilation and capstone)
 and, where marked, run in Unicorn; **inferred** means it follows from the code but wasn't run; **unknown**
 needs the unit.
