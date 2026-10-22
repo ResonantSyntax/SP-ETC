@@ -1,17 +1,21 @@
-/* FX deep edit (test build): an extra settings page for the bus effects (BUS 1-4) that edits the
+/* FX deep edit (test build): extra screens on the FX screen for the bus effects (BUS 1-4) that edit the
  * effect parameters stock 5.52 never sends to the effects chip (BMC).
  *
- * On the TOP page, hold EXIT and press VALUE: the page opens on the bus the CTRL knobs drive
- * (settings 0x3a, the bus the knob path 0x800cc030 uses) and that bus's effect (system 0x27c[bus],
- * the effect the knob path checks). Its list is the effect's parameters that are not in the effect's
- * six-ID knob record (fx_deep_edit_tables.h, made by build_fx_deep_edit.py from the firmware's tables
- * and DM-404's fxmap.json). The stock popup shows it:
+ * Test 2: an FX button opens the FX screen the way REMAIN + FX does in stock (the screen's show method
+ * 0x80146f64 reads REMAIN as held): it stays until EXIT, REMAIN, or that FX button again (the effect off), and
+ * VALUE press steps its screens. After screen 1 and screen 2 (where the effect has CTRL 4-6) come the effect's
+ * extra screens: three settings a screen, on CTRL 1-3, in the stock popup:
  *
- *   BUS1 TAPE ECHO          turn VALUE: the next or previous setting
- *   TAPE DIST 4             press VALUE: edit, "TAPE DIST [4]"; turn to change; press again to stop
+ *   TAPE ECHO 3/5
+ *   C1 SYNC 0
+ *   C2 BASS 15
+ *   C3 TREBLE 15
  *
- * EXIT, or any other button, closes the page and then does what it always does (four quick EXITs are
- * still stock's STOP). Pads and knobs work as usual while it is open.
+ * then screen 1 again. The bus is the one the CTRL knobs drive (settings 0x3a, what the knob path 0x800cc030
+ * uses) and the effect that bus's (system 0x27c[bus], what the knob path checks). An effect's settings are
+ * its parameters that are not in its six-ID knob record (fx_deep_edit_tables.h, made by build_fx_deep_edit.py
+ * from the firmware's tables and DM-404's fxmap.json). On an extra screen any button but VALUE and SHIFT leaves
+ * it and then does what it always does; pads work as usual. (Test 1's TOP page, EXIT + VALUE, is gone.)
  *
  * Every change is one DT1 through the stock builder 0x800d8118 (link 0x80592500, parameter ID,
  * slot = bus, value), the call the bus-effect knobs end in, inside the firmware's own min/max for
@@ -42,8 +46,6 @@ typedef unsigned char u8;
 #define SETTINGS 0x82E01144u                             /* the settings object */
 #define SYS_GET ((s32 (*)(u32, s32, s32))0x800DA011u)    /* system GetParam(object, ID, index) */
 #define SET_GET ((s32 (*)(u32, s32, s32))0x800D94D9u)    /* settings GetParam(object, ID, index) */
-#define KEYS ((const volatile u8 *)0x80592448u)          /* held keys: the UI dispatcher 0x8003b530
-                                                            sets a key's bit before any page sees it */
 #define POPUP ((void (*)(const char *, s32))0x800D3FF1u)
 #define DOOM_FILTER ((s32 (*)(void *, const s16 *))0x6031C8F9u)  /* TOP's +0x08 in DOOM OS ED5E */
 #define DEFAULTS ((const s32 *)0x801ABE64u)              /* by parameter ID: default, max, min */
@@ -56,30 +58,32 @@ typedef unsigned char u8;
 #define BUSES 4
 #define EFFECTS 49
 
+#define RECORDS ((const s32 *)0x802E5B40u)               /* by effect: the six parameter IDs CTRL 1-6 send */
+#define VIEW_REMAIN 0x1B3F                               /* the FX screen: REMAIN held when it showed */
+#define VIEW_SCREEN2 0x1B40                              /* the FX screen: screen 2 (CTRL 4-6) */
+
 #define EV_KEY 5
-#define EV_KEY_UP 6
-#define EV_ENCODER 7
-#define KEY_EXIT 0x22
+#define EV_KNOB 9                                        /* CTRL k: (9, k, position 0..127) */
+#define KEY_SHIFT 0x2A
 #define KEY_VALUE 0x31
-#define PAGE_MS 10000                                    /* the popup, from the last VALUE action */
-#define GONE_MS 1                                        /* closing: the popup goes at the next tick */
+#define KNOB_MAX 127
+#define PER_SCREEN 3
+#define SCREEN_MS 600000                                 /* an extra screen's popup: until it is left */
+#define GONE_MS 1                                        /* leaving: the popup goes at the next tick */
 
 #include "fx_deep_edit_tables.h"
 
 struct fde_state {
-    u8 open;             /* the page takes VALUE */
-    u8 edit;             /* turning changes the value */
-    u8 ate_value;        /* VALUE's press was the page's: its release is too */
-    u8 spare;
+    u8 screen;           /* the extra screen shown, 1..; 0: the stock screens */
+    u8 spare[3];
     u8 bus, effect;      /* as shown */
-    u8 cursor;           /* the setting shown: fde_first[effect] + cursor */
-    u8 spare2;
+    u8 spare2[2];
     u32 sent;            /* edits sent, since boot */
     u32 resent;          /* values sent again after an FxType, since boot */
 };
 
 EXPORT volatile struct fde_state fde;
-EXPORT u8 fde_value[BUSES][FDE_PARAMS];                 /* by bus - 1 and setting */
+EXPORT u8 fde_values[BUSES][FDE_PARAMS];                /* by bus - 1 and setting */
 EXPORT u8 fde_edited[BUSES][FDE_PARAMS];
 EXPORT char fde_text[40];
 
@@ -96,7 +100,7 @@ __attribute__((naked, noinline)) EXPORT u32 fde_dt1_stock(u32 link, s32 id, s32 
 }
 
 static u32 value_of(u32 bus, u32 i) {
-    return fde_edited[bus - 1][i] ? fde_value[bus - 1][i] : (u32)DEFAULTS[fde_ids[i]];
+    return fde_edited[bus - 1][i] ? fde_values[bus - 1][i] : (u32)DEFAULTS[fde_ids[i]];
 }
 
 /* After the firmware selects effect fx on a bus: that bus's edited values for fx, again. */
@@ -105,7 +109,7 @@ static void resend(u32 bus, s32 fx) {
         return;
     for (u32 i = fde_first[fx], end = i + fde_count[fx]; i < end; i++) {
         if (fde_edited[bus - 1][i]) {
-            fde_dt1_stock(BMC, fde_ids[i], bus, fde_value[bus - 1][i]);
+            fde_dt1_stock(BMC, fde_ids[i], bus, fde_values[bus - 1][i]);
             fde.resent++;
         }
     }
@@ -145,41 +149,8 @@ static char *number(char *p, u32 v) {
     return p;
 }
 
-static void show(s32 ms) {
-    char *p = fde_text;
-    u32 bus = fde.bus, fx = fde.effect;
-    if (bus - 1 >= BUSES) {
-        p = put(p, bus ? "FX EDIT" : "INPUT FX");
-        p = put(p, "\nBUS 1-4 ONLY");
-    } else {
-        p = put(p, "BUS");
-        *p++ = (char)('0' + bus);
-        if (!fx) {
-            p = put(p, "\nNO EFFECT");
-        } else {
-            *p++ = ' ';
-            p = put(p, fde_effect_names[fx]);
-            *p++ = '\n';
-            if (!fde_count[fx]) {
-                p = put(p, "NO EXTRA SETTINGS");
-            } else {
-                u32 i = fde_first[fx] + fde.cursor;
-                p = put(p, fde_names[i]);
-                *p++ = ' ';
-                if (fde.edit)
-                    *p++ = '[';
-                p = number(p, value_of(bus, i));
-                if (fde.edit)
-                    *p++ = ']';
-            }
-        }
-    }
-    *p = 0;
-    POPUP(fde_text, ms);
-}
-
-/* The bus the knobs drive and its effect, as the firmware has them now. A change since the page last
- * showed them starts over at the first setting, not editing: 0. Unchanged: 1. */
+/* The bus the knobs drive and its effect, as the firmware has them now. Unchanged since the extra screens
+ * last showed them: 1. */
 static u32 follow(void) {
     s32 bus = SET_GET(SETTINGS, KNOB_BUS, 0);
     s32 fx = (u32)(bus - 1) < BUSES ? SYS_GET(SYSPRM, BUS_EFFECT, bus) : 0;
@@ -191,92 +162,121 @@ static u32 follow(void) {
         return 1;
     fde.bus = (u8)bus;
     fde.effect = (u8)fx;
-    fde.cursor = 0;
-    fde.edit = 0;
     return 0;
 }
 
-static u32 settings(void) {
-    return fde.bus - 1u < BUSES ? fde_count[fde.effect] : 0;
+/* The effect's extra screens: its settings, three a screen; none off BUS 1-4. */
+static u32 extra_screens(void) {
+    return fde.bus - 1u < BUSES ? (fde_count[fde.effect] + PER_SCREEN - 1) / PER_SCREEN : 0;
 }
 
-static void open_page(void) {
-    fde.open = 1;
-    follow();
-    fde.cursor = 0;
-    fde.edit = 0;
-    show(PAGE_MS);
+/* Stock's screen 2: the effect has CTRL 4-6 (its knob record, as the FX screen's update 0x801465de reads it). */
+static u32 has_screen2(u32 fx) {
+    const s32 *r = RECORDS + fx * 6;
+    return fx && (r[3] != -1 || r[4] != -1 || r[5] != -1);
 }
 
-static void close_page(void) {
-    fde.open = 0;
-    fde.edit = 0;
-    show(GONE_MS);
-}
-
-static void press(void) {
-    if (follow() && settings())
-        fde.edit ^= 1;
-    show(PAGE_MS);
-}
-
-static void turn(s32 delta) {
-    u32 n = follow() ? settings() : 0;
-    if (n) {
-        if (!fde.edit) {
-            s32 c = (s32)fde.cursor + delta;
-            fde.cursor = (u8)(c < 0 ? 0 : c >= (s32)n ? (s32)n - 1 : c);
-        } else {
-            u32 bus = fde.bus, i = fde_first[fde.effect] + fde.cursor, id = fde_ids[i];
-            s32 old = (s32)value_of(bus, i), v = old + delta;
-            s32 lo = MINIMA[id], hi = MAXIMA[id];
-            if (hi > 255)
-                hi = 255;
-            if (lo < 0)
-                lo = 0;
-            v = v < lo ? lo : v > hi ? hi : v;
-            if (v != old) {
-                fde_value[bus - 1][i] = (u8)v;
-                fde_edited[bus - 1][i] = 1;
-                fde_dt1_stock(BMC, (s32)id, (s32)bus, v);
-                fde.sent++;
-            }
-        }
+/* An extra screen in the popup: the effect and the screen's number among all of them, then a line per knob.
+ *
+ *   TAPE ECHO 3/5
+ *   C1 SYNC 0
+ *   C2 BASS 15
+ *   C3 TREBLE 15
+ */
+static void show(void) {
+    u32 bus = fde.bus, fx = fde.effect, two = has_screen2(fx);
+    u32 first = fde_first[fx], end = first + fde_count[fx], at = first + (fde.screen - 1) * PER_SCREEN;
+    char *p = put(fde_text, fde_effect_names[fx]);
+    *p++ = ' ';
+    p = number(p, 1 + two + fde.screen);
+    *p++ = '/';
+    p = number(p, 1 + two + extra_screens());
+    for (u32 k = 0; k < PER_SCREEN && at + k < end; k++) {
+        p = put(p, "\nC");
+        *p++ = (char)('1' + k);
+        *p++ = ' ';
+        p = put(p, fde_names[at + k]);
+        *p++ = ' ';
+        p = number(p, value_of(bus, at + k));
     }
-    show(PAGE_MS);
+    *p = 0;
+    POPUP(fde_text, SCREEN_MS);
 }
 
-/* TOP's page filter (vtable 0x8022ce5c +0x08). Closed: hold EXIT and press VALUE to open. Open: VALUE
- * turns and presses are the page's; EXIT, or any other button, closes it and goes on as usual (so four
- * quick EXITs are still stock's STOP). Everything the page doesn't take goes to DOOM OS's filter as before. */
+static void leave(void) {
+    fde.screen = 0;
+    POPUP(fde_text, GONE_MS);
+}
+
+/* VALUE pressed on the FX screen: stock's toggle of screens 1 and 2 (0x801479a0, called with the screen from
+ * the generic key handler 0x800cba46) jumps here. Screen 1, screen 2 where the effect has one, then the extra
+ * screens, then screen 1 again. Only while the screen stays (REMAIN when it opened, which every FX button now
+ * is); otherwise, as stock, nothing. */
+EXPORT void fde_value(u8 *screen) {
+    if (!screen[VIEW_REMAIN])
+        return;
+    if (fde.screen) {
+        if (follow() && fde.screen < extra_screens()) {
+            fde.screen++;
+            show();
+            return;
+        }
+        leave();
+        screen[VIEW_SCREEN2] = 0;
+        return;
+    }
+    follow();
+    if (has_screen2(fde.effect) && !screen[VIEW_SCREEN2]) {
+        screen[VIEW_SCREEN2] = 1;
+        return;
+    }
+    if (extra_screens()) {
+        fde.screen = 1;
+        show();
+        return;
+    }
+    screen[VIEW_SCREEN2] ^= 1;                         /* stock's toggle */
+}
+
+/* CTRL k turned on an extra screen: its setting follows the knob across the firmware's range (one DT1 per
+ * change); a knob without a setting there does nothing. */
+static void knob(u32 k, s32 raw) {
+    if (!follow()) {
+        leave();
+        return;
+    }
+    u32 bus = fde.bus, i = fde_first[fde.effect] + (fde.screen - 1) * PER_SCREEN + k;
+    if (i >= fde_first[fde.effect] + fde_count[fde.effect])
+        return;
+    u32 id = fde_ids[i];
+    s32 lo = MINIMA[id], hi = MAXIMA[id];
+    if (hi > 255)
+        hi = 255;
+    if (lo < 0)
+        lo = 0;
+    raw = raw < 0 ? 0 : raw > KNOB_MAX ? KNOB_MAX : raw;
+    s32 v = lo + ((hi - lo) * raw + KNOB_MAX / 2) / KNOB_MAX;
+    if ((u32)v != value_of(bus, i)) {
+        fde_values[bus - 1][i] = (u8)v;
+        fde_edited[bus - 1][i] = 1;
+        fde_dt1_stock(BMC, (s32)id, (s32)bus, v);
+        fde.sent++;
+    }
+    show();
+}
+
+/* TOP's page filter (vtable 0x8022ce5c +0x08): on an extra screen CTRL 1-3 are its settings', and any button
+ * but VALUE and SHIFT leaves it and then does what it always does. Everything else goes on to DOOM OS's filter
+ * as before. */
 EXPORT s32 fde_filter(void *page, const s16 *ev) {
     s32 type = ev[0], what = ev[1];
-    if (type == EV_KEY) {
-        if (what == KEY_VALUE) {
-            /* a plain press clears this, so a press whose release went to another page never swallows
-             * a later release */
-            fde.ate_value = 0;
-            if (fde.open) {
-                fde.ate_value = 1;
-                press();
-                return 1;
-            }
-            if (KEYS[KEY_EXIT >> 3] >> (KEY_EXIT & 7) & 1) {
-                fde.ate_value = 1;
-                open_page();
-                return 1;
-            }
-        } else if (fde.open) {
-            close_page();
-        }
-    } else if (type == EV_KEY_UP) {
-        if (what == KEY_VALUE && fde.ate_value) {
-            fde.ate_value = 0;
+    if (fde.screen) {
+        if (type == EV_KNOB && (u32)(what - 1) < PER_SCREEN) {
+            knob((u32)(what - 1), ev[2]);
             return 1;
         }
-    } else if (type == EV_ENCODER && fde.open) {
-        turn(ev[2]);
-        return 1;
+        if (type == EV_KEY && what != KEY_VALUE && what != KEY_SHIFT)
+            leave();
     }
     return DOOM_FILTER(page, ev);
 }
