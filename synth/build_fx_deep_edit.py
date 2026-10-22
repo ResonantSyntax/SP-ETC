@@ -1,20 +1,21 @@
 """FX deep edit (hardware test build): extra screens on the FX screen for the bus effects' parameters stock
 never sends.
 
-A stage on the published Sound Generator + Kits v9.46 APP1 (FX_DEEP_EDIT.md). Test 2: an FX button opens the
-FX screen the way REMAIN + FX does in stock (it stays until EXIT, REMAIN or that FX button again), and VALUE
-press steps screen 1, screen 2 (where the effect has CTRL 4-6), then the effect's extra screens, three of its
-settings that stock 5.52 never sends to the effects chip (BMC) a screen on CTRL 1-3, shown in the stock popup,
-then screen 1 again. Each change is one DT1 through the stock builder 0x800d8118, inside the firmware's own
-min/max for the ID. Values live in RAM per bus and effect, and go to the chip again whenever the firmware
-selects that effect on that bus (an FxType write). (Test 1's TOP page, EXIT + VALUE, is gone.)
+A stage on the published Sound Generator + Kits v9.46 APP1 (FX_DEEP_EDIT.md). On the FX screen REMAIN + FX
+opens (stock's screen that stays until EXIT, REMAIN or that FX button again), VALUE press steps screen 1,
+screen 2 (where the effect has CTRL 4-6), then the effect's extra screens, three of its settings that stock
+5.52 never sends to the effects chip (BMC) a screen on CTRL 1-3, shown in the stock popup, then screen 1 again.
+Each change is one DT1 through the stock builder 0x800d8118, inside the firmware's own min/max for the ID.
+Values live in RAM per bus and effect, and go to the chip again whenever the firmware selects that effect on
+that bus (an FxType write). (Test 1's TOP page, EXIT + VALUE, is gone; test 3 drops test 2's FX button hold,
+which kept MFX's effect choice away: an FX button alone is stock again.)
 
 The settings of an effect are the parameters that are not in its six-ID knob record (0x802e5b40) and that
 DM-404's fxmap.json (MIT, bases from a boot capture) gives no boot value. IDs come from the firmware's name
 table (0x80245ee4) joined with fxmap; the builder insists the firmware's name for every ID is fxmap's name at
 that address, and that every range is the firmware's own (0x801ad1fc/0x801ac830, inside 0..255).
 
-Four changes in 5.52 space:
+Three changes in 5.52 space:
 - data: TOP's page vtable 0x8022ce5c, slot +0x08 (0x8022ce64), DOOM OS ED5E's page filter 0x6031c8f9 ->
   fde_filter, which hands every event the page doesn't take on to that filter;
 - code: the DT1 builder's first ten bytes (0x800d8118: push.w, sub sp, movw sb) -> movw ip / movt ip / bx ip
@@ -22,8 +23,6 @@ Four changes in 5.52 space:
   three instructions, then on at 0x800d8122) with the caller's stack and return address, so the builder runs
   exactly as stock; an FxType for BUS 1-4 goes to fde_dt1_fxtype, which sends it and then that bus's edited
   values for the effect. Nothing branches into the ten bytes but the entry;
-- code: the FX screen's show method asks whether REMAIN (0x24) is held (0x80146f66: bl 0x800d9f20) -> movs r0, #1;
-  nop: the screen stays as with REMAIN + FX, and VALUE toggles its screens;
 - code: the FX screen's VALUE toggle (0x801479a0, ten bytes: movw r1, #0x1b3f; ldrb r2, [r0, r1]; cmp r2, #0;
   it eq) -> movw ip / movt ip / bx ip to fde_value (the screens, then the extra screens). Its one caller is the
   generic key handler (0x800cba46); nothing branches into the bytes but the entry.
@@ -52,7 +51,7 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'fx-deep-edit-test2'
+REVISION = 'fx-deep-edit-test3'
 SLOT = 0x4000                       # reserved: [base, base + SLOT)
 SLOT_CEILING = 0x83FE6000           # the FX probe's slot starts here
 EXPORTS = ('fde_filter', 'fde_dt1', 'fde_dt1_stock', 'fde_dt1_fxtype', 'fde_value', 'fde', 'fde_values',
@@ -60,7 +59,6 @@ EXPORTS = ('fde_filter', 'fde_dt1', 'fde_dt1_stock', 'fde_dt1_fxtype', 'fde_valu
 VTABLE_SLOT, DOOM_FILTER = 0x8022CE64, 0x6031C8F9     # TOP page vtable 0x8022ce5c, +8
 DT1, DT1_BODY = 0x800D8118, 0x800D8122                # the builder; where its body goes on after 10 bytes
 DT1_HEAD = bytes.fromhex('2de9f04f83b04ef2c819')      # push.w {r4-r11, lr}; sub sp, #12; movw sb, #0xe1c8
-REMAIN_ASK, REMAIN_HEAD, REMAIN_NEW = 0x80146F66, bytes.fromhex('92f7dbff'), bytes.fromhex('012000bf')
 TOGGLE, TOGGLE_HEAD = 0x801479A0, bytes.fromhex('41f63f31425c002a08bf')   # movw r1, #0x1b3f; ldrb; cmp; it eq
 PARAMS, EFFECTS = 627, 49
 NAMES, RECORDS, DEFAULTS, MAXIMA, MINIMA = 0x80245EE4, 0x802E5B40, 0x801ABE64, 0x801AC830, 0x801AD1FC
@@ -373,8 +371,8 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
     inside = branches_into(rt, DT1 + 1, DT1 + len(DT1_HEAD)) + refs_into(bytes(img), DT1 + 1, DT1 + len(DT1_HEAD))
     if inside:
         raise ValueError(f'something reaches into the builder\'s first ten bytes: {inside[:4]}')
-    if rt.read(REMAIN_ASK, 4) != REMAIN_HEAD or rt.read(TOGGLE, len(TOGGLE_HEAD)) != TOGGLE_HEAD:
-        raise ValueError('expected the FX screen\'s REMAIN question and VALUE toggle')
+    if rt.read(TOGGLE, len(TOGGLE_HEAD)) != TOGGLE_HEAD:
+        raise ValueError('expected the FX screen\'s VALUE toggle')
     inside = branches_into(rt, TOGGLE + 1, TOGGLE + len(TOGGLE_HEAD)) + \
         [h for h in refs_into(bytes(img), TOGGLE + 1, TOGGLE + len(TOGGLE_HEAD))]
     if inside:
@@ -420,11 +418,6 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
                         what='DT1 builder entry: push.w / sub sp / movw sb -> movw ip / movt ip / bx ip to fde_dt1 '
                              '(fde_dt1_stock runs the three and goes on at 0x800d8122)',
                         listing=listing(jump, DT1)))
-    off = file_offset(img, REMAIN_ASK, 4)
-    img[off:off + 4] = REMAIN_NEW
-    patches.append(dict(address=REMAIN_ASK, size=4, original_hex=REMAIN_HEAD.hex(), replacement_hex=REMAIN_NEW.hex(),
-                        what='the FX screen\'s show method: bl 0x800d9f20 (REMAIN held?) -> movs r0, #1; nop: it '
-                             'shows as with REMAIN + FX', listing=listing(REMAIN_NEW, REMAIN_ASK)))
     off = file_offset(img, TOGGLE, len(TOGGLE_HEAD))
     toggle = movw_movt_bx(12, symbols['fde_value'])
     img[off:off + len(TOGGLE_HEAD)] = toggle
@@ -440,7 +433,7 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
     struct.pack_into('<2I', img, 0x80, table - 0x80, len(img) - 0x80)
     after = Runtime(img)
     if after.read(base, len(module)) != module or after.read(DT1, len(jump)) != jump or \
-            after.read(REMAIN_ASK, 4) != REMAIN_NEW or after.read(TOGGLE, len(toggle)) != toggle:
+            after.read(TOGGLE, len(toggle)) != toggle:
         raise ValueError('the new image does not reproduce the module and the patches')
 
     out.mkdir(parents=True, exist_ok=True)
@@ -452,10 +445,11 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
                for fx in range(1, EFFECTS)]
     manifest = dict(
         revision=REVISION, status='hardware-unverified', published=False,
-        description='the FX screen stays as with REMAIN + FX, and VALUE steps its screens: 1, 2 (CTRL 4-6), then '
-                    'extra screens with three each of the effect\'s parameters stock never sends to the effects chip '
-                    '(BMC) on CTRL 1-3, for the bus the CTRL knobs drive; values live in RAM per bus and effect and '
-                    'are sent again after every FxType write for that bus',
+        description='on the FX screen REMAIN + FX opens (stock\'s screen that stays), VALUE steps its screens: 1, 2 '
+                    '(CTRL 4-6), then extra screens with three each of the effect\'s parameters stock never sends to '
+                    'the effects chip (BMC) on CTRL 1-3, for the bus the CTRL knobs drive; values live in RAM per bus '
+                    'and effect and are sent again after every FxType write for that bus; an FX button alone is '
+                    'stock (test3: test2\'s hold kept MFX\'s effect choice away)',
         parent_app1=str(inp), parent_sha256=sha(inp.read_bytes()),
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
         if parent_manifest.exists() else None,
@@ -467,8 +461,9 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
         guards=[dict(start=s, end=e, sha256=d, establishes=w) for s, e, d, w in GUARDS],
         fxmap=dict(path=str(fxmap_path), sha256=sha(fxmap_bytes),
                    note='DM-404 core/fx/fxmap.json (MIT): bases from a boot capture, knob ranges from a sweep'),
-        screens=dict(fx_button='an FX button shows the FX screen as REMAIN + FX does (+0x1b3f set): it stays while '
-                                'the bus has an effect, until EXIT, REMAIN or that FX button again',
+        screens=dict(fx_button='an FX button alone is stock (the screen closes after 2 s); REMAIN + FX shows the '
+                                'screen that stays (+0x1b3f set) while the bus has an effect, until EXIT, REMAIN or '
+                                'that FX button again: the screen the extra screens are on',
                      value='VALUE press: screen 1, screen 2 where the effect has CTRL 4-6 (stock\'s +0x1b40), the '
                            'extra screens, screen 1 again',
                      bus='settings 0x3a (0 input FX, 1-4 BUS 1-4), what TOP\'s knob path 0x800cc030 uses; extra '
