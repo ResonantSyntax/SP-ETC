@@ -167,3 +167,24 @@ at their new revisions; the other five steps are combined-test4's. `build_combin
   (the combined build before it: `292462e7…9a0a`).
 - **The clicks** the user heard on chromatic rolls are RETRIG CUT on the sample's pad (NOTE_REPEAT.md 9.2): each
   repeat stops the ringing note as a re-hit does; RETRIG set to a fade fades it instead.
+
+**Checked** (Unicorn, 2026-10-22, `analysis/kit_pr1_audit/dev_combined5/run_suites.py`): every suite on the
+flashable APP1 (fast boot included), each feature suite with its step's manifest re-pointed at it. The same
+results as combined-test4's, with the new checks passing.
+
+| Suite | Result | What fails |
+| --- | --- | --- |
+| `test_bounce.py` | 543 cases, 15 of 22 sections | 7 layout checks (the parent's bytes, the last rows, the PCM boundary, now 47,184 bytes over) |
+| `test_fx_deep_edit.py` | 65 of 68 | 2 layout checks; against its parent (bounce only), ROLL (key 0x21): it latches note repeat now |
+| `test_pad_env.py` (stage 1) | 29 | 2 layout checks; the UI section stops at page 5, which stage 2 adds (the test knows 4 pages) |
+| the same, on step 3's output (stage 1, before stage 2) | 64 of 64 | |
+| `test_pad_pitch_filter.py` | 42 of 44 | 2 layout checks |
+| `test_kits_save.py` | 167 of 169 | 2 layout checks |
+| `test_note_repeat.py` | 99 of 103 | the parent is not v9.46, 2 layout checks, its guard on bounce's gate (`SHARED`); every chromatic check passes |
+| `test_chroma.py` | 35 of 38 | 2 layout checks; ROLL + VALUE turned is the roll speed, as chosen |
+| `test_sg_subpad.py` | 24 of 25 | 1 layout check |
+| `test_start_fix.py` (v3) | every behaviour check | 4 layout checks (the last row) |
+| kit suites: kits, capture, chord, shortcut, midi, restart, hot resample, bounce (13 kits, 4 tweaked, flow) | 25 of 25 | |
+
+The patcher test (`node synth/test_browser.cjs`, branch `claude/publish-v9.47`) passes with v9.47 = combined-test5.
+**Not run:** dm-404, and the unit.
