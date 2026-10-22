@@ -224,3 +224,9 @@ has screen 2 or extra settings, then steps on. The rest as in combined-test6, th
 - **APP1:** `be758f67…34b4`, 3,152,432 bytes, in `analysis/kit_pr1_audit/release/combined-test7` (the combined build
   `94d2786c…8ea7`, after the fast boot `407d4a99…2b70`). Every module byte for byte its own test build's; the same 7
   reviewed overlaps.
+
+**Checked** (Unicorn, `analysis/kit_pr1_audit/dev_combined7/run_suites.py`): on the final APP1,
+`test_fx_deep_edit.py` 67 of 70 (the same 2 layout checks and ROLL's key) and the kit suites kits, capture, chord,
+shortcut, midi, restart and hot resample pass (the kit module's hashes re-pointed for the footer byte). Not rerun:
+the other feature suites and the 18 kit bounce runs (their modules are combined-test5's byte for byte). The patcher
+test passes with v9.47 = combined-test7.
