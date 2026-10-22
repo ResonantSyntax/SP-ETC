@@ -2,15 +2,60 @@
 
 **[Open the patcher](https://tracelistener.github.io/doom-os-etc./)**
 
-The patcher builds **Sound Generator + Kits v9.46** for the SP-404MKII:
+The patcher builds **Sound Generator + Kits v9.47** for the SP-404MKII:
 Sound Generator **v9.9.3** (four live voices, 17 new waveforms, nine
 volume/filter-envelope presets, 34 scale choices and an arpeggiator) plus
-thirteen synthesized machine kits. It is built on, and includes, **DOOM OS 0.6.1**
+thirteen synthesized machine kits. v9.47 also adds bounce in place, pad
+envelopes, note repeat, chromatic scales, saved kit edits, FX deep edit and fast
+boot. It is built on, and includes, **DOOM OS 0.6.1**
 (build ED5E), Klangfeld Labs' pattern sequencer for the SP: hold REMAIN and
 press SUB PAD to open it ([DOOM OS quickstart](https://tracelistener.github.io/doom-os-etc./manual/)).
 Drop in the stock firmware and press Patch; there is nothing to choose. Firmware
 processing happens locally in your browser; nothing is uploaded. [Kit controls,
 reproduction and validation](synth/KITS.md).
+
+## New in v9.47
+
+- **Bounce in place:** hold RESAMPLE, tap a pad that holds a sample, press REC.
+  The pad is recorded through its effects onto the first empty pad, or in its own
+  place:
+  - turn VALUE for NO TAIL or TAIL;
+  - press VALUE for TO PAD or REPLACE;
+  - UNDO swaps a REPLACE back.
+
+  The bounce is named after the pad with ` B`. [BOUNCE.md](synth/BOUNCE.md)
+- **Pad envelopes:** SHIFT + PITCH/SPEED, then tap SHIFT through eight pages:
+  - pages 1-4: finer attack, hold and release, with curves, decay and sustain,
+    and loop and re-hit modes;
+  - pages 5-7: a pitch envelope, a resonant LP/BP/HP filter, and its own cutoff
+    envelope;
+  - page 8: the envelope curves.
+
+  Per pad, saved with the project; DEL resets a pad's envelopes.
+  [PAD_ENV.md](synth/PAD_ENV.md)
+- **Note repeat:** hold ROLL and a pad and it repeats at the pad's Roll
+  division. Turn VALUE while holding ROLL to change the division; triplets are
+  included. Tap ROLL to latch it, and HOLD keeps rolls going. SHIFT + ROLL and
+  DJ mode stay stock. [NOTE_REPEAT.md](synth/NOTE_REPEAT.md)
+- **Chromatic scales:** in chromatic mode, press VALUE to step through the
+  Sound Generator's 34 scales. The pads walk the scale and reach three octaves
+  down. [CHROMA.md](synth/CHROMA.md)
+- **Kit edits saved:** the drum kits, M.CH, the arpeggiator, ENV and SCALE are
+  saved with the project (`SG_KITS.BIN` beside `PADCONF.BIN`), about 2 s after
+  the last change, including MIDI CC changes. [KITS_SAVE.md](synth/KITS_SAVE.md)
+- **FX deep edit:** on the TOP screen, hold EXIT and press VALUE. You can edit
+  the settings the SP never sends to its effects chip, for the bus the CTRL
+  knobs drive (Tape Echo's TAPE DIST, Reverb's DENSITY and more). These live in
+  RAM only, the values are raw numbers, and some gains get loud.
+  [FX_DEEP_EDIT.md](synth/FX_DEEP_EDIT.md)
+- **Fast boot:** once the project has loaded, the SP goes straight to the main
+  screen. DOOM OS's boot animation is skipped, which saves about 4 s.
+  [BOOT_ANIM.md](synth/BOOT_ANIM.md)
+- **RESAMPLE start fix v3:** a resampled take keeps its quiet lead-in, 8 frames
+  before its first sound.
+
+In chromatic mode, ROLL + VALUE changes the roll division, not the key. How the
+build is put together, and its test status: [COMBINED.md](synth/COMBINED.md).
 
 ## Synthesized kits v9.46
 
@@ -63,7 +108,7 @@ New in v9.46:
 | VALUE menu | ARP, RATE, HOLD, BPM (a readout), KIT, PAD, SOUND, LEVEL, M.CH, BOUNC |
 
 Tune at 0 and the other knobs at 50 play the machine's own sound. Kit edits
-reset at power-on.
+are saved with the project (v9.47).
 
 - **Record a drum:** play, press REC, pick an empty pad (it blinks), press REC
   again. It records the last pad you hit plus up to three others hit within
@@ -181,8 +226,9 @@ BPM-synced samples in the current bank follow: the PROJECT BPM, or the bank's
 own BPM when the tempo is set to BANK, the MIDI clock when synced, or a
 playing pattern's tempo. It runs free from the first key and is not locked to
 the pattern's beat grid. Turning ARP on stops notes you were playing directly;
-leaving the Sound Generator page stops the arp. Settings reset at power-on
-(ARP OFF). [Arpeggiator notes, build and tests](synth/ARP.md).
+leaving the Sound Generator page stops the arp. Settings are saved with the
+project (v9.47); a project without them starts with ARP OFF. [Arpeggiator notes,
+build and tests](synth/ARP.md).
 
 ## How to install
 
@@ -195,7 +241,7 @@ You can also download this repository as a ZIP file (under the Code button), unz
 ### Manual installation
 
 1. Download the 5.52 system update from [Roland's support page](https://www.roland.com/global/support/by_product/sp-404mk2/updates_drivers/) and unzip it.
-2. Open [our patcher](https://tracelistener.github.io/doom-os-etc./), load the stock `SP404MKII_APP1.bin` and press Patch firmware. It builds Sound Generator + Kits v9.46. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
+2. Open [our patcher](https://tracelistener.github.io/doom-os-etc./), load the stock `SP404MKII_APP1.bin` and press Patch firmware. It builds Sound Generator + Kits v9.47. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
 3. Download the patched `SP404MKII_APP1.bin` and use it with the unchanged official 5.52 `SP404MKII_APP0.bin` for your test update. Back up first and keep your known-good update for rollback.
 4. Insert the card, hold **SHIFT** while you turn the SP on, and press the **VALUE** knob when the update menu appears.
 5. When the update is done, turn the SP off and on again.
@@ -203,6 +249,15 @@ You can also download this repository as a ZIP file (under the Code button), unz
 To go back to the original firmware, just run the updater with the original Roland firmware.
 
 ## Status
+
+**v9.47** (2026-10-22) is combined-test3: every feature's latest test build in
+one APP1 (`build_combined.py`), plus fast boot (`build_fast_boot.py`). Its APP1
+SHA-256 is `40ba0ad2…09b8`. Each module is byte for byte its own test build's,
+and the branch rebuilds the APP1 exactly. In the emulator, every feature suite
+passes its behaviour checks on this image, as do the 25 kit suites and the
+patcher test. Bounce in place passed its two checks on the unit as
+bounce-3-test6. The other features, and this combined build, have no hardware
+report yet. [COMBINED.md](synth/COMBINED.md).
 
 **Kits v9.46** (2026-10-13) is build v9.46-test3 plus the RESAMPLE start fix
 (APP1 SHA-256 `7b5fbcb4…684a`). Its test builds were partly played on hardware
@@ -238,4 +293,6 @@ and steps to reproduce. Preserve your backups and known-good firmware pair.
 Unofficial; not affiliated with Roland or Klangfeld Labs. Firmware modification
 is at your own risk. Synth additions are by tracelistener; the underlying
 DOOM OS 0.6.1 ED5E base is by Quintus Oostendorp / Klangfeld Labs under the
-MIT License ([LICENSE](LICENSE)), retained unchanged.
+MIT License ([LICENSE](LICENSE)), retained unchanged. FX deep edit's parameter
+table comes from DM-404's `core/fx/fxmap.json` by Nicholas Petty and the dm-404
+contributors, under the MIT License ([THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)).
