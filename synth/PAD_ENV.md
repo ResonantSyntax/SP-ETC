@@ -444,7 +444,8 @@ less than 4096) and started with Init's recompute; the real veneers, wrappers an
 
 Five broken builds fail it (sub-blocks of 96, the filter state dropped per block, the step not put back, DEPTH in
 48 zones, the layout version ignored). In test 5: 44 checks; stage 1's suite (test_pad_env, 62 checks with the
-reset) passes on the stage 1 build. The kit suites (test_kits, capture, chord, shortcut, midi, restart, hot resample,
+reset) passes on the stage 1 build. Four more broken builds fail them: the state written back after a new start,
+the LP bypass from CUTOFF 126, a reset that clears 0x70, a reset that ignores COPY / REMAIN. The kit suites (test_kits, capture, chord, shortcut, midi, restart, hot resample,
 test_kit_bounce flow, 13 kits and 4 tweaked) pass on the image; test_start_fix passes on its own release, and on this
 image its trim and threshold checks pass while its 4 structural checks expect the start fix to be the top stage.
 

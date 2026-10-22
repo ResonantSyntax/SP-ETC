@@ -687,8 +687,10 @@ def robust_checks(img, parent, man, model):
     # an LP fully open (or an HP fully down) without resonance passes the frames as they are
     p, m = Fill(parent), Fill(img, e)
     ok = []
-    for b, follows in ((ext2(0, 0, 0, 1, 127, 0), True), (ext2(0, 0, 0, 3, 0, 0), False),
-                       (ext2(0, 0, 0, 1, 127, 0, -40, 0, 40), True)):
+    for b, follows, bypass in ((ext2(0, 0, 0, 1, 127, 0), True, True), (ext2(0, 0, 0, 3, 0, 0), False, True),
+                               (ext2(0, 0, 0, 1, 127, 0, -40, 0, 40), True, None),
+                               (ext2(0, 0, 0, 1, 126, 0), None, False), (ext2(0, 0, 0, 3, 1, 0), None, False),
+                               (ext2(0, 0, 0, 1, 127, 1), None, False)):
         for stereo in (False, True):
             for f in (p, m):
                 f.set_ext(4, b)
@@ -705,11 +707,13 @@ def robust_checks(img, parent, man, model):
                 same = same and outs[1][1:3] == (wL, wR) and vs[2] == (st[0][0], st[0][1], st[1][0], st[1][1])
                 t += 2048
             passes = outs[1][1:3] == outs[0][1:3]
-            ok.append((same, passes if s['amt'] == 0 else True, vs[2][0] == 0 and (vs[2][1] != 0) == follows))
+            ok.append((same, bypass is None or passes == bypass,
+                       follows is None or (vs[2][0] == 0 and (vs[2][1] != 0) == follows)))
     check(all(all(x) for x in ok),
           f'the bypass: an LP at 127 or an HP at 0 without resonance passes the frames as they are (the parent\'s), its '
           f'state following the input (LP: the low state on the last sample, HP: zero); an LP opening back up after a '
-          f'falling envelope matches the model through the switch ({ok})')
+          f'falling envelope matches the model through the switch; an LP at 126, an HP at 1 and an LP at 127 with '
+          f'RESO 1 filter ({ok})')
     # a new start (another task's Init) while a fill is running: that fill's state isn't written back
     m = Fill(img, e)
     b = ext2(12, 0, 64, 1, 50, 90, 40, 0, 72, 1, 1)
