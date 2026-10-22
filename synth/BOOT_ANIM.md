@@ -44,6 +44,25 @@ Verified by reading the code (capstone) and by decoding all 61 frames:
   block's section table, the 61 published frames, the step table, the menu table, the boot screen's draw code
   and the stock blit. They are the same in v9.46 and combined-test1.
 
+## Fast boot: no animation at all
+
+`build_fast_boot.py IN_APP1 OUT_DIR` skips the boot screen after the load. The boot page (vtable slot
+`0x80224f3c` is DOOM OS's draw, `0x80224f40` the stock tick) is timed by a counter at `+0x1aa0`:
+- **Load end:** the page's method `0x8013dbe8` arms the UI tick at 50 ms (`0x800c7da0(50)`) and sets the
+  counter to 20 (`0x8013dcaa: movs r0, #0x14`). The ticks and draws only start then.
+- **Ticks:** each tick (`0x8013d860`) adds 1. The stock draw (`0x8013d8b8`) shows the Roland logo stages.
+- **Boot end:** at 160 the stock draw resets the screen state, sends `01 FF 90 00` to the BMC and asks for
+  page 1, the main screen.
+- **Lengths:** stock plays 140 ticks after the load (about 7 s). DOOM OS's draw jumps to 80 and plays its
+  animation for 80 ticks (about 4 s). At 160 or more it hands straight to the stock draw.
+
+The build changes the 20 to 160 (one byte). The first draw after the load then ends the boot. A draw during
+the load, if there is one, is as before. Guards cover the load-end method, the tick, the stock draw's end,
+DOOM OS's draw entry and exit, and the two vtable slots. They're the same in v9.46 and combined-test1.
+
+**combined-test3 (2026-10-22):** combined-test1 with fast boot, one byte changed. `check_combined` still
+passes. Not timed on the unit.
+
 ## combined-test2 (2026-10-22)
 
 combined-test1 with HELLO as the Homer car: 13 frames from a 1.7 s clip, played in reverse so the turn ends on
