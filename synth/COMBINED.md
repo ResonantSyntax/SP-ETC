@@ -205,3 +205,10 @@ other seven steps as in combined-test5; then `build_fast_boot.py`; then the new 
 - **APP1:** `e54935c3…d6e6`, 3,152,352 bytes, in `analysis/kit_pr1_audit/release/combined-test6` (the combined build
   `7fd46808…bf57`, after the fast boot `52d91be4…23e9`). Every module byte for byte its own test build's; the same
   7 reviewed overlaps.
+
+**Checked** (Unicorn, `analysis/kit_pr1_audit/dev_combined6/run_suites.py`, which takes a list of suites now): on
+the final APP1, `test_fx_deep_edit.py` 65 of 68 (the same 2 layout checks and ROLL's key as on combined-test5)
+and the kit suites kits, capture, chord, shortcut, midi, restart and hot resample pass. The kit suites check the
+kit module's two hashes first; the runner re-points them at the module with the footer's one byte, and says so
+in the view's manifest. Not rerun: the other feature suites and the 18 kit bounce runs, whose modules and code
+are combined-test5's byte for byte. The patcher test passes with v9.47 = combined-test6.
