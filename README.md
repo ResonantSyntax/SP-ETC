@@ -6,65 +6,68 @@ The patcher builds **Sound Generator + Kits v9.47** for the SP-404MKII:
 Sound Generator **v9.9.3** (four live voices, 17 new waveforms, nine
 volume/filter-envelope presets, 34 scale choices and an arpeggiator) plus
 thirteen synthesized machine kits. v9.47 also adds bounce in place, pad
-envelopes, note repeat, chromatic scales, saved kit edits and Sound Generator
-settings, SUB PAD on the Sound Generator, FX deep edit and fast boot. It is built on, and includes, **DOOM OS 0.6.1**
+envelopes, note repeat, chromatic scales, settings saved with the project,
+SUB PAD on the Sound Generator, hidden effect settings and a faster start-up.
+It is built on, and includes, **DOOM OS 0.6.1**
 (build ED5E), Klangfeld Labs' pattern sequencer for the SP: hold REMAIN and
 press SUB PAD to open it ([DOOM OS quickstart](https://tracelistener.github.io/SP-ETC/manual/)).
-Drop in the stock firmware and press Patch; there is nothing to choose. Firmware
+Drop in the original, unmodified Roland firmware 5.52 file and press Patch; there is nothing to choose
+(an already-patched file or another version is refused). Firmware
 processing happens locally in your browser; nothing is uploaded. [Kit controls,
 reproduction and validation](synth/KITS.md).
 
 ## New in v9.47
 
-- **Bounce in place:** hold RESAMPLE and tap a pad that holds a sample, then:
-  - tap where it goes: the same pad to bounce in place, an empty pad to bounce
-    onto it (a pad with a sample says PAD NOT EMPTY). The pad you pick lights
-    up;
-  - turn VALUE for NO TAIL or TAIL;
-  - press RESAMPLE to start. On a pad you bounced in place, VALUE press
-    switches to UNDO, which swaps it back.
+- **DOOM OS included:** the firmware this patcher makes already contains DOOM
+  OS 0.6.1 (the pattern sequencer). Everything below is added on top of it. You
+  don't install DOOM OS separately.
+- **Bounce in place:** turn a pad's sound, with its effects, into a new sample.
+  1. Hold RESAMPLE and tap the pad.
+  2. Tap where the new sample goes: the same pad to replace it (the original
+     moves to an empty pad), or an empty pad to put the new sample there. The
+     pad you picked lights up. A pad that already has a sample says PAD NOT
+     EMPTY.
+  3. Turn VALUE to choose NO TAIL (stop when the sound ends) or TAIL (keep the
+     echo or reverb until it fades out).
+  4. Press RESAMPLE to record.
 
-  The bounce is named after the pad with ` B`. [BOUNCE.md](synth/BOUNCE.md)
-- **Pad envelopes:** SHIFT + PITCH/SPEED, then turn VALUE (or tap SHIFT)
-  through eight pages:
-  - pages 1-4: finer attack, hold and release, with curves, decay and sustain,
-    and loop and re-hit modes;
-  - pages 5-7: a pitch envelope, a resonant LP/BP/HP filter, and its own cutoff
-    envelope;
-  - page 8: the envelope curves.
-
-  Per pad, saved with the project; on page 1 VALUE press switches TIME between
-  STOCK and FINE; DEL resets a pad's envelopes.
-  [PAD_ENV.md](synth/PAD_ENV.md)
-- **Note repeat:** hold ROLL and a pad and it repeats at the pad's Roll
-  division. Turn VALUE while holding ROLL to change the division; triplets are
-  included. Tap ROLL to latch it, and HOLD keeps rolls going. In chromatic mode
-  each pad has its own roll division, 1/16 to start. SHIFT + ROLL and DJ mode
-  stay stock. [NOTE_REPEAT.md](synth/NOTE_REPEAT.md)
-- **Chromatic scales:** in chromatic mode, hold VALUE and turn to choose from
-  the Sound Generator's 34 scales (a press steps to the next); hold SHIFT too for
-  the key. The pads walk the scale and reach an octave above stock's top (+27).
+  To undo a replace: hold RESAMPLE, tap that pad, press VALUE, then press
+  RESAMPLE. [BOUNCE.md](synth/BOUNCE.md)
+- **Pad envelopes:** shape how each pad's sound starts and fades. Press SHIFT +
+  PITCH/SPEED, then turn VALUE to move through eight pages: finer attack, hold
+  and release with curves (pages 1-4), a pitch sweep and a filter with its own
+  sweep (pages 5-7), and the curve shapes (page 8). On page 1, press VALUE for
+  finer timing. Each pad keeps its own settings. To put a pad back to normal,
+  press DEL on these pages, then VALUE. [PAD_ENV.md](synth/PAD_ENV.md)
+- **Note repeat:** hold ROLL and a pad, and the pad repeats in time with the
+  tempo. Turn VALUE while holding ROLL to make the repeats faster or slower
+  (triplets included). Tap ROLL to keep repeat switched on. Press HOLD to keep a
+  pad repeating after you let go. In chromatic mode each pad remembers its own
+  speed. [NOTE_REPEAT.md](synth/NOTE_REPEAT.md)
+- **Chromatic scales:** in chromatic mode, hold VALUE and turn it to choose one
+  of 34 scales (a quick press steps to the next one). Hold SHIFT as well to
+  change the key. The pads now reach an octave higher.
   [CHROMA.md](synth/CHROMA.md)
-- **Saved with the project:** the drum kits, M.CH, the arpeggiator, ENV and
-  SCALE, and the Sound Generator's own settings (NOTE, OCT, OFST, TYPE, FREQ,
-  LEVEL, Pad Length, DUTY, BALANCE, TUNE), in `SG_KITS.BIN` beside
-  `PADCONF.BIN`, about 2 s after the last change, including MIDI CC changes.
-  Drum mode and melodic mode each have their own arpeggiator settings.
-  [KITS_SAVE.md](synth/KITS_SAVE.md)
+- **Saved with the project:** the drum kits and their settings, the MIDI
+  channel, the arpeggiator, the envelopes, the scale and the Sound Generator's
+  sound settings now come back after you restart. Drum mode and melodic mode
+  each keep their own arpeggiator settings. [KITS_SAVE.md](synth/KITS_SAVE.md)
 - **SUB PAD on the Sound Generator:** plays the last pad again, in melodic and
   drum mode. [SG_SUBPAD.md](synth/SG_SUBPAD.md)
-- **FX deep edit:** press an FX button (or REMAIN + FX), then VALUE: the screen
-  stays up. Press VALUE to go through its screens and on to extra screens with the
-  settings the SP never sends to its effects chip, three at a time on CTRL 1-3
-  (Tape Echo's TAPE DIST, Reverb's DENSITY and more), on the bus effects and
-  the input FX; an effect without any says NO EXTRA SETTINGS. These live in RAM only,
-  the values are raw numbers, and some gains get loud.
+- **Hidden effect settings:** press an FX button, then VALUE. The effect screen
+  stays up, and each VALUE press shows the next page, including extra settings
+  the SP normally keeps hidden (for example Tape Echo's tape distortion). Turn
+  CTRL 1-3 to change them. An effect that has none says NO EXTRA SETTINGS. These
+  settings reset when you turn the SP off, and some can get loud.
   [FX_DEEP_EDIT.md](synth/FX_DEEP_EDIT.md)
-- **Fast boot:** once the project has loaded, the SP goes straight to the main
-  screen. DOOM OS's boot animation is skipped, which saves about 4 s.
+- **Faster start-up:** once the project has loaded, the SP goes straight to the
+  main screen and skips DOOM OS's start-up animation (about 4 seconds faster).
   [BOOT_ANIM.md](synth/BOOT_ANIM.md)
-- **RESAMPLE start fix v3:** a resampled take keeps its quiet lead-in, 8 frames
-  before its first sound.
+- **Cleaner resampling:** a resampled sample now starts just before its first
+  sound, so its beginning isn't cut off.
+
+Known issue: a bounced sample can start a few samples late and cut the very
+start of the sound. If you hear that, move its START point back a little.
 
 How the build is put together, and its test status: [COMBINED.md](synth/COMBINED.md).
 

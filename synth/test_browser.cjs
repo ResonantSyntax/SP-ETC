@@ -137,8 +137,9 @@ async function download(page) {
   assert.doesNotMatch(html, /synth-data\.js|waves-data\.js|kits-midi-data|MIDI test guide|v9\.43|v9\.44/);
   assert.doesNotMatch(html, /[Tt]ick one|unticked|Pick one of/);
   assert.match(html, /What's new in v9\.47/);
-  for (const feature of ['Bounce in place', 'Pad envelopes', 'Note repeat', 'Chromatic scales', 'Saved with the project',
-                         'SUB PAD on the Sound Generator', 'FX deep edit', 'Fast boot', 'RESAMPLE start fix v3']) {
+  for (const feature of ['DOOM OS included', 'Bounce in place', 'Pad envelopes', 'Note repeat', 'Chromatic scales',
+                         'Saved with the project', 'SUB PAD on the Sound Generator', 'Hidden effect settings',
+                         'Faster start-up', 'Cleaner resampling']) {
     assert.ok(html.includes('<strong>' + feature + ':</strong>'), 'page lists ' + feature);
     assert.ok(readme.includes('**' + feature + ':**'), 'README lists ' + feature);
   }

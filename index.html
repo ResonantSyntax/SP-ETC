@@ -204,29 +204,32 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
     <article class="row">
       <span class="n">1</span>
       <div class="body">
-        <p class="t">Works with stock firmware <strong data-doomos="firmware-list"></strong>. Drop in the stock <code>SP404MKII_APP1.bin</code> and press Patch firmware.</p>
+        <p class="t">Works with stock firmware <strong data-doomos="firmware-list"></strong>. Drop in the stock <code>SP404MKII_APP1.bin</code> and press Patch firmware. It only takes the original, unmodified Roland file: an already-patched file or another firmware version is refused.</p>
         <div id="doomos-patcher"></div>
         <p class="t">Our <a class="inline" href="https://github.com/tracelistener/SP-ETC/blob/main/synth/ARP.md">arpeggiator notes and test instructions</a> · <a class="inline" href="https://github.com/tracelistener/SP-ETC/blob/main/synth/KITS.md">kit controls and test status</a> · <a class="inline" href="https://github.com/tracelistener/SP-ETC/blob/main/synth/COMBINED.md">v9.47 build and test status</a> ·<a class="inline" href="https://github.com/tracelistener/SP-ETC/blob/main/synth/SCALES.md">v9.6 scales and fixes</a> · <a class="inline" href="https://github.com/tracelistener/SP-ETC/blob/main/synth/WAVES.md">wave list</a> · <a class="inline" href="https://github.com/tracelistener/SP-ETC">source code</a> · <a class="inline" href="https://tracelistener.github.io/sp404mk2-sound-generator/">Wave Lab preview</a> · <a class="inline" href="manual/">DOOM OS quickstart</a></p>
         <details class="env-guide" open>
           <summary>What's new in v9.47</summary>
           <ul>
-            <li><strong>Bounce in place:</strong> hold RESAMPLE and tap a pad that holds a sample. Tap where it goes: the same pad to bounce in place, an empty pad to bounce onto it (a pad with a sample says PAD NOT EMPTY); the pad you pick lights up. Turn VALUE for NO TAIL or TAIL, then press RESAMPLE. The pad is recorded through its effects. On a pad you bounced in place, VALUE press switches to UNDO, which swaps it back. The bounce is named after the pad with &ldquo; B&rdquo;.</li>
-            <li><strong>Pad envelopes:</strong> SHIFT + PITCH/SPEED, then turn VALUE (or tap SHIFT) through eight pages:
-              <ul>
-                <li>pages 1&ndash;4: finer attack, hold and release, with curves, decay and sustain, and loop and re-hit modes;</li>
-                <li>pages 5&ndash;7: a pitch envelope, a resonant LP/BP/HP filter, and its own cutoff envelope;</li>
-                <li>page 8: the envelope curves.</li>
-              </ul>
-              Per pad, saved with the project. On page 1, VALUE press switches TIME between STOCK and FINE. DEL resets a pad&rsquo;s envelopes.</li>
-            <li><strong>Note repeat:</strong> hold ROLL and a pad and it repeats at the pad&rsquo;s Roll division. Turn VALUE while holding ROLL to change the division; triplets are included. Tap ROLL to latch it. HOLD keeps rolls going. In chromatic mode each pad has its own roll division, 1/16 to start. SHIFT + ROLL and DJ mode stay stock.</li>
-            <li><strong>Chromatic scales:</strong> in chromatic mode, hold VALUE and turn to choose from the Sound Generator&rsquo;s 34 scales (a press steps to the next); hold SHIFT too for the key. The pads walk the scale and reach an octave above stock&rsquo;s top (+27).</li>
-            <li><strong>Saved with the project:</strong> the drum kits, M.CH, the arpeggiator, ENV and SCALE, and the Sound Generator&rsquo;s own settings (NOTE, OCT, OFST, TYPE, FREQ, LEVEL, Pad Length, DUTY, BALANCE, TUNE), about 2 s after the last change. This includes changes made by MIDI CC. Drum mode and melodic mode each have their own arpeggiator settings.</li>
+            <li><strong>DOOM OS included:</strong> the firmware this patcher makes already contains DOOM OS 0.6.1 (the pattern sequencer). Everything below is added on top of it. You don&rsquo;t install DOOM OS separately.</li>
+            <li><strong>Bounce in place:</strong> turn a pad&rsquo;s sound, with its effects, into a new sample.
+              <ol>
+                <li>Hold RESAMPLE and tap the pad.</li>
+                <li>Tap where the new sample goes: the same pad to replace it (the original moves to an empty pad), or an empty pad to put the new sample there. The pad you picked lights up. A pad that already has a sample says PAD NOT EMPTY.</li>
+                <li>Turn VALUE to choose NO TAIL (stop when the sound ends) or TAIL (keep the echo or reverb until it fades out).</li>
+                <li>Press RESAMPLE to record.</li>
+              </ol>
+              To undo a replace: hold RESAMPLE, tap that pad, press VALUE, then press RESAMPLE.</li>
+            <li><strong>Pad envelopes:</strong> shape how each pad&rsquo;s sound starts and fades. Press SHIFT + PITCH/SPEED, then turn VALUE to move through eight pages: finer attack, hold and release with curves (pages 1&ndash;4), a pitch sweep and a filter with its own sweep (pages 5&ndash;7), and the curve shapes (page 8). On page 1, press VALUE for finer timing. Each pad keeps its own settings. To put a pad back to normal, press DEL on these pages, then VALUE.</li>
+            <li><strong>Note repeat:</strong> hold ROLL and a pad, and the pad repeats in time with the tempo. Turn VALUE while holding ROLL to make the repeats faster or slower (triplets included). Tap ROLL to keep repeat switched on. Press HOLD to keep a pad repeating after you let go. In chromatic mode each pad remembers its own speed.</li>
+            <li><strong>Chromatic scales:</strong> in chromatic mode, hold VALUE and turn it to choose one of 34 scales (a quick press steps to the next one). Hold SHIFT as well to change the key. The pads now reach an octave higher.</li>
+            <li><strong>Saved with the project:</strong> the drum kits and their settings, the MIDI channel, the arpeggiator, the envelopes, the scale and the Sound Generator&rsquo;s sound settings now come back after you restart. Drum mode and melodic mode each keep their own arpeggiator settings.</li>
             <li><strong>SUB PAD on the Sound Generator:</strong> plays the last pad again, in melodic and drum mode.</li>
-            <li><strong>FX deep edit:</strong> press an FX button (or REMAIN + FX), then VALUE: the screen stays up. Press VALUE to go through its screens and on to extra screens with the settings the SP never sends to its effects chip, three at a time on CTRL 1&ndash;3 (Tape Echo&rsquo;s TAPE DIST, Reverb&rsquo;s DENSITY and more), on the bus effects and the input FX; an effect without any says NO EXTRA SETTINGS. These live in RAM only, the values are raw numbers, and some gains get loud.</li>
-            <li><strong>Fast boot:</strong> once the project has loaded, the SP goes straight to the main screen. DOOM OS&rsquo;s boot animation is skipped, which saves about 4 s.</li>
-            <li><strong>RESAMPLE start fix v3:</strong> a resampled take keeps its quiet lead-in, 8 frames before its first sound.</li>
+            <li><strong>Hidden effect settings:</strong> press an FX button, then VALUE. The effect screen stays up, and each VALUE press shows the next page, including extra settings the SP normally keeps hidden (for example Tape Echo&rsquo;s tape distortion). Turn CTRL 1&ndash;3 to change them. An effect that has none says NO EXTRA SETTINGS. These settings reset when you turn the SP off, and some can get loud.</li>
+            <li><strong>Faster start-up:</strong> once the project has loaded, the SP goes straight to the main screen and skips DOOM OS&rsquo;s start-up animation (about 4 seconds faster).</li>
+            <li><strong>Cleaner resampling:</strong> a resampled sample now starts just before its first sound, so its beginning isn&rsquo;t cut off.</li>
           </ul>
-          <p class="t">Each feature had its own test build. This combined build is checked in the emulator, and has no hardware report yet. Keep your known-good update at hand.</p>
+          <p class="t">Known issue: a bounced sample can start a few samples late and cut the very start of the sound. If you hear that, move its START point back a little.</p>
+          <p class="t">Most of these were tried on an SP-404MKII while they were being made. Keep a copy of your current firmware so you can go back.</p>
         </details>
         <details class="env-guide">
           <summary>What's new in Kits v9.46</summary>
