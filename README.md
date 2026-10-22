@@ -56,7 +56,8 @@ reproduction and validation](synth/KITS.md).
 - **FX deep edit:** hold REMAIN and press an FX button, so its screen stays up.
   Press VALUE to go through its screens and on to extra screens with the
   settings the SP never sends to its effects chip, three at a time on CTRL 1-3
-  (Tape Echo's TAPE DIST, Reverb's DENSITY and more). These live in RAM only,
+  (Tape Echo's TAPE DIST, Reverb's DENSITY and more), on the bus effects and
+  the input FX; an effect without any says NO EXTRA SETTINGS. These live in RAM only,
   the values are raw numbers, and some gains get loud.
   [FX_DEEP_EDIT.md](synth/FX_DEEP_EDIT.md)
 - **Fast boot:** once the project has loaded, the SP goes straight to the main
@@ -260,13 +261,15 @@ To go back to the original firmware, just run the updater with the original Rola
 
 ## Status
 
-**v9.47** (2026-10-22) is combined-test5: every feature's latest test build in
-one APP1 (`build_combined.py`), plus fast boot (`build_fast_boot.py`). Its APP1
-SHA-256 is `634f7af1…0bef`. Each module is byte for byte its own test build's,
+**v9.47** (2026-10-22) is combined-test6: every feature's latest test build in
+one APP1 (`build_combined.py`), plus fast boot (`build_fast_boot.py`) and no
+"SHIFT: PAGE" on the drum kit screen (`build_kit_footer.py`). Its APP1
+SHA-256 is `e54935c3…d6e6`. Each module is byte for byte its own test build's,
 and the branch rebuilds the APP1 exactly. In the emulator, every feature suite
-passes its behaviour checks on this image, but one by design: in chromatic mode
-ROLL + VALUE is the roll speed now, not the key. The 25 kit suites and the
-patcher test pass. Bounce in place passed its two checks on the unit as
+passed its behaviour checks on combined-test5 but one by design (in chromatic
+mode ROLL + VALUE is the roll speed now, not the key), and the 25 kit suites
+passed there. combined-test6 changes only FX deep edit and the kit footer's
+text: its FX suite, seven kit suites and the patcher test pass. Bounce in place passed its two checks on the unit as
 bounce-3-test6. The other features, and this combined build, have no hardware
 report yet. [COMBINED.md](synth/COMBINED.md).
 

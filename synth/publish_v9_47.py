@@ -1,15 +1,15 @@
-"""Generate the guarded browser overlay for Sound Generator + Kits v9.47 (combined-test5).
+"""Generate the guarded browser overlay for Sound Generator + Kits v9.47 (combined-test6).
 
 v9.47 is built in two steps. build_combined.py gives the combined build: every feature branch's module, byte for
 byte its own test build's, on bounce-3-test9's parent (resample-startfix-3: the published v9.46's kit stage
-plus the RESAMPLE start fix v3). build_fast_boot.py then gives combined-test5. The overlay turns the DOOM OS
-base into combined-test5. Before writing kits-data.js, this script checks:
-- the candidate's hash and its two manifests;
+plus the RESAMPLE start fix v3). build_fast_boot.py then skips the boot animation, and build_kit_footer.py blanks the drum kit
+screen's "SHIFT: PAGE": that is combined-test6. The overlay turns the DOOM OS base into combined-test6. Before writing kits-data.js, this script checks:
+- the candidate's hash and its three manifests;
 - the chain back to v9.46's kit stage;
 - every module's source against this tree.
 
 usage: python synth/publish_v9_47.py /path/to/stock/SP404MKII_APP1.bin \
-           --combined dev_combined5/combined-test5-base --candidate release/combined-test5
+           --combined dev_combined6/combined-test6-base --candidate release/combined-test6
 """
 import argparse
 import base64
@@ -18,9 +18,10 @@ from pathlib import Path
 
 import build
 
-RELEASE, REVISION, LABEL = 'v9.47', 'combined-test5', '5.52+kits-v9.47'
-EXPECTED_SHA, EXPECTED_SIZE = '634f7af1c3ea2aead6e96ea3bd856233cb8df403f466cd265a78cdd390760bef', 3151952
-COMBINED_SHA = '292462e791bfaa6a65c6b02625bd13ba8ceb2995ec84d73fa023fa1c9abe9a0a'
+RELEASE, REVISION, LABEL = 'v9.47', 'combined-test6', '5.52+kits-v9.47'
+EXPECTED_SHA, EXPECTED_SIZE = 'e54935c305cbc16111263dc34614c4a713fba1dda0dff69349cfd5b3fb07d6e6', 3152352
+FASTBOOT_SHA = '52d91be4972af5408368a7ba0ea3f1075fa19fa93097dc5099551d828a6123e9'
+COMBINED_SHA = '7fd468087d7b6c4c750256ffebc2cac966cd852086004ee4d33425a6dddebf57'
 PARENT_SHA = '7d13c1e26d222cea7cada8b6b8ac986b432bf1b32508b5f39ac9c6c117ea61cc'      # resample-startfix-3
 KIT_STAGE_SHA = '88384c3c9760559e721c1a14973ef3a2ced6abf016572b0a73c5dfb0cef492ba'   # v9.46-test3, as in v9.46
 STEPS = ['bounce', 'fx-deep-edit', 'pad-env-1', 'pad-env-2', 'kits-save', 'note-repeat', 'chroma', 'sg-subpad']
@@ -34,7 +35,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('stock', type=Path)
     p.add_argument('--combined', type=Path, required=True, help='the combined build: APP1, manifest.json, steps/')
-    p.add_argument('--candidate', type=Path, required=True, help='combined-test5: APP1 and manifest.json')
+    p.add_argument('--candidate', type=Path, required=True, help='combined-test6: APP1 and manifest.json')
     a = p.parse_args()
     stock = a.stock.read_bytes()
     build.require_hash(stock, build.v2.STOCK_SHA256, 'stock APP1')
@@ -42,10 +43,14 @@ def main():
 
     image = (a.candidate / 'SP404MKII_APP1.bin').read_bytes()
     build.require_hash(image, EXPECTED_SHA, 'v9.47 APP1')
-    fast = json.loads((a.candidate / 'manifest.json').read_text(encoding='utf-8'))
-    if (len(image) != EXPECTED_SIZE or fast['sha256'] != EXPECTED_SHA or fast['revision'] != REVISION or
-            fast['parent_sha256'] != COMBINED_SHA or fast['tool'] != 'synth/build_fast_boot.py' or
-            [x['address'] for x in fast['patches']] != [0x8013DCAA]):
+    footer = json.loads((a.candidate / 'manifest.json').read_text(encoding='utf-8'))
+    if (len(image) != EXPECTED_SIZE or footer['sha256'] != EXPECTED_SHA or footer['revision'] != REVISION or
+            footer['parent_sha256'] != FASTBOOT_SHA or footer['tool'] != 'synth/build_kit_footer.py' or
+            [x['address'] for x in footer['patches']] != [0x83FBAF36]):
+        raise ValueError('unexpected kit footer stage metadata')
+    fast = json.loads(Path(footer['parent_app1']).with_name('manifest.json').read_text(encoding='utf-8'))
+    if (fast['sha256'] != FASTBOOT_SHA or fast['parent_sha256'] != COMBINED_SHA or
+            fast['tool'] != 'synth/build_fast_boot.py' or [x['address'] for x in fast['patches']] != [0x8013DCAA]):
         raise ValueError('unexpected fast boot stage metadata')
     combined = json.loads((a.combined / 'manifest.json').read_text(encoding='utf-8'))
     build.require_hash((a.combined / 'SP404MKII_APP1.bin').read_bytes(), COMBINED_SHA, 'combined build APP1')
