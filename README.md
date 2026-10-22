@@ -53,8 +53,8 @@ reproduction and validation](synth/KITS.md).
   [KITS_SAVE.md](synth/KITS_SAVE.md)
 - **SUB PAD on the Sound Generator:** plays the last pad again, in melodic and
   drum mode. [SG_SUBPAD.md](synth/SG_SUBPAD.md)
-- **FX deep edit:** hold REMAIN and press an FX button, so its screen stays up.
-  Press VALUE to go through its screens and on to extra screens with the
+- **FX deep edit:** press an FX button (or REMAIN + FX), then VALUE: the screen
+  stays up. Press VALUE to go through its screens and on to extra screens with the
   settings the SP never sends to its effects chip, three at a time on CTRL 1-3
   (Tape Echo's TAPE DIST, Reverb's DENSITY and more), on the bus effects and
   the input FX; an effect without any says NO EXTRA SETTINGS. These live in RAM only,
@@ -261,14 +261,14 @@ To go back to the original firmware, just run the updater with the original Rola
 
 ## Status
 
-**v9.47** (2026-10-22) is combined-test6: every feature's latest test build in
+**v9.47** (2026-10-22) is combined-test7: every feature's latest test build in
 one APP1 (`build_combined.py`), plus fast boot (`build_fast_boot.py`) and no
 "SHIFT: PAGE" on the drum kit screen (`build_kit_footer.py`). Its APP1
-SHA-256 is `e54935c3…d6e6`. Each module is byte for byte its own test build's,
+SHA-256 is `be758f67…34b4`. Each module is byte for byte its own test build's,
 and the branch rebuilds the APP1 exactly. In the emulator, every feature suite
 passed its behaviour checks on combined-test5 but one by design (in chromatic
 mode ROLL + VALUE is the roll speed now, not the key), and the 25 kit suites
-passed there. combined-test6 changes only FX deep edit and the kit footer's
+passed there. combined-test7 changes only FX deep edit and the kit footer's
 text: its FX suite, seven kit suites and the patcher test pass. Bounce in place passed its two checks on the unit as
 bounce-3-test6. The other features, and this combined build, have no hardware
 report yet. [COMBINED.md](synth/COMBINED.md).

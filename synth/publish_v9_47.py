@@ -1,15 +1,15 @@
-"""Generate the guarded browser overlay for Sound Generator + Kits v9.47 (combined-test6).
+"""Generate the guarded browser overlay for Sound Generator + Kits v9.47 (combined-test7).
 
 v9.47 is built in two steps. build_combined.py gives the combined build: every feature branch's module, byte for
 byte its own test build's, on bounce-3-test9's parent (resample-startfix-3: the published v9.46's kit stage
 plus the RESAMPLE start fix v3). build_fast_boot.py then skips the boot animation, and build_kit_footer.py blanks the drum kit
-screen's "SHIFT: PAGE": that is combined-test6. The overlay turns the DOOM OS base into combined-test6. Before writing kits-data.js, this script checks:
+screen's "SHIFT: PAGE": that is combined-test7. The overlay turns the DOOM OS base into combined-test7. Before writing kits-data.js, this script checks:
 - the candidate's hash and its three manifests;
 - the chain back to v9.46's kit stage;
 - every module's source against this tree.
 
 usage: python synth/publish_v9_47.py /path/to/stock/SP404MKII_APP1.bin \
-           --combined dev_combined6/combined-test6-base --candidate release/combined-test6
+           --combined dev_combined7/combined-test7-base --candidate release/combined-test7
 """
 import argparse
 import base64
@@ -18,10 +18,10 @@ from pathlib import Path
 
 import build
 
-RELEASE, REVISION, LABEL = 'v9.47', 'combined-test6', '5.52+kits-v9.47'
-EXPECTED_SHA, EXPECTED_SIZE = 'e54935c305cbc16111263dc34614c4a713fba1dda0dff69349cfd5b3fb07d6e6', 3152352
-FASTBOOT_SHA = '52d91be4972af5408368a7ba0ea3f1075fa19fa93097dc5099551d828a6123e9'
-COMBINED_SHA = '7fd468087d7b6c4c750256ffebc2cac966cd852086004ee4d33425a6dddebf57'
+RELEASE, REVISION, LABEL = 'v9.47', 'combined-test7', '5.52+kits-v9.47'
+EXPECTED_SHA, EXPECTED_SIZE = 'be758f67da1d4a9aa1977a4935f533d727c23c712611763c90ae54282aba34b4', 3152432
+FASTBOOT_SHA = '407d4a99602eab841c4d6a3442fb02f14a8f979a524c358fd16368e7c8172b70'
+COMBINED_SHA = '94d2786c72a2953216e5aa2b0b9e66c6cae926d5a4ccebeb835017cf87e18ea7'
 PARENT_SHA = '7d13c1e26d222cea7cada8b6b8ac986b432bf1b32508b5f39ac9c6c117ea61cc'      # resample-startfix-3
 KIT_STAGE_SHA = '88384c3c9760559e721c1a14973ef3a2ced6abf016572b0a73c5dfb0cef492ba'   # v9.46-test3, as in v9.46
 STEPS = ['bounce', 'fx-deep-edit', 'pad-env-1', 'pad-env-2', 'kits-save', 'note-repeat', 'chroma', 'sg-subpad']
@@ -35,7 +35,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('stock', type=Path)
     p.add_argument('--combined', type=Path, required=True, help='the combined build: APP1, manifest.json, steps/')
-    p.add_argument('--candidate', type=Path, required=True, help='combined-test6: APP1 and manifest.json')
+    p.add_argument('--candidate', type=Path, required=True, help='combined-test7: APP1 and manifest.json')
     a = p.parse_args()
     stock = a.stock.read_bytes()
     build.require_hash(stock, build.v2.STOCK_SHA256, 'stock APP1')

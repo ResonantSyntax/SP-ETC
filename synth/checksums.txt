@@ -37,8 +37,8 @@ DOOM-SoundGenerator-Kits-MIDI-v9.44-test1  d47f46d4204a90366ac06774050b9ee4c7b9c
 # MIDI, BOUNC, drum REC to each drum's ring-out, 1000-frame minimum, clean starts, kits on RESAMPLE and LOOPER,
 # RESAMPLE start fix. Replaces v9.43 and the v9.44-test1 option. Test builds partly played on hardware.
 DOOM-SoundGenerator-Kits-v9.46  7b5fbcb4c3ce1e8782fef4b5803be74c7d14eddf25a1b53682abe00c9ed3684a  3094624
-# v9.47 (combined-test6), in the patcher: every feature's latest test build in one APP1 (bounce in place,
+# v9.47 (combined-test7), in the patcher: every feature's latest test build in one APP1 (bounce in place,
 # pad envelopes, note repeat, chromatic scales, kit edits and the Sound Generator saved, FX deep edit, SUB PAD
 # on the Sound Generator) on the RESAMPLE start fix v3, plus fast boot. Replaces v9.46. Emulator-checked; not
 # yet played on hardware as a whole.
-DOOM-SoundGenerator-Kits-v9.47  e54935c305cbc16111263dc34614c4a713fba1dda0dff69349cfd5b3fb07d6e6  3152352
+DOOM-SoundGenerator-Kits-v9.47  be758f67da1d4a9aa1977a4935f533d727c23c712611763c90ae54282aba34b4  3152432
