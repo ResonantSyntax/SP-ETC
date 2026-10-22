@@ -1,16 +1,50 @@
 # Bounce in place, stage 3: a pad through its effects, to a new pad or in its place
 
-Hold RESAMPLE and tap a pad that holds a sample. The SP plays that pad once (or twice for
-LOOP), records it through its effects exactly as you hear it, and cuts the take to the exact
-frame. **TO PAD** puts the result on the first empty pad and leaves the original alone.
-**REPLACE** puts it on the pad itself and keeps the original on the first empty pad; **UNDO**
-swaps them back.
+Hold RESAMPLE and tap a pad that holds a sample. The SP plays that pad once, records it through
+its effects exactly as you hear it, and cuts the take to the exact frame. **TO PAD** puts the
+result on the first empty pad and leaves the original alone. **REPLACE** puts it on the pad itself
+and keeps the original on the first empty pad; **UNDO** swaps them back. The bounce is named after
+its source with ` B`, and the SP goes back to the main screen.
 
 This is a test build on Sound Generator + Kits v9.46: the kit stage of the published v9.46 plus the
 RESAMPLE start fix v3 (the published v9.46 carries v2; see
 [KITS.md](KITS.md#start-fix-v3-test-builds-only)). It supersedes stage 2 (bounce-2-test1, which never
 ran on the unit) on the same four sites, plus the pad-event dispatcher and, since bounce-3-test2, the
 RESAMPLE page's tick. Stage 1 is the bounce probe ([BOUNCE_PROBE.md](BOUNCE_PROBE.md)).
+
+**bounce-3-test7** is the release candidate. It follows the rest of bounce-3-test6's run on the unit
+(2026-10-21) and the user's choices:
+- **No LOOP mode.** A LOOP bounce of a pad through a reverb clicked at its start when played once:
+  the take is a pass of the loop's steady state, so it begins inside the previous pass's tail. The
+  user bounces one-shots and chose to drop LOOP. The setup offers NO TAIL and TAIL, and NO TAIL of
+  a loop keeps one pass and the loop, as before. The pass comparison, its RAM and the long-loop
+  cap drafted after test6 are gone.
+- **A short Release on NO TAIL one-shots.** NO TAIL cuts the effect where the source ends, so a
+  pad through a reverb clicked at the bounce's end. A NO TAIL bounce that ends up a one-shot now
+  gets Release 1, the shortest stock step (23.6 ms), with Hold 100. Its length stays the
+  source's.
+  - **Played to the end:** the stock envelope fades the last 23.6 ms before END to 0.
+  - **A GATE pad let go early:** it fades over 23.6 ms too, instead of the stock 1.3 ms declick.
+  - **Not** for NO TAIL of a loop (the fade would dip every pass) nor TAIL (it ends below
+    −72 dBFS).
+- **Release names.** The bounce is named after its source with ` B` (`New Sample B`), in the stock
+  23 characters. The test numbers stay in RAM ([The pad's name](#the-pads-name)).
+- **The main screen after a bounce.** After BOUNCED, REPLACED or UNDONE the SP leaves RESAMPLE for
+  the main screen, as a stock RESAMPLE does, but without the stock routine's side effects: BUS 1/2
+  effects off and the stock destination made current (test1's bank A). The bank, pad, effects and
+  END Snap stay; EXIT and refusals stay on RESAMPLE ([What changes](#what-changes)).
+- **Unicorn** (535 cases): test6 fails, and test7 passes, each check of the modes offered, Release
+  1, the name and the main screen. On the real global objects, the whole-state audit finds two
+  more bytes changed after TO PAD and REPLACE, RESAMPLE mode and the requested page, and nothing
+  else.
+- **dm-404**, the real firmware, on this APP1:
+  - the page goes from RESAMPLE to the main screen within 0.25 s of the run's end, and no bus
+    effect is switched off;
+  - the bounce is `New Sample B`, with Hold 100 and Release 1 in its record;
+  - held past its end, it falls linearly to 0 over its last 18 blocks (about 23.6 ms);
+  - let go 0.08 s in, it fades over 16 blocks, where a TAIL bounce (Release 0) stops within one;
+  - RESAMPLE again, then a second bounce: both work.
+- **Flash:** APP1 sits 1,152 bytes below the kit PCM planning boundary (test6: 144).
 
 **bounce-3-test6** follows the hardware run of bounce-3-test5 (2026-10-21). It has two findings:
 - A NO TAIL bounce of the original closed hi-hat (a sample, not a resample) read
@@ -88,10 +122,11 @@ RESAMPLE page's tick. Stage 1 is the bounce probe ([BOUNCE_PROBE.md](BOUNCE_PROB
 - **REPLACE**, the hi-hat through a delay: it sounds right and starts properly.
 - **NO TAIL through a reverb** clicks at its end. That is expected: NO TAIL cuts the effect where
   the source ends. TAIL or LOOP keep the tail, or a short Release fades it.
-- **Open:** a later LOOP take of the hi-hat through a delay looked a few frames late. Its waveform
-  began just before START, and its last frames held the start of the hit. In dm-404 the LOOP window
-  is exact: a one-shot made to loop plays exactly END − START a pass over 137 passes, and the take
-  at pass 136 lines up with the source as a take of pass 1 does.
+- **Open, then moot** (test7 drops LOOP mode): a later LOOP take of the hi-hat through a delay
+  looked a few frames late. Its waveform began just before START, and its last frames held the
+  start of the hit. In dm-404 the LOOP window is exact: a one-shot made to loop plays exactly
+  END − START a pass over 137 passes, and the take at pass 136 lines up with the source as a take
+  of pass 1 does.
 
 **bounce-3-test5** changes only the image under the bounce. The user found a normal RESAMPLE's
 START a few samples after the start of its wave. The cause is the RESAMPLE start fix (v2): it puts
@@ -290,20 +325,22 @@ outside this repository.
    NO TAIL                 NO TAIL
    ```
 
-   - Turn **VALUE** for the mode: NO TAIL, TAIL or LOOP. Turning past either end stays on that
-     end.
+   - Turn **VALUE** for the mode: NO TAIL or TAIL. Turning past either end stays on that end.
    - Press **VALUE**, or turn VALUE with **SHIFT** held, for the target: TO PAD (`BOUNCE A-1>A-9`)
      or REPLACE (`REPLACE A-1`).
 3. Press **REC** to start, or **EXIT** to back out (`BOUNCE CANCELLED` / `NOTHING CHANGED`).
 4. The SP stops every sound, waits for silence (`WAIT SILENCE`, at most 10 s), then plays the
-   pad and records. The popup counts (`NO TAIL 37%`, `LOOP 37%`, `TAIL 2.4s`).
+   pad and records. The popup counts (`NO TAIL 37%`, `TAIL 2.4s`).
 5. At the end:
    - TO PAD: `BOUNCED A-1` / `ON A-9`.
    - REPLACE: `SWAPPING`, then `REPLACED A-1` / `ORIG ON A-9`.
+6. The SP goes back to the main screen. The bank, the pad, the effects and END Snap stay as they
+   were. The bounced pad is named after the source with ` B` (`New Sample` → `New Sample B`).
 
 **EXIT** cancels at any point until the take is being saved. Nothing is written, and every
-setting the run changed comes back. While a bounce is set up or running, every other key, knob
-and pad is ignored, so nothing else can sound in the take.
+setting the run changed comes back. EXIT, and every refusal, leave you on the RESAMPLE screen.
+While a bounce is set up or running, every other key, knob and pad is ignored, so nothing else
+can sound in the take.
 
 The first bounce after power-on starts on TO PAD and NO TAIL. After that the setup popup starts
 on the target and mode you picked last, as soon as you picked them (EXIT does not lose them); this
@@ -319,7 +356,8 @@ ORIG ON A-9
 ```
 
 - **REC** swaps the two pads back: `UNDONE A-1` / `BOUNCE ON A-9`. The original is back on its
-  pad, bit for bit, with every setting it had. The bounce stays on A-9, as after TO PAD.
+  pad, bit for bit, with every setting it had. The bounce stays on A-9, as after TO PAD, and the
+  SP goes back to the main screen.
 - **EXIT** leaves both pads as they are.
 - Press **VALUE** (or SHIFT + VALUE) to bounce the pad again instead (TO PAD or REPLACE).
 
@@ -348,24 +386,23 @@ says `NO EMPTY PAD` (unless the pad offers UNDO).
 
 | Mode | What is recorded | Use |
 | --- | --- | --- |
-| NO TAIL | exactly one pass of the pad: from its first frame for as long as it plays | loops that must keep their length; one-shots with the effect cut at the end |
+| NO TAIL | exactly one pass of the pad: from its first frame for as long as it plays. A one-shot gets the shortest Release (23.6 ms), so an effect cut at its end fades instead of clicking | one-shots and loops that must keep their length |
 | TAIL | one pass and the effects ringing out, to the last frame above about −72 dBFS once 250 ms are quiet (at most 30 s) | one-shots through delay or reverb |
-| LOOP | a pass of the loop's steady state: the pad loops until its passes agree for 3 s (at most 30 s), so the take carries every echo and tail that wraps into a pass | seamless loops through time effects |
 
-Whether NO TAIL and LOOP can be exact depends on the pad. "At its own rate" means PITCH 0, FINE
-0, SPEED 100%, no BPM SYNC and no REVERSE.
+There is no LOOP mode (bounce-3-test7): a LOOP take began inside the previous pass's tail, so a
+pad through a reverb clicked at its start when played once. NO TAIL of a loop keeps the source's
+loop. NO TAIL needs the pad's exact length. "At its own rate" means PITCH 0, FINE 0, SPEED 100%,
+no BPM SYNC and no REVERSE.
 
 | Pad | Modes offered |
 | --- | --- |
-| at its own rate, one-shot or loop | NO TAIL, TAIL, LOOP |
+| at its own rate, one-shot or loop | NO TAIL, TAIL |
 | one-shot, not at its own rate | NO TAIL (the voice's own length, to its last non-silent frame), TAIL |
 | loop, not at its own rate | TAIL only (the popup says `TAIL ONLY`) |
 
-- A one-shot in LOOP mode loops for the run: its LOOP is switched on before the pad is played
-  and switched back off before the take is saved.
 - A loop in TAIL mode plays once: its LOOP is switched off for the run.
-- A pad with a loop point plays START to END first, then loops from the loop point. LOOP mode
-  records one loop-point-to-END pass, and compares only those passes.
+- NO TAIL of a loop records its first pass, START to END, and the bounce loops from the same
+  loop point as the source.
 - Exact lengths for BPM SYNC loops (study §7.5) are not in this build. Such a loop is stretched
   to the bank tempo inside SMPL CHARGE TASK, out of the module's sight; a stretched pass need not
   be a whole number of frames, and whether the stretcher repeats exactly is unknown. They stay
@@ -431,7 +468,7 @@ reference manual for VINYL MODE.
 | performance | GATE (0x6a), MUTE GROUP (0x6d, 0..10), Roll (0x7b, 0..10), Polyphonic (0x70) | the source's | how the pad is played, not what it sounds like. Polyphonic is a bit field: bit 5 is the poly one-shot (the setter clears it when GATE or LOOP goes on), bits 1–2 the stretch (VARI) mode, unused at the bounce's own rate. It is copied first, so the stock rule applies as for the source |
 | performance | TEMPO SYNC (0x6e) | the source's | with ORIGINAL BPM = the render tempo, the bounce plays unstretched at that tempo and follows a tempo change as the source does |
 | performance | VINYL MODE (0x77) | the source's with TEMPO SYNC on, else 1 (the stock default) | sync needs VINYL MODE off (the BPM SYNC light is forced off while it is on); with it on, pitch and speed stay tied and VARI processing is never used, so the bounce plays its file untouched |
-| performance | LOOP (0x6b) | NO TAIL: the source's; LOOP: on; TAIL: off | the take is a loop in LOOP mode and one pass plus a tail in TAIL mode |
+| performance | LOOP (0x6b) | NO TAIL: the source's; TAIL: off | NO TAIL keeps a loop a loop; TAIL is one pass plus a tail |
 | performance | loop point (0x71), loop flag 0x72 ("TOP") | NO TAIL of a loop: the source's offset from START and its flag; else START, off | the bounce repeats from the same place as the source |
 | performance | PAD LINK (0x79, 0..10) | TO PAD: off. REPLACE: the source's | TO PAD in the source's group would trigger the source with it. After REPLACE the bounce takes the source's place and the parked original leaves the group (UNDO puts it back) |
 | printed | VOLUME (0x69, 0..127) | 127 | the stock default; the source's level is in the take |
@@ -440,48 +477,38 @@ reference manual for VINYL MODE.
 | printed | SPEED (0x76, 1/100 %) | 10000 | 100 % |
 | printed | PLAY (0x75) | 0 | forward; bit 0 is reverse |
 | printed | BUS FX Assign (0x7a) | 0, DRY | the renderer routes 0 through DRY Routing. 1 (BUS 1) is the stock default for every new pad, so a stage 2 bounce would have played through the bus effect a second time |
-| printed | Attack (0x7d), Hold (0x7e, 1..100 %), Release (0x7f) | 0, 100, 0 | the stock envelope page sets these three from CTRL 1–3 (`0x800f5d10`): Hold is the envelope's hold, so it is printed, not a performance setting (the study listed it under performance) |
+| printed | Attack (0x7d), Hold (0x7e, 1..100 %) | 0, 100 | the stock envelope page sets these from CTRL 1–2 (`0x800f5d10`): Hold is the envelope's hold, so it is printed, not a performance setting (the study listed it under performance) |
+| printed | Release (0x7f, 0..127, steps of 23.6 ms) | NO TAIL of a one-shot: 1. Otherwise 0 | NO TAIL cuts the effect where the source ends. With Hold at 100 % the stock envelope fades the last 23.6 ms before END to 0, so the cut no longer clicks; the length stays the source's. On a GATE pad a key-up before the end fades over 23.6 ms too, instead of the 1.3 ms declick (dm-404: 16 blocks against one). Not for a loop (the fade would dip every pass) nor TAIL (it ends below −72 dBFS) |
 | other | everything else (BUS Effect Asgn 0x6c, 0x7c, the DJ and extended blocks) | as any new resample | 0x6c's role is not identified; the finalize resets the extended block (0x8e–0x9d) and the tempo-synced modulation (0x8a–0x8c, off) |
 
 The source's own settings are not changed, apart from LOOP and PAD LINK during the run, which come
 back.
 
-### The pad's name (test build)
+### The pad's name
 
-The bounced pad is named with the run's numbers, so a hardware test can read them on the SP:
+The bounced pad is named after the source with ` B`: `New Sample` → `New Sample B`. The stock name
+keeps 23 characters, so a longer source name is cut to make room, and loses the spaces the cut
+leaves at its end. A source with no name (the stock slot of a pad never named holds spaces) gives
+its pad instead: `A12 B`. A bounce of a bounce adds another ` B`. A REPLACE names the replaced pad;
+the parked original keeps its own name, and UNDO swaps them back.
 
-```
-A1 L73-7 M73 P65.1 D-1
-```
+Up to bounce-3-test6 the name showed the run's numbers (`A1 L73-7 M73 P65.1 D-1`). The last run's
+numbers stay in RAM, in the module's `bnc_ui_state`, for a look with a debugger or dm-404:
 
-| Field | Meaning |
-| --- | --- |
-| `A1` | the source pad |
-| `L73` | the L used: the return's main delay |
-| `-7` | the window starts this many frames before L, where the return departs from silence; left out when it starts at L |
-| `C` | after L and the departure (`L73C`, `L73-7C`): the estimate included this boot's calibration |
-| `M73` | the onset-measured L; `M--` = no onset within 100 ms |
-| `P65.1` | the mean eDMA phase over the silence wait |
-| `D-1` | RX blocks minus TX blocks counted since boot |
-| `x80` | LOOP: the pass the take holds (pass 0 starts at the trigger) |
-
-A name over 23 characters loses P's tenth first, then the space before x
-(`A1 L72-3 M69 P66 D-1x30`); the pass is never cut.
-
-The stock name keeps 23 characters. A longer name loses P's tenth instead of D's end, for example
-`A12 L73-7C M73 P65 D-1`, and a LOOP name then the space before x.
-
-These stay in the bounce-3 test builds: the timing is being checked on the unit, and T3 reads L
-and M from every bounce. A REPLACE shows them on the replaced pad; the parked original
-keeps its own name. The release names the pads instead (for example the source's name plus
-` BNC`), once the numbers have done their job.
+| Field | Test-build name | Meaning |
+| --- | --- | --- |
+| `r_l` | `L73` | the L used: the return's main delay |
+| `r_win` | `-7` (L − r_win) | where the window starts, frames after T0: the departure, else L |
+| `r_cached` | `C` | the estimate included this boot's calibration |
+| `r_meas` | `M73` | the onset-measured L; 0 = no onset within 100 ms (`M--`) |
+| `r_p16` | `P65.1` | the mean eDMA phase over the silence wait, × 16 |
+| `r_d` | `D-1` | RX blocks minus TX blocks counted since boot |
 
 ### When it fails
 
 | What happens | The run | The popup |
 | --- | --- | --- |
-| EXIT in the setup, the standby, the silence wait, while LOOP compares passes, or the take | discards the take (cancel 0x1a, or 0x18 in standby), restores everything | `BOUNCE CANCELLED` / `NOTHING CHANGED` |
-| LOOP: no run of agreeing passes reaches 3 s within 30 s (a feedback that never decays) | takes the next pass anyway | `LOOP NOT SETTLED` / `ON A-2` (or `ORIG ON A-2`) |
+| EXIT in the setup, the standby, the silence wait, or the take | discards the take (cancel 0x1a, or 0x18 in standby), restores everything | `BOUNCE CANCELLED` / `NOTHING CHANGED` |
 | EXIT while the take is saved or the pads are swapped | ignored: these steps run to the end | |
 | the input never quiet for 200 ms in 10 s | discards | `FX STILL RINGING` |
 | a pattern running, or starting | refuses, or discards | `STOP PATTERN FIRST` |
@@ -528,7 +555,7 @@ count both and call `bnc_tx` after the mixer and `bnc_rx` after the feed.
 - **T0:** a voice renders whole 64-frame blocks. T0 is the TX frame that starts the block in
   which the source pad's new voice first renders. The renderer's own test is used: the stream is
   set, its chunk index isn't 0xff, and the voice's pad index is the source.
-- **F0:** the take starts at RX frame F0 = T0 (one pass later in LOOP mode). From there the RX
+- **F0:** the take starts at RX frame F0 = T0. From there the RX
   frames go straight to the recorder engine's stereo writer. The last four RX blocks are kept,
   so F0 may lie behind the block being processed. File frame *k* of the take is RX frame
   F0 + *k*.
@@ -598,6 +625,15 @@ finalize does. test2 did not, and its bounce played into those frames.
   tick's state handler and after-recording routine therefore never run for a bounce, and the end of
   a bounce's take or cancel leaves the bus effects, the current bank and pad, the RESAMPLE mode and
   screen, END Snap and the page as they were. At any other time the tick runs exactly as in v9.46.
+- After a finished bounce (BOUNCED, REPLACED, UNDONE) the run leaves RESAMPLE itself, as the stock
+  exit (`0x8012d438`) does but without its REC_STOP, ALL SOUND OFF and bank and pad restore:
+  RESAMPLE mode off (settings 0x36), sequencer 0x46 set to the value the exit gives it
+  (`0x800e11d0` with `0x800d61f0(0x80591adc, 9, 1)`), every LED redrawn (`0x802496f0` = 0xffff),
+  then the page request the after-recording routine ends with (`0x800da598`, page 1). Unlike that
+  routine it switches no bus effect off and makes no pad current. The page switch, in the UI task,
+  runs the RESAMPLE page's own leave (`0x8012ce20`), which keeps the current bank and pad while that
+  pad holds a sample. The tick bridge holds the page until the switch; the next RESAMPLE page's
+  first tick lets go. EXIT and every refusal stay on RESAMPLE.
 - It triggers the source through the stock pad note (`0x800cdbd0`, velocity 127, mode 1); the gate
   lets that one note through by its pad, whatever velocity FIXED VELOCITY gives it.
 - **Memory:** the bridges and the module (`bounce.c`, Zig 0.13.0 `-Os`) go in a 20 KB slot at
@@ -606,8 +642,8 @@ finalize does. test2 did not, and its bounce played into those frames.
   module's state, so its zeros take no flash. APP1 stays below the kit PCM planning boundary
   (`0x60376000`). The builder checks that no row overlaps the slot and that nothing in the input
   refers to it.
-- **Guards:** every patched site is checked against its exact v9.46 contents. 109 spans the module
-  calls or relies on are checked byte for byte (SHA-256 in the builder), plus 21 jump-table
+- **Guards:** every patched site is checked against its exact v9.46 contents. 122 spans the module
+  calls or relies on are checked byte for byte (SHA-256 in the builder), plus 22 jump-table
   entries. Stage 3 adds the pad-event dispatcher and its ring, the pad note and the note-on's PAD
   LINK loop, command 0x40d and the exchange with its file and parameter swaps, the whole pad getter
   and setter with its conversions and protect test, the new-sample defaults, the envelope page, the
@@ -619,15 +655,17 @@ finalize does. test2 did not, and its bounce played into those frames.
   vtable entries (the tick's only callers), its state handler and after-recording routine, the bus
   effect off, the RESAMPLE exit and its restore. bounce-3-test3 adds the pad's charge: the
   finalize's end, the range setter, the mark and its clearing, `0x800d7508` and the charge entry
-  functions under it. The jump-table entry
+  functions under it. bounce-3-test7 adds the page request, the value the RESAMPLE page gives
+  sequencer 0x46 and the sequencer setter's path for it, the RESAMPLE page's leave (its registry
+  record, handler and leave event, the two vtable slots and both leave functions) and page 1's
+  registry record. The jump-table entry
   for settings get 0x1b (REC BPM) is gone with the module's REC BPM read. All are stock 5.52 bytes
   except DOOM OS's filter (v9.46) and the start fix's three spans (startfix-3: its two jumps are
   v9.46's bytes, its code is v3's).
 - **Branch scan:** no direct branch anywhere in the ITCM or SDRAM code lands inside a patched
   span.
 - **Cost (emulator):** about 50 instructions per TX+RX block pair when idle; up to about 2,600
-  while bouncing (LOOP's pass comparison adds about 15 a frame, about 1,000 a block, while it
-  runs), plus the stock engine writer that the stock gate would call anyway; up to about
+  while bouncing, plus the stock engine writer that the stock gate would call anyway; up to about
   8,000 while a source with no onset is still being searched (its first 100 ms): about 1% of a
   block.
 
@@ -643,11 +681,12 @@ python synth/build_bounce.py out/kits-v946-sf3/SP404MKII_APP1.bin out/bounce --z
 python synth/test_bounce.py out/bounce
 ```
 
-bounce-3-test6 is APP1 `cb5b5e46…b736` (3,104,624 bytes) on start fix v3 `7d13c1e2…61cc`
+bounce-3-test7 is APP1 `d1619078…065c` (3,103,616 bytes) on start fix v3 `7d13c1e2…61cc`
 (3,094,624 bytes). Both come out the same on the kit stage the published v9.46 was built from
 (`88384c3c…92ba`) and on a clean rebuild of every stage from stock 5.52 (v9.5 `d0919e40…`, v9.6
 `1b2d50e0…`, kits `88384c3c…`), and two builds are byte-identical.
-(bounce-3-test5 was `51583df0…1c35`, 3,104,320 bytes, on the same start fix v3; bounce-3-test4
+(bounce-3-test6 was `cb5b5e46…b736`, 3,104,624 bytes, and bounce-3-test5 `51583df0…1c35`,
+3,104,320 bytes, on the same start fix v3; bounce-3-test4
 `d6c86579…4da2`, 3,104,320 bytes, on the published v9.46 `7b5fbcb4…684a`;
 bounce-3-test3 `b9b11fb0…3c52b`, 3,103,872 bytes; bounce-3-test2 `26f594db…11bf`, 3,103,856
 bytes; bounce-3-test1 `59e061cf…221d`, 3,103,744 bytes. These builds were never handed over:
@@ -711,7 +750,7 @@ Modelled:
   system parameter stores;
 - the screen: drawing returns at once.
 
-The checks (519 cases):
+The checks (535 cases):
 
 - **Static:** only the header, the six sites and the appended tail differ from the parent. The
   scatter table is the parent's rows plus a copy row and a zero-fill row; APP1 ends below the PCM
@@ -748,35 +787,40 @@ The checks (519 cases):
   returned.
 - **Whole runs through the bridges:** the take is the RX stream from F0 frame for frame,
   START/END and the loop point land on the window, a dry take is the source's own frames: NO TAIL
-  (sharp attack, echo, 125 ms soft start, START/END inside the file, a looped pad, a pitched
-  one-shot), TAIL (an echo, a looped pad, never quiet), LOOP (a loop point, a one-shot), L ±, D −1
-  / 0 / +1, the boot's calibration, bank B, the popups, a tail still ringing at REC, END Snap; the
-  commands posted, the settings pinned and restored, the stock gate never running, the name and
-  the save; the bounce's last charge is its final START, END and loop point (on test2 each of these
+  (sharp attack, echo, 125 ms soft start, START/END inside the file, a looped pad, a loop point, a
+  pitched one-shot, an echo still sounding at END), TAIL (an echo, a looped pad, never quiet), L ±,
+  D −1 / 0 / +1, the boot's calibration, bank B, the popups, a tail still ringing at REC, END Snap;
+  the commands posted, the settings pinned and restored, the stock gate never running, the name,
+  the run's numbers in RAM and the save; the bounce's last charge is its final START, END and loop
+  point (on test2 each of these
   fails: the last charge was the take's).
 - **A return that departs before its main delay:** a low symmetric ring around 73 that departs at
-  66. NO TAIL starts on 66, and a LOOP take's last 7 frames hold nothing of the next pass. A pure
-  66-frame return under an estimate of 73 also starts on 66. From A-12 after a take that calibrated
-  the boot, the name (24 characters in full) loses P's tenth, not D.
+  66. NO TAIL starts on 66, and NO TAIL of a loop holds nothing of the next pass in its last 7
+  frames. A pure 66-frame return under an estimate of 73 also starts on 66.
 - **P moving within a boot:** calibrated at P65.5 D −1 with L 73, then P 62.5 D 0 with L 76. The
   next take uses 76.
-- **LOOP waits for the steady state** (a 64-frame hit looped at 2,000 frames):
-  - an echo 2.5 passes late with feedback 0.5: the take is a pass of the steady state, with the
-    repeats half a pass in at 0.667 of the hit, equal to the pass before it;
-  - an echo inside a pass: the same;
-  - feedback 1.0: not settled at 30 s, the next pass, `LOOP NOT SETTLED`;
-  - EXIT while passes are compared: cancelled, nothing written;
-  - a LOOP name over 23 characters keeps the pass (`A1 L72-3 M69 P66 D-1x30`).
+- **bounce-3-test7** (each fails on test6, run there with its own layout):
+  - VALUE offers NO TAIL and TAIL, and stops at TAIL; a loop at its own rate offers the same;
+  - a NO TAIL one-shot gets Release 1 with Hold 100 (also one cut in its echo); NO TAIL of a loop
+    and TAIL keep Release 0;
+  - the name: the source's with ` B`; a source name of 23 characters cut to 21; a cut that ends in
+    a space loses it; a pad never named gives `A1 B`; a bounce's bounce `… B B`; REPLACE names the
+    replaced pad, and the parked original keeps its name;
+  - after BOUNCED, REPLACED and UNDONE: RESAMPLE mode off, sequencer 0x46 set to the value the
+    stock exit gives it, every LED redrawn, then one request for page 1, after everything pinned is
+    back; no bank or pad set, END Snap as before. After EXIT, a refusal or a failure: no page
+    request, RESAMPLE mode on.
 - **The departure found in the return alone:**
   - three ±1 samples that the stems do not show, then an attack through a 6-frame pre-ring (M69
     against the estimate 72): START on the return's first non-zero frame;
   - a source 19 frames into its block, with an isolated sample 22 frames before the return's main
     part (test5 read `L72-3 M69` there, 3 frames after the first non-zero): START on that sample;
-  - a LOOP take through the first return ends on the frame before the next pass's return departs.
+  - NO TAIL of a loop through the first return ends on the frame before the next pass's return
+    departs.
 - **Onsets a threshold crossing gets wrong,** with true L 77: a 32-frame attack, 20 ms attacks
-  with RX +6 and −6 dB, a 10 ms attack through an echo with +3.5 dB, and a LOOP pass with a soft
-  start. L stays 77, and is within a frame with the level step. An onset 5 frames or 20 frames
-  from the estimate is not used.
+  with RX +6 and −6 dB, a 10 ms attack through an echo with +3.5 dB, and a loop whose pass starts
+  softly (NO TAIL). L stays 77, and is within a frame with the level step. An onset 5 frames or 20
+  frames from the estimate is not used.
 - **The bounced pad's settings,** read back through the stock getter: performance settings
   copied, printed ones neutral, VINYL MODE with and without TEMPO SYNC, the poly bit under GATE,
   LOOP, loop point and the 0x72 flag per mode, PAD LINK; the source untouched.
@@ -815,14 +859,18 @@ The checks (519 cases):
   parameter is read through the stock getters before and after. The global objects
   (`0x82df0000`–`0x82e50000`, `0x80590000`–`0x805a0000`, `0x80240000`–`0x80250000`,
   `0x833b8000`–`0x833b9000`) are diffed byte for byte. Nothing goes to the effects chip. BUS 1/2
-  keep their effects, and bank C, the RESAMPLE mode and page, END Snap and the screen state stay.
-  Every write and every changed parameter or byte must be on an allowlist with its reason:
+  keep their effects, and bank C, the current pad, END Snap and the screen state stay. TO PAD and
+  REPLACE turn RESAMPLE mode off and request page 1, once; the two EXITs keep RESAMPLE mode and
+  the page and request nothing. Every write and every changed parameter or byte must be on an
+  allowlist with its reason:
   - the run's pads: the destination; with REPLACE also the source, and the current pad's views of
     it, since the source is the current pad;
   - the edited and change flags that the stock name function and pad setter raise;
   - project 0xef and 0x98 (the source played through the stock pad note);
   - recorder target 0, the queues' indices, the input meter, the key records, the popup and the
-    panel refresh flags.
+    panel refresh flags;
+  - after TO PAD and REPLACE: RESAMPLE mode (settings 0x36, its byte `0x82e011cc`) and the
+    requested page (`0x8024587c` = 1; the page switch, in the UI task, does not run here).
 
   A stock RESAMPLE of the same pad, through the stock page handlers, ends with BUS 1/2 off, the
   new pad current and RESAMPLE left, on a fresh boot and right after the TO PAD bounce. The audit fails on bounce-3-test1 as the unit did: BUS 1/2

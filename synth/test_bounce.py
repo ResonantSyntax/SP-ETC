@@ -33,12 +33,15 @@ Checks:
   the target and mode kept once picked;
 - the same keys through the UI task's own dispatcher, and a whole REPLACE that way;
 - the looper through its stock code: refused only while it plays, records, overdubs or is armed;
-- whole runs through the bridges (NO TAIL, TAIL, LOOP; one-shots and loops; at their own rate and
+- whole runs through the bridges (NO TAIL, TAIL; one-shots and loops; at their own rate and
   not; sharp and soft starts; D = -1, 0, +1; an extra frame of latency; the boot's calibration):
   the take holds exactly the RX frames from T0 through the window, START and END land on the
   window, the take is the source's own frames when the effect is dry, the environment comes back;
-- the bounced pad's settings: performance settings copied, printed ones neutral, as the stock
-  getter reads them back;
+- the bounced pad's settings: performance settings copied, printed ones neutral, Release 1 on a
+  NO TAIL one-shot only, as the stock getter reads them back; its name: the source's with " B";
+- after a finished bounce, the main screen: RESAMPLE mode off, sequencer 0x46 as the stock exit
+  sets it, the LEDs redrawn, page 1 requested; the effects, bank, pad and END Snap untouched; no
+  page request after EXIT or a refusal;
 - REPLACE and UNDO through the real exchange: the swap, PAD LINK, bit-exact undo, the records, a
   changed pad, protected banks, a failed swap, a stalled command ring; the fence stored only after
   the exchange returned, in the same pass of SMPL TASK's loop;
@@ -102,7 +105,8 @@ STUBS = {
     0x800D94D8: 'get', 0x800DD0C0: 'set', 0x800DDA38: 'pget', 0x800DED18: 'pset', 0x800DA010: 'sysget',
     0x800CE420: 'modal', 0x101BA: 'zero', 0x1BB6A: 'nop', LOOPER_IN: 'looper_in', GATE: 'gate', WRITER: 'writer',
     0x800D8B90: 'nop',               # the project's change broadcast (its listeners are not built here)
-    0x800E11D0: 'nop',               # the sequencer's notice after a TEMPO SYNC change (its object is not built)
+    0x800E11D0: 'seq',               # sequencer parameter set: logged (its object is not built here)
+    0x800DA598: 'page',              # page request: logged (the UI task's page switch does not run here)
     # around the exchange in command 0x40d's case: preview files closed, a debug line, the remote's notice
     0x800DEBD8: 'nop', 0x8003A7A0: 'zero', 0x800D31C6: 'nop', 0x800D9F58: 'nop', 0x800E1190: 'one',
     RING: 'ring', DISPATCH_A: 'other',
@@ -122,21 +126,21 @@ STUBS = {
 }
 KEY_REC, KEY_RESAMPLE, KEY_EXIT, KEY_SHIFT, KEY_VALUE = 0x1B, 0x1C, 0x22, 0x2A, 0x31
 EV_KEY, EV_KEY_UP, EV_ENCODER, EV_KNOB, EV_PAD, EV_PAD_UP = 5, 6, 7, 9, 0x10, 0x11
-FIELDS_A = ('tx_blocks rx_blocks phase quiet_rx quiet_tx pad mode skip measure armed_voices slot voice t0 f0 fed '
+FIELDS_A = ('tx_blocks rx_blocks phase quiet_rx quiet_tx pad mode measure armed_voices slot voice t0 f0 fed '
             'stop have_l cached l l_est l_meas p_n p0 p_sum p16 d tx_onset scan last_nz voice_end last_loud win '
-            'rx_now fail rx_onset l_win departed settle k').split()
-FIELDS_U = ('state ms since shown refresh src dst mode modes loop_src loop_pin len1 len2 native saved_len saved_snap '
+            'rx_now fail rx_onset l_win departed').split()
+FIELDS_U = ('state ms since shown refresh src dst mode modes loop_src loop_pin len1 native saved_len saved_snap '
             'pinned msg waits last_mode cal_off cal_valid runs r_l r_est r_meas r_p16 r_d r_start r_end r_len '
             'r_mode r_exact target targets last_target scratch lp_off ext_pin saved_ext link_pin link_src swap_kind '
-            'swap_a swap_b want_len_a want_ch_a want_len_b want_ch_b fence undo_slot undo_next partial err dropped r_k '
-            'r_settle').split()
+            'swap_a swap_b want_len_a want_ch_a want_len_b want_ch_b fence undo_slot undo_next partial err dropped '
+            'r_win r_cached').split()
 UNDO_FIELDS = 'used pad keep len_pad ch_pad len_keep ch_keep link'.split()
 UNDOS = 8
 SIGNED = {'l', 'l_est', 'l_meas', 'p0', 'p_sum', 'p16', 'd', 'saved_len', 'saved_snap', 'cal_off', 'r_l',
-          'r_est', 'r_meas', 'r_p16', 'r_d', 'saved_ext', 'link_src', 'err'}
+          'r_est', 'r_meas', 'r_p16', 'r_d', 'saved_ext', 'link_src', 'err', 'r_win'}
 (U_IDLE, U_SETUP, U_STANDBY, U_SILENCE, U_RECSTART, U_VOICE, U_RUN, U_FINAL, U_CANCEL, U_SWAP,
  U_STOCKSTOP) = range(11)
-NO_TAIL, TAIL, LOOP = range(3)
+NO_TAIL, TAIL = range(2)
 T_PAD, T_REPLACE, T_UNDO = range(3)
 # pad parameters
 P_LENGTH, P_START, P_END, P_VOLUME, P_GATE, P_LOOP, P_MUTE, P_SYNC, P_OBPM, P_POLY, P_LP, P_TOP = (
@@ -144,7 +148,7 @@ P_LENGTH, P_START, P_END, P_VOLUME, P_GATE, P_LOOP, P_MUTE, P_SYNC, P_OBPM, P_PO
 P_PITCH, P_FINE, P_PLAY, P_SPEED, P_VINYL, P_PAN, P_LINK, P_BUS, P_ROLL, P_ATTACK, P_HOLD, P_RELEASE = (
     0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x7B, 0x7D, 0x7E, 0x7F)
 NEUTRAL = {P_VOLUME: 127, P_PAN: 64, P_PITCH: 0, P_FINE: 0, P_SPEED: 10000, P_PLAY: 0, P_BUS: 0, P_ATTACK: 0,
-           P_HOLD: 100, P_RELEASE: 0}
+           P_HOLD: 100}
 fails = []
 cases = [0]
 
@@ -404,6 +408,10 @@ class Machine:
         elif name == 'doom':
             self.log.append(('doom', struct.unpack('<h', bytes(uc.mem_read(r1, 2)))[0]))
             value = 0x55
+        elif name == 'seq':
+            self.log.append(('seq', r1, sr[2], sr[3]))
+        elif name == 'page':
+            self.log.append(('page', sr[0]))
         elif name == 'get':
             value = self.settings.get(r1, 0)
         elif name == 'set':
@@ -591,6 +599,11 @@ class Machine:
     def name(self, pad):
         return bytes(self.uc.mem_read(SMPL + 0x6CFC + pad * 24, 24)).split(b'\0')[0].decode('ascii').rstrip()
 
+    def set_name(self, pad, text):
+        """A pad's name slot as the stock name function leaves it (dm-404: 'New Sample' then zeros; a pad never
+        named holds 23 spaces)."""
+        self.uc.mem_write(SMPL + 0x6CFC + pad * 24, text.encode('ascii')[:23].ljust(24, b'\0'))
+
     def protect(self, bank, on=True):
         self.uc.mem_write(SMPL + 0x19900, b'\x01')
         self.w32(SMPL + 0x58 + 4 * bank, 1 if on else 0)
@@ -618,6 +631,7 @@ class Machine:
         self.key(k, False)
 
     def gesture(self, pad):
+        self.settings[0x36] = 1         # on the RESAMPLE page: its entry sets RESAMPLE mode (a finished bounce clears it)
         self.keys.add(KEY_RESAMPLE)
         self.press_keys()
         r = self.event(EV_PAD, pad, 100)
@@ -1131,7 +1145,8 @@ def filter_checks(img, man):
         mg.turn(d)
         mg.ui(1)
         seen.append(mg.popup().split('\n')[1])
-    check(seen == ['TAIL', 'LOOP', 'LOOP', 'TAIL', 'NO TAIL', 'NO TAIL'], f'VALUE: NO TAIL / TAIL / LOOP, clamped ({seen})')
+    check(seen == ['TAIL', 'TAIL', 'TAIL', 'NO TAIL', 'NO TAIL', 'NO TAIL'],
+          f'VALUE: NO TAIL / TAIL, clamped; no LOOP (bounce-3-test7) ({seen})')
     # the target: VALUE pressed steps TO PAD -> REPLACE -> TO PAD; SHIFT + VALUE steps, clamped; the mode stays
     mg.turn(1)
     seen = []
@@ -1143,9 +1158,9 @@ def filter_checks(img, man):
         mg.ui(1)
         seen.append(mg.popup())
     check(seen == ['REPLACE A-1\nTAIL', 'BOUNCE A-1>A-2\nTAIL', 'REPLACE A-1\nTAIL', 'REPLACE A-1\nTAIL',
-                   'BOUNCE A-1>A-2\nTAIL', 'BOUNCE A-1>A-2\nTAIL', 'BOUNCE A-1>A-2\nLOOP'],
+                   'BOUNCE A-1>A-2\nTAIL', 'BOUNCE A-1>A-2\nTAIL', 'BOUNCE A-1>A-2\nTAIL'],
           f'target: VALUE pressed toggles TO PAD / REPLACE, SHIFT + VALUE steps and stops at the ends, VALUE alone the '
-          f'mode ({seen})')
+          f'mode, which stops at TAIL ({seen})')
     mg.tap(KEY_EXIT)
     mg.ui(1)
     check(mg.u('state') == U_IDLE and mg.popup() == 'BOUNCE CANCELLED\nNOTHING CHANGED' and
@@ -1167,7 +1182,7 @@ def filter_checks(img, man):
     again = mg.popup()
     mg.tap(KEY_EXIT)
     mg.ui(300)
-    check(first == 'BOUNCE A-1>A-2\nLOOP' and again == 'REPLACE A-1\nLOOP',
+    check(first == 'BOUNCE A-1>A-2\nTAIL' and again == 'REPLACE A-1\nTAIL',
           f'the target and the mode are kept once picked, not only once a run starts: after EXIT the gesture offers '
           f'them again ({first!r}, {again!r})')
     # the modes each source offers
@@ -1186,10 +1201,10 @@ def filter_checks(img, man):
         texts.append(mr.popup().split('\n')[1])
         mr.tap(KEY_EXIT)
         mr.ui(1)
-    check(texts == ['BOUNCE A-2>A-5\nNO TAIL', 'LOOP', 'BOUNCE A-3>A-5\nNO TAIL', 'TAIL', 'BOUNCE A-4>A-5\nTAIL ONLY',
+    check(texts == ['BOUNCE A-2>A-5\nNO TAIL', 'TAIL', 'BOUNCE A-3>A-5\nTAIL', 'TAIL', 'BOUNCE A-4>A-5\nTAIL ONLY',
                     'TAIL ONLY'],
-          f'modes: a pad at its own rate offers all three; a pitched one-shot NO TAIL and TAIL; '
-          f'a varispeed loop TAIL ONLY ({texts})')
+          f'modes: a loop at its own rate and a pitched one-shot offer NO TAIL and TAIL, no LOOP (the TAIL picked on '
+          f'the first is offered first on the second); a varispeed loop TAIL ONLY ({texts})')
     # refusals at the gesture
     for name, setup, text in (('no empty pad', lambda mm: [mm.status.__setitem__(p, 1) for p in range(160)],
                                'NO EMPTY PAD'),
@@ -1241,18 +1256,20 @@ def runs(img, man):
     results = []
 
     def native_case(label, mode, turns, n=6000, loop=0, lp=None, d=0, p=61, L=77, attack=0, silence=0, echo=None,
-                    gain=1.0, start=0, end=None, delay=1):
+                    gain=1.0, start=0, end=None, delay=1, name=None):
         m = boot(img, man, d=d, p=p, L=L, seed=rng.randint(0, 1 << 30))
         pcm = pcm_burst(n, rng.randint(0, 1 << 30), attack=attack, silence=silence)
         end = n if end is None else end
         m.load_pad(0, n, start=start, end=end, loop=loop, lp=lp)
+        if name is not None:
+            m.set_name(0, name)
         m.voice = Voice(m, 0, pcm, start, end, lp if lp is not None else start, delay)
         m.fx.update(echo=echo, gain=gain)
         res = run_bounce(m, 0, turns)
         return m, pcm, res
 
     # NO TAIL, one-shot, sharp attack
-    m, pcm, res = native_case('NO TAIL one-shot', NO_TAIL, 0)
+    m, pcm, res = native_case('NO TAIL one-shot', NO_TAIL, 0, name='Closed Hat 01')
     check(res['popup'] == 'BOUNCED A-1\nON A-2', f'NO TAIL one-shot: done popup ({res["popup"]!r})')
     win = check_take(m, 'NO TAIL one-shot', pcm, 77, NO_TAIL, 6000)
     check(m.u('r_meas') == 77 and m.u('r_est') == 77, 'NO TAIL one-shot: onset L 77 = the estimate (P61 D0)')
@@ -1261,8 +1278,26 @@ def runs(img, man):
           m.settings[0x1B] == 12000 and not [x for x in m.log if x[0] == 'set' and x[1] == 0x1B],
           'after the run: feed enable, REC length, END Snap, destination restored; REC BPM never written')
     name = m.name(1)
-    check(m.saves >= 1 and name.startswith('A1 L77 M77 P61.') and name.endswith(' D0') and len(name) <= 23,
-          f'the pad is named with the run ({name}) and saved')
+    check(m.saves >= 1 and name == 'Closed Hat 01 B' and m.name(0) == 'Closed Hat 01',
+          f'the pad is named after the source with " B" ({name!r}) and saved; the source keeps its name')
+    check(m.u('r_l') == 77 and m.u('r_meas') == 77 and m.u('r_win') == 77 and m.u('r_cached') == 0 and
+          m.u('r_p16') >> 4 == 61 and m.u('r_d') == 0,
+          f'the run\'s numbers in RAM, where test builds named the pad (L {m.u("r_l")}, M {m.u("r_meas")}, window '
+          f'{m.u("r_win")}, P {m.u("r_p16") / 16}, D {m.u("r_d")})')
+    check(m.pad_get(P_RELEASE, 1) == 1 and m.pad_get(P_HOLD, 1) == 100 and m.pad_get(P_ATTACK, 1) == 0 and
+          m.pad_get(P_LOOP, 1) == 0,
+          f'a NO TAIL one-shot: Release 1 (23.6 ms) with Hold 100, so the effect cut at END fades '
+          f'({m.pad_get(P_RELEASE, 1)}, {m.pad_get(P_HOLD, 1)})')
+    page = [x for x in m.log if x[0] == 'page']
+    seq = [x for x in m.log if x[0] == 'seq']
+    back = s32(m.call(0x800D61F1, 0x80591ADC, 9, 1))
+    check(page == [('page', 1)] and m.settings[0x36] == 0 and seq == [('seq', 0x46, back, 0)] and
+          m.r16(0x802496F0) == 0xFFFF and m.log.index(page[0]) > m.log.index(('set', 0x1A, -1, 0)),
+          f'a finished bounce leaves RESAMPLE: RESAMPLE mode off, sequencer 0x46 = {back} as the stock exit sets it, '
+          f'every LED redrawn, page 1 requested, after everything pinned is back ({page}, {seq}, 0x36 '
+          f'{m.settings[0x36]})')
+    check(not [x for x in m.log if x[0] == 'pset' and x[1] in (0, 1)] and m.settings[0x59] == 0,
+          'the bank and the pad not set; END Snap as before (the effects: the audit, on the real objects)')
     sets = [x for x in m.log if x[0] == 'set']
     check(sets[:3] == [('set', 0x24, 6, 0), ('set', 0x59, 0, 0), ('set', 0x1A, 1, 0)],
           f'pinned before standby: REC length FREE, END Snap off, destination A-2; REC BPM left alone ({sets[:3]})')
@@ -1315,10 +1350,11 @@ def runs(img, man):
             check_take(m, label, pcm, 77, NO_TAIL, 6000)
     check(any(meas not in (0, 77) for _, meas, _ in onsets),
           f'those onsets are off the true L, so the rule, not the onset, keeps L exact ({onsets})')
-    # LOOP of a loop whose pass starts softly: the window is the second pass, frame for frame
-    m, pcm, res = native_case('LOOP soft start', LOOP, 2, n=5000, loop=1, attack=32)
-    check(m.u('r_l') == 77, f'LOOP, a 32-frame attack: L = the true 77 (onset {m.u("r_meas")}, used {m.u("r_l")})')
-    check_take(m, 'LOOP, a 32-frame attack', pcm[:5000], 77, LOOP, 5000)
+    # NO TAIL of a loop whose pass starts softly: one pass from T0, frame for frame
+    m, pcm, res = native_case('NO TAIL loop soft start', NO_TAIL, 0, n=5000, loop=1, attack=32)
+    check(m.u('r_l') == 77, f'NO TAIL of a loop, a 32-frame attack: L = the true 77 (onset {m.u("r_meas")}, used '
+                            f'{m.u("r_l")})')
+    check_take(m, 'NO TAIL of a loop, a 32-frame attack', pcm[:5000], 77, NO_TAIL, 5000)
     # the unit's return departs from silence 7 frames before its main delay (bounce-3-test3: START 457, the first
     # non-zero frame 450, L 73 at P66 D-1): a low symmetric ring around L. The take starts where the return departs,
     # so it holds the whole attack; L stays the main delay (the name reads L73-7)
@@ -1335,21 +1371,24 @@ def runs(img, man):
     m, res = ring_case(6000, 0, 0)
     first = next((i for i, f in enumerate(m.take) if f != (0, 0)), None)
     check(res['popup'] == 'BOUNCED A-1\nON A-2' and m.u('r_l') == 73 and first == 66 and
-          m.u('r_start') == 384 + 66 and m.u('r_end') == 384 + 66 + 6000 and m.name(1).startswith('A1 L73-7 M73'),
+          m.u('r_start') == 384 + 66 and m.u('r_end') == 384 + 66 + 6000 and m.u('r_win') == 66 and
+          m.u('r_meas') == 73,
           f'NO TAIL, a return departing 7 frames before L 73: START on its first frame 66 (first non-zero {first}, '
-          f'START {m.u("r_start") - 384}, L {m.u("r_l")}, {m.name(1)!r})')
-    # LOOP of a loop through the same return: one pass from the departure, so the take's last 7 frames hold nothing
+          f'START {m.u("r_start") - 384}, L {m.u("r_l")}, window {m.u("r_win")}, M {m.u("r_meas")})')
+    # NO TAIL of a loop through the same return: one pass from the departure, so the take's last 7 frames hold nothing
     # of the next pass (its ring starts right after the window); with LOOP off the bounce ends clean
-    m, res = ring_case(5000, 1, 2)
+    m, res = ring_case(5000, 1, 0)
     f0, lw = m.a('f0'), m.u('r_start') - 384
     kept = m.tx_mix
     m.tx_mix = {t: v for t, v in kept.items() if t < f0 + 5000}         # the next pass off
     alone = [m.rx_value(f0 + lw + 5000 - 7 + i) for i in range(7)]
     m.tx_mix = kept
     tail = m.take[lw + 5000 - 7:lw + 5000]
-    check(res['popup'] == 'BOUNCED A-1\nON A-2' and lw == 66 and tail == alone,
-          f'LOOP through a return departing 7 frames early: the window starts on the departure ({lw}) and its last 7 '
-          f'frames hold nothing of the next pass ({tail == alone})')
+    check(res['popup'] == 'BOUNCED A-1\nON A-2' and lw == 66 and tail == alone and m.pad_get(P_LOOP, 1) != 0 and
+          m.pad_get(P_RELEASE, 1) == 0,
+          f'NO TAIL of a loop through a return departing 7 frames early: the window starts on the departure ({lw}), '
+          f'its last 7 frames hold nothing of the next pass ({tail == alone}); it loops, Release 0 (a fade would dip '
+          f'every pass: {m.pad_get(P_RELEASE, 1)})')
     # The take's start is found in the return alone (bounce-3-test5 on the unit: D1 L72-3 M69 P66.1 D-1, START 453, the
     # take's first non-zero sample at 450). A sharp attack after three +-1 samples that the stems do not show (they
     # still reach the return), through a 6-frame pre-ring whose last 3 frames pass -48 dB, so the onset reads 69 against
@@ -1377,7 +1416,7 @@ def runs(img, man):
     check(res['popup'] == 'BOUNCED A-1\nON A-2' and m.u('r_l') == 72 and m.u('r_meas') == 69 and first == 69 and
           st == first and m.u('r_end') - 384 == st + 6000,
           f'three +-1 samples the stems do not show, then an attack through a 6-frame pre-ring: START on the return\'s '
-          f'first non-zero frame (first {first}, START {st}, {m.name(1)!r})')
+          f'first non-zero frame (first {first}, START {st}, window {m.u("r_win")})')
     # the unit's own numbers: on test5 this reads L72-3 M69 with START 3 frames after the take's first non-zero sample.
     # The source's sound begins 19 frames into its first block; the return's main part passes -48 dB from its first
     # frame, 3 before L; one isolated low sample 25 frames ahead of the main delay (a far tap of the pre-ring) is the
@@ -1388,96 +1427,54 @@ def runs(img, man):
     check(res['popup'] == 'BOUNCED A-1\nON A-2' and m.u('r_l') == 72 and m.u('r_meas') == 69 and first == 66 and
           st == first,
           f'the unit\'s L72-3 M69 (a source 19 frames into its block, an isolated sample 22 frames before the return\'s '
-          f'main part): START on the take\'s first non-zero frame (first {first}, START {st}, {m.name(1)!r})')
-    # LOOP through the first return: one pass from the departure, so the window ends exactly where the next pass's
-    # return departs (its pre-ring begins on the frame after the window)
+          f'main part): START on the take\'s first non-zero frame (first {first}, START {st}, window {m.u("r_win")})')
+    # NO TAIL of a loop through the first return: one pass from the departure, so the window ends exactly where the
+    # next pass's return departs (its pre-ring begins on the frame after the window)
     n = 5000
-    m, res = unit_case(unit_source(n, (1, -1, 1)), n, 1, 2, ring6, floor=1)
+    m, res = unit_case(unit_source(n, (1, -1, 1)), n, 1, 0, ring6, floor=1)
     t0, f0, st, end = m.a('t0'), m.a('f0'), m.u('r_start') - 384, m.u('r_end') - 384
     kept = m.tx_mix
     m.tx_mix = {t: v for t, v in kept.items() if t < f0 + n}               # the next pass off
     alone = [m.rx_value(f0 + end - 6 + i) for i in range(7)]
     m.tx_mix = kept
     window_end, after = m.take[end - 6:end], m.take[end] if end < len(m.take) else None
-    name, k = m.name(1), m.a('k')
-    check(name == f'A1 L72-3 M69 P66 D-1x{k}' and k >= 10,
-          f'a LOOP name over 23 characters loses P\'s tenth, then the space before x, never the pass ({name!r})')
     check(res['popup'] == 'BOUNCED A-1\nON A-2' and st == 69 and end == st + n and window_end == alone[:6] and
           after is not None and after != alone[6],
-          f'LOOP through the same return: the window starts on its departure ({st}) and ends on the frame before the next '
-          f'pass\'s return departs ({end}: last 6 frames without it {window_end == alone[:6]}, the next frame with it '
-          f'{after != alone[6]})')
-    # LOOP takes a pass of the loop's steady state (bounce-3-test6 on the unit: a delayed hi-hat bounced as LOOP missed
-    # the delayed hit). A short hit looped at its own length (2000 frames) through a delay with feedback
-    def echo_case(n, d, g, amp=8000, budget=6000, exit_at=None):
-        mm = boot(img, man, seed=rng.randint(0, 1 << 30))
-        mm.fx['feedback'] = (d, g)
-        hit = [(amp, -amp) if i % 2 else (-amp, amp) for i in range(64)] + [(0, 0)] * (n - 64)
-        mm.load_pad(0, n)
-        mm.voice = Voice(mm, 0, hit, 0, n, 0, 1)
-        return mm, run_bounce(mm, 0, 2, budget=budget, exit_at=exit_at)
-
-    def mean_abs(frames):
-        return sum(abs(l) + abs(r) for l, r in frames) / (2 * len(frames)) if frames else 0
-
-    def loop_window(m, n):
-        st = m.u('r_start') - 384
-        win = m.take[st:st + n]
-        f0 = m.a('f0')
-        prev = [m.rx_value(f0 + st - n + i) for i in range(n)]     # the pass before, as the RX stream had it
-        return st, win, prev
-
-    n = 2000
-    # an echo 2.5 passes late, feedback 0.5: test5 took pass 1, which the first repeat (pass 2) has not reached yet
-    m, res = echo_case(n, 5000, 0.5)
-    st, win, prev = loop_window(m, n)
-    k = m.a('k')
-    echo = mean_abs(win[1000:1064]) / 8000                    # the repeats land half a pass in: 0.5 + 0.125 + ...
-    check(res['popup'] == 'BOUNCED A-1\nON A-2' and m.u('r_settle') == 2 and k > 3 and 0.6 < echo < 0.7 and
-          max(max(abs(a - c), abs(b - d)) for (a, b), (c, d) in zip(win, prev)) <= 2 and
-          m.name(1).endswith(f' x{k}') and m.voice.loop,
-          f'LOOP through a delay 2.5 passes long with feedback 0.5: the take is pass {k} of the steady state (the '
-          f'repeats at half a pass {echo:.3f} of the hit), the same as the pass before it, so it loops seamlessly; '
-          f'{m.name(1)!r}')
-    # an echo inside one pass: the steady state comes after the passes that wrap their repeats into the next
-    m, res = echo_case(n, 600, 0.5)
-    st, win, prev = loop_window(m, n)
-    echo = mean_abs(win[600:664]) / 8000
-    check(res['popup'] == 'BOUNCED A-1\nON A-2' and m.u('r_settle') == 2 and 0.45 < echo < 0.7 and
-          max(max(abs(a - c), abs(b - d)) for (a, b), (c, d) in zip(win, prev)) <= 2,
-          f'LOOP through a delay inside one pass: the take is a pass of the steady state ({m.a("k")}; the first repeat '
-          f'{echo:.3f} of the hit), the same as the pass before it')
-    # feedback that never decays (1.0) never settles: the pass at 30 s, and the popup says so
-    m, res = echo_case(n, 5000, 1.0, amp=60, budget=24000)
-    k = m.a('k')
-    check(res['popup'] == 'LOOP NOT SETTLED\nON A-2' and m.u('r_settle') == 3 and
-          1440000 <= m.a('f0') - m.a('t0') <= 1440000 + 3 * n and m.name(1).endswith(f' x{k}'),
-          f'LOOP through feedback 1.0: not settled at 30 s, the next pass taken ({k}, {m.name(1)!r}), '
-          f'popup {res["popup"]!r}')
-    # EXIT while the passes are compared: nothing written, nothing changed, the voice stopped, the source a one-shot
-    m, res = echo_case(n, 5000, 0.5, exit_at=(U_RUN, 400))
-    check(res['popup'] == 'BOUNCE CANCELLED\nNOTHING CHANGED' and m.finalized == [] and not m.voice.active and
-          m.pad_get(0x6B, 0) == 0 and m.u('state') == U_IDLE,
-          f'EXIT while LOOP compares passes: cancelled, nothing changed ({res["popup"]!r}, finalized {m.finalized})')
-    # the name with all its fields: from A-12, after a take that calibrated the boot, it reads 24 characters
-    # (as 'A12 L73-7C M73 P65.5 D-1') and the stock name keeps 23. P's tenth goes, so D stays
+          f'NO TAIL of a loop through the same return: the window starts on its departure ({st}) and ends on the frame '
+          f'before the next pass\'s return departs ({end}: last 6 frames without it {window_end == alone[:6]}, the next '
+          f'frame with it {after != alone[6]})')
+    for _ in range(4):                      # the seeds four LOOP cases drew before bounce-3-test7: the cases after
+        rng.randint(0, 1 << 30)             # them keep theirs
+    # the name: the source's, then " B", in the stock 23 characters. From A-12 after a take that calibrated the boot;
+    # a source name of 23 characters is cut to 21 to make room
     m, res = ring_case(3000, 0, 0)
     src = pcm_burst(3000, rng.randint(0, 1 << 30))
     m.load_pad(11, 3000)
+    m.set_name(11, 'Twenty-three chars long')
     m.voice = Voice(m, 11, src, 0, 3000, 0, 1)
     m.take, m.finalized = [], []
     run_bounce(m, 11, 0)
     name = m.name(m.u('dst'))
-    full = f'A12 L{m.u("r_l")}-{m.u("r_l") - (m.u("r_start") - 384)}C M{m.u("r_meas")} P'
-    check(m.u('cal_valid') == 1 and name.startswith(full) and name.endswith(' D-1') and '.' not in name and
-          len(full) + len('65.5 D-1') > 23 and len(name) <= 23,
-          f'a name longer than the stock 23 characters keeps D ({name!r})')
+    check(m.u('cal_valid') == 1 and m.u('r_cached') == 1 and name == 'Twenty-three chars lo B',
+          f'a source name of 23 characters is cut to make room for " B" ({name!r}); the calibrated L in RAM '
+          f'(r_cached {m.u("r_cached")})')
+    # a cut that ends in a space loses it; a pad never named (the stock slot holds 23 spaces) gives its pad; a
+    # bounce's bounce adds another B
+    for label, given, want in (('the cut ends in a space', 'Snare tight roll 120 v2', 'Snare tight roll 120 B'),
+                               ('never named', ' ' * 23, 'A1 B'), ('a bounce', 'Closed Hat 01 B', 'Closed Hat 01 B B')):
+        mm = boot(img, man, seed=71)
+        mm.load_pad(0, 3000)
+        mm.set_name(0, given)
+        mm.voice = Voice(mm, 0, pcm_burst(3000, 71), 0, 3000, 0, 1)
+        run_bounce(mm, 0, 0)
+        stored = bytes(mm.uc.mem_read(SMPL + 0x6CFC + 24, 24)).split(b'\0')[0].decode('ascii')
+        check(stored == want, f'the name, {label}: {given!r} -> {stored!r}')
     # the other reading of the unit: a pure 66-frame return at P65.5 D-1, the estimate 73 seven frames long. The
     # departure finds the return's first frame there too (L stays the estimate; the window starts at 66)
     m, pcm, res = native_case('pure 66', NO_TAIL, 0, d=-1, p=65, L=66)
     check(m.u('r_start') == 384 + 66 and m.take[66:66 + 6000] == pcm,
           f'a pure 66-frame return under an estimate of 73: START on its first frame, the take the source frame for '
-          f'frame (START {m.u("r_start") - 384}, L {m.u("r_l")}, {m.name(1)!r})')
+          f'frame (START {m.u("r_start") - 384}, L {m.u("r_l")}, M {m.u("r_meas")})')
     # an onset 5 frames below the estimate is not used, nor one 20 frames late (a slow effect): the estimate is
     m, pcm, res = native_case('L-5', NO_TAIL, 0, L=72)
     check(m.u('r_meas') == 72 and m.u('r_l') == 77, f'an onset 5 frames from the estimate is not used ({m.u("r_l")})')
@@ -1499,24 +1496,30 @@ def runs(img, man):
     win = last + 1 - 77
     check_take(m, 'TAIL with an echo', None, 77, TAIL, win)
     check(win > 4000 + 2900, f'TAIL: the window runs into the echo ({win} frames)')
-    check(res['popup'] == 'BOUNCED A-1\nON A-2', 'TAIL: done popup')
-
-    # LOOP, a looped pad with a loop point: pass 2 from the loop point, including pass 1's echo
-    m, pcm, res = native_case('LOOP', LOOP, 2, n=5000, loop=1, lp=1200, echo=(700, 0.5))
-    check_take(m, 'LOOP, loop point 1200', None, 77, LOOP, 3800)
-    check(m.a('k') >= 2 and m.a('f0') == m.a('t0') + 5000 + (m.a('k') - 1) * 3800,
-          f'LOOP: F0 = T0 + the first pass + loop passes up to the one taken ({m.a("k")})')
-    check(m.pad_get(0x6B, 1) != 0 and m.pad_get(0x6B, 0) != 0, 'LOOP: the bounced pad loops; the source still loops')
+    check(res['popup'] == 'BOUNCED A-1\nON A-2' and m.pad_get(P_RELEASE, 1) == 0 and [x for x in m.log
+                                                                                    if x[0] == 'page'] == [('page', 1)],
+          f'TAIL: done popup; Release 0 (it ends below -72 dBFS); the main screen after it '
+          f'({m.pad_get(P_RELEASE, 1)})')
     m.gesture(0)
     m.ui(1)
-    check(m.popup() == 'BOUNCE A-1>A-3\nLOOP', f'the mode used last (LOOP) is offered first next time ({m.popup()!r})')
+    check(m.popup() == 'BOUNCE A-1>A-3\nTAIL', f'the mode used last (TAIL) is offered first next time ({m.popup()!r})')
     m.tap(KEY_EXIT)
 
-    # LOOP of a one-shot: LOOP on for the run, back off before the stop
-    m, pcm, res = native_case('LOOP one-shot', LOOP, 2, n=5000, echo=(1000, 0.4))
-    check_take(m, 'LOOP of a one-shot', None, 77, LOOP, 5000)
-    check(m.pad_get(0x6B, 0) == 0 and m.pad_get(0x6B, 1) != 0,
-          'LOOP of a one-shot: the source is a one-shot again, the bounce loops')
+    # NO TAIL of a looped pad with a loop point: one pass from START (its echo cut), the loop point copied
+    m, pcm, res = native_case('NO TAIL loop point', NO_TAIL, 0, n=5000, loop=1, lp=1200, echo=(700, 0.5))
+    check_take(m, 'NO TAIL of a loop, loop point 1200', None, 77, NO_TAIL, 5000, lp_frames=1200)
+    check(m.pad_get(P_LOOP, 1) != 0 and m.pad_get(P_LOOP, 0) != 0 and m.pad_get(P_LP, 1) == m.u('r_start') + 1200 and
+          m.pad_get(P_RELEASE, 1) == 0,
+          'NO TAIL of a loop: the bounce loops from the same point, Release 0; the source still loops')
+
+    # NO TAIL of a one-shot whose echo still sounds at END: the take is cut there, which Release 1 fades
+    m, pcm, res = native_case('NO TAIL cut', NO_TAIL, 0, n=5000, echo=(4900, 0.5))
+    check_take(m, 'NO TAIL, an echo sounding at END', None, 77, NO_TAIL, 5000)
+    st = m.u('r_start') - 384
+    loud = max(max(abs(a), abs(b)) for a, b in m.take[st + 5000 - 64:st + 5000])
+    check(loud > 1000 and m.pad_get(P_RELEASE, 1) == 1 and m.pad_get(P_HOLD, 1) == 100,
+          f'NO TAIL of a one-shot cut in its echo (its last 64 frames up to {loud}): Release 1 with Hold 100, so it '
+          f'fades over its last 23.6 ms instead of clicking')
 
     # TAIL of a looped pad: plays once (LOOP off for the run)
     m, pcm, res = native_case('TAIL loop', TAIL, 1, n=4000, loop=1, echo=(2000, 0.3))
@@ -1550,8 +1553,9 @@ def runs(img, man):
     run_bounce(m, 2, 0)
     check(m.u('r_est') == 73 and m.u('r_l') == 73, f'calibration: a later soft start uses 73 (est {m.u("r_est")})')
     check(m.take[73:73 + 9000] == soft, 'calibration: that take is frame-exact')
-    name = m.name(3)
-    check(name.startswith('A3 L73C M-- P'), f'calibration: the name marks the boot\'s L and no onset ({name})')
+    check(m.u('r_cached') == 1 and m.u('r_meas') == 0 and m.u('r_l') == 73,
+          f'calibration: the run\'s record in RAM marks the boot\'s L and no onset (r_cached {m.u("r_cached")}, M '
+          f'{m.u("r_meas")})')
     # P moves within a boot (bounce-3-test3 on the unit: P65.1 for NO TAIL, then P62.0 for LOOP in one session; the
     # LOOP take used the boot's L73 although its own phase and its onset M76 both said 76): the calibration is an
     # offset on each take's own P and D, so the next take follows the new phase
@@ -1708,6 +1712,7 @@ def replace_checks(img, man):
     m.pad_set(P_LINK, 4, 0)
     m.load_pad(9, 4000, tag='linked')
     m.pad_set(P_LINK, 4, 9)
+    m.set_name(0, 'Snare Roll')
     orig = m.record(0)
     res = run_bounce(m, 0, 0, target=T_REPLACE)
     posts = [x[1] for x in m.log if x[0] == 'post']
@@ -1724,8 +1729,12 @@ def replace_checks(img, man):
     o1 = bytearray(orig[0])
     o1[0x11C - 0xD0:0x11C - 0xD0 + 4] = struct.pack('<I', 0)
     check(a1 == bytes(o1), 'the original\'s parameter record moved whole, PAD LINK aside')
-    check(m.file(0)['tag'][0] == 'take' and m.pad_get(0x67, 0) == 384 + 77 and m.name(0).startswith('A1 L77'),
-          'the source pad plays the bounce: its file, exact START, the run\'s name')
+    check(m.file(0)['tag'][0] == 'take' and m.pad_get(0x67, 0) == 384 + 77 and m.name(0) == 'Snare Roll B' and
+          m.name(1) == 'Snare Roll',
+          f'the source pad plays the bounce: its file, exact START, named after the original with " B"; the parked '
+          f'original keeps its name ({m.name(0)!r}, {m.name(1)!r})')
+    check([x for x in m.log if x[0] == 'page'] == [('page', 1)] and m.settings[0x36] == 0,
+          'REPLACED: the main screen after it')
     ok, got = neutral_ok(m, 0)
     check(ok and m.pad_get(0x6A, 0) == 1, f'the bounce on the source pad: printed settings neutral ({got})')
     check(m.r32(TARGET_VALUES + 4) == 0xFFFFFFFF and m.param_saves >= 1,
@@ -1763,6 +1772,8 @@ def replace_checks(img, man):
     posts = [x[1] for x in m.log if x[0] == 'post']
     check(m.popup() == 'UNDONE A-1\nBOUNCE ON A-2' and posts == [5, 0x40D, 0xD],
           f'UNDO: sound off, the exchange again, save ({m.popup()!r}, {[hex(p) for p in posts]})')
+    check([x for x in m.log if x[0] == 'page'] == [('page', 1)] and m.settings[0x36] == 0,
+          'UNDONE: the main screen after it')
     check(m.record(0) == orig, 'UNDO is bit-exact: the original\'s file, parameter record (PAD LINK 4 again), name and '
                                'block are back on A-1')
     check(m.file(1)['tag'][0] == 'take' and m.pad_get(P_LINK, 1) == 0 and m.undos() == [],
@@ -1823,12 +1834,13 @@ def replace_checks(img, man):
     m.protect(0)
     res = run_bounce(m, 0, 0)
     check(res['popup'] == 'BOUNCED A-1\nON B-1', f'TO PAD from a protected bank: into bank B ({res["popup"]!r})')
-    # ... and refuses when the run would have to change it (LOOP for a one-shot)
-    m, pcm = setup(seed=46)
+    # ... and refuses when the run would have to change it (LOOP off for TAIL of a loop)
+    m, pcm = setup(seed=46, loop=1)
     m.protect(0)
-    res = run_bounce(m, 0, 2)
-    check(res['popup'] == 'BANK PROTECTED\nNOTHING CHANGED' and m.pad_get(P_LOOP, 0) == 0,
-          'LOOP of a one-shot in a protected bank: BANK PROTECTED, the source unchanged')
+    res = run_bounce(m, 0, 1)
+    check(res['popup'] == 'BANK PROTECTED\nNOTHING CHANGED' and m.pad_get(P_LOOP, 0) != 0 and
+          not [x for x in m.log if x[0] == 'page'],
+          'TAIL of a loop in a protected bank: BANK PROTECTED, the source unchanged, RESAMPLE stays')
 
     # the exchange fails (the renames do not happen): no UNDO record, the failure shown
     m, pcm = setup(seed=47)
@@ -2000,9 +2012,10 @@ def failure_checks(img, man):
     res = run_bounce(m, 0, 0, exit_at=(U_RUN,), target=T_REPLACE)
     check(res['popup'] == 'BOUNCE CANCELLED\nNOTHING CHANGED' and not [x for x in m.log if x[0] == 'exchange'],
           'EXIT during a REPLACE take: cancelled, no exchange')
-    m = setup()
-    res = run_bounce(m, 0, 2, exit_at=(U_RUN,))
-    check(m.pad_get(0x6B, 0) == 0, 'EXIT during a LOOP run of a one-shot: the source\'s LOOP is back off')
+    m = setup(loop=1)
+    res = run_bounce(m, 0, 1, exit_at=(U_RUN,))
+    check(m.pad_get(0x6B, 0) != 0 and not [x for x in m.log if x[0] == 'page'] and m.settings[0x36] == 1,
+          'EXIT during TAIL of a loop: the source\'s LOOP back on; RESAMPLE stays (no page request, RESAMPLE mode on)')
     m = setup()
     m.fx['noise'] = 40
     res = run_bounce(m, 0, 0, budget=9000)
@@ -2410,7 +2423,7 @@ def fence_checks(img, man):
 
 # ---- the image with its global objects built ----
 HEAP = 0x32000000
-REAL_CODE = ('get', 'set', 'pget', 'pset', 'sysget', 'doom', 'qput', 'other', 0x800E11D0, 0x800D8B90)
+REAL_CODE = ('get', 'set', 'pget', 'pset', 'sysget', 'doom', 'qput', 'other', 0x800E11D0, 0x800D8B90, 'page')
 KERNEL = {0x310C: 1, 0x22A4: 1, 0x32B8: 0}                 # RTOS object creation in the constructors: an id
 SCREEN = (0x8006C088, 0x8006BD48, 0x8015F3A8, 0x800D8020)  # drawing: the display is not built here
 UI_TICK, UI_DRAIN, REGISTRY_F, RS_TICK, RS_AFTER = 0x8003C5F0, 0x800BA228, 0x80053CB8, 0x8012DB58, 0x8012CBB0
@@ -2500,8 +2513,8 @@ class RealMachine(Machine):
             uc.mem_write(address, struct.pack('<I', 0x00C00000))    # transmit ready
 
     def _watch(self, uc, a, size, name):
-        r = [s32(uc.reg_read(getattr(ar, f'UC_ARM_REG_R{k}'))) for k in range(1, 4)]
-        self.calls.append((self.ui_ms, name) + tuple(r))
+        r = [s32(uc.reg_read(getattr(ar, f'UC_ARM_REG_R{k}'))) for k in ((0,) if name == 'page' else range(1, 4))]
+        self.calls.append((self.ui_ms, name) + tuple(r))       # a page request's argument (r0) is the page
 
     def _bank(self, uc, access, address, size, value, _):
         self.calls.append((self.ui_ms, 'current ' + ('bank' if address < SMPL + 0x18 else 'pad'), value))
@@ -2694,6 +2707,9 @@ def audit_allowed(addr, pads):
             (0x802468D8, 0x80246918, 'the popup text'),
             (0x80592438, 0x8059243C, 'the panel refresh flags (key LEDs)'),
             (0x8059245C, 0x80592460, 'the panel refresh flags'),
+            (0x8024587C, 0x8024587E, 'the requested page: 1, the main screen, after a finished bounce (the page '
+                                     'switch, in the UI task, does not run here)'),
+            (0x82E011CC, 0x82E011CD, 'settings 0x36, RESAMPLE mode: off as a finished bounce leaves RESAMPLE'),
     ):
         if lo <= addr < hi:
             return why
@@ -2799,18 +2815,29 @@ def audit_checks(img, man):
               f'audit, {label}: the RESAMPLE page\'s tick ran during the run (recorder states {sorted(states)})')
         check(m.chip() == [], f'audit, {label}: nothing to the effects chip ({m.chip()[:2]})')
         check(m.bus_fx() == (3, 2), f'audit, {label}: BUS 1 and BUS 2 keep their effects ({m.bus_fx()})')
-        check(m.r32(SMPL + 0x14) == 2 and m.setting(0x36) == 1 and m.r16(PAGE_ID) == 0x0E,
-              f'audit, {label}: bank C stays current; RESAMPLE mode and page stay')
+        pages = [c[2] for c in m.calls if c[1] == 'page']
+        if exit_in is None:                           # a finished bounce: the main screen
+            check(m.r32(SMPL + 0x14) == 2 and m.r32(SMPL + 0x18) == p0[('pad',)] and m.setting(0x36) == 0 and
+                  pages == [1],
+                  f'audit, {label}: bank C and the current pad stay; RESAMPLE mode off and page 1 (the main screen) '
+                  f'requested ({pages}, 0x36 {m.setting(0x36)}, page {m.r16(PAGE_ID):#x})')
+        else:
+            check(m.r32(SMPL + 0x14) == 2 and m.setting(0x36) == 1 and m.r16(PAGE_ID) == 0x0E and pages == [],
+                  f'audit, {label}: bank C stays current; RESAMPLE mode and page stay, no page request ({pages})')
         check(m.setting(0x59) == 1 and m.setting(0x32) == p0[('settings', 0x32)],
               f'audit, {label}: END Snap back on; the RESAMPLE screen state as before ({m.setting(0x59)}, '
               f'{p0[("settings", 0x32)]} -> {m.setting(0x32)})')
         allowed_calls = {('settings', 0x24), ('settings', 0x59), ('settings', 0x1A), ('settings', 0x32),
                          ('settings', 0x34), ('project', 0xEF)}
+        if exit_in is None:
+            allowed_calls.add(('settings', 0x36))     # RESAMPLE mode off as the bounce leaves for the main screen
         bad = []
         for c in m.calls:
             kind = c[1]
             if kind in ('settings', 'project') and (kind, c[2]) in allowed_calls:
                 continue
+            if kind == 'page' and exit_in is None and c[2] == 1:
+                continue                              # the main screen after a finished bounce
             if kind == 'pad' and c[4] in pads:
                 continue                              # the run's pads: the take's settings, the exchange
             if kind == 'seq' and c[2] in (0x7B, 0x37, 0x46):
@@ -2822,6 +2849,8 @@ def audit_checks(img, man):
         changed = {k: (p0[k], p1[k]) for k in p0 if p0[k] != p1[k] and not (k[0] == 'pad' and k[2] in pads)}
         current = p0[('bank',)] * 16 + p0[('pad',)]
         explained = dict(AUDIT_PARAMS)
+        if exit_in is None:
+            explained[('settings', 0x36)] = 'RESAMPLE mode off: a finished bounce leaves RESAMPLE for the main screen'
         if current in pads:                           # REPLACE of the current pad: its views changed with it
             explained.update({k: CURRENT_PAD_VIEW for k in changed if k == ('system', 0x276) or
                               (k[0] == 'project' and 0x64 <= k[1] < 0x80)})

@@ -52,7 +52,7 @@ HERE = Path(__file__).resolve().parent
 FLASH, COPY, ZERO = 0x60080000, 0x600800E4, 0x60080100   # scatter rows: copy, zero fill
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
 PUBLISHED_V946 = '7b5fbcb4c3ce1e8782fef4b5803be74c7d14eddf25a1b53682abe00c9ed3684a'
-REVISION = 'bounce-3-test6'
+REVISION = 'bounce-3-test7'
 SLOT = 0x5000                       # reserved: [base, base + SLOT)
 SLOT_CEILING = 0x83FED000           # the CPU meter test build's slot, then the start fix at 0x83FEF000
 BRIDGES = {'tx': 0x00, 'rx': 0x30, 'ui': 0x80, 'gate': 0xC0, 'tick': 0x100}
@@ -333,12 +333,43 @@ GUARDS = [
      'pad restored (0x80134990)'),
     (0x80134990, 0x801349C2, 'be51cc3d91015b9b4ed0ebd8a0aabfbc9f3930a878054e3fc3c5187d2614be9a',
      'the restore: project 1 (pad) = [0x805925b0], project 0 (bank) = [0x805925b4]'),
+    # leaving RESAMPLE after a finished bounce (bounce.c leave_resample): what the stock exit does, less its REC_STOP,
+    # ALL SOUND OFF and bank and pad restore, then the page request the after-recording routine ends with
+    (0x800DA598, 0x800DA618, '83dd79362ff54dd4922cda7b443dbf31e5002d4fc57a5fd9239271856ed07a5c',
+     'page request (page): 1 = TOP, refused while [0x80bcc418] is set; [0x8024587c] = page, [0x8059245c] |= 0x8000 '
+     'for the UI task\'s page switch (0x800d0040)'),
+    (0x800D61F0, 0x800D63C8, '3c4e5f164be752fbdfeb74f6716cc000e75a117ab4a700d3cc31cebba14ec6a5',
+     'the value the RESAMPLE page\'s entry (obj 0x80591adc, 9, 0) and its exit (9, 1) give sequencer 0x46'),
+    (0x800E11D0, 0x800E11EE, 'c0b74cceabd0eb0e6a05e947dcabfb33d041b311358f73dfdd124a70f73680e3',
+     'sequencer parameter set (obj, id, value, idx): TBH on the id'),
+    (0x800E1330, 0x800E136E, '79fe9ebfa959800ce86480a7bcdfaf95b7d1fb4c9030182d239f4b6e6eabe554',
+     'sequencer parameter set, id 0x46: the value range-checked through the object, then stored (0x80016228)'),
+    (0x8012CE20, 0x8012CE70, 'cf4f00cc08b9f67c5626e3b41bd7ca230b859723c37a1c108db64e5bc9a826d0',
+     'the RESAMPLE page\'s leave (vtable +0x11c): the current bank and pad kept while project 100 [bank * 16 + pad] '
+     '(the pad holds a sample) is set, else restored as the exit restores them (0x80134990)'),
+    (0x801348F0, 0x80134918, '41deecdd7e3c3bc2bbac0b3d286468acafb66a34794104f235cc6c746096a224',
+     'the RESAMPLE page\'s leave event (vtable +0x14): its +0x11c, then the base page\'s'),
+    (0x80223480, 0x80223484, 'b202e477e04e2278af881afe8fd8b68e08ab940f5c3ad3fdc567bed411de07a1',
+     'RESAMPLE page vtable +0x14 = 0x801348f1'),
+    (0x80223588, 0x8022358C, 'eb85cd1c803a2aec47e120f541e71334c33e1d765205b7643ae5dd8a21834587',
+     'RESAMPLE page vtable +0x11c = 0x8012ce21'),
+    (0x801F9054, 0x801F9058, 'f6057c13c9a5310f306fbfaa4a7be311d732e1b9c2ad293c5971255d4b7ac219',
+     'page registry 0x801f8f74, page 0xe: its handler slot 0x8023b5fc'),
+    (0x8023B5FC, 0x8023B600, '83b18a8e24ec776b6e70c918ea60ee726c60b978f834839ccf40525ec13320e6',
+     'page 0xe\'s handler slot: 0x80053cb9'),
+    (0x80053CB8, 0x80053CCE, '1abdc2a2d370e2988593766bbb8141cb6a7c691a90b9e3fae1314223830e6e9a',
+     'page 0xe\'s handler: event 0x13, 2 (leave) and 1 (enter)'),
+    (0x80053D7C, 0x80053DA8, '98481fc8b91f20813735f95125b64e37946e0901d6566783de8e82aa6b6193d7',
+     'page 0xe\'s handler, leave: the page object\'s event (+8) with the event, then its destructor (+4)'),
+    (0x801F8F84, 0x801F8F88, '26f07975d0102f4cf9cce345728b2e7c470e1eecad90cddbd51f7e02f4a63cab',
+     'page registry, page 1 (TOP, the main screen): its handler slot 0x8023b64c'),
 ]
 # 16-bit jump-table entries: (address, value, what)
 TABLE_GUARDS = [
     (0x800D9526, 359, 'settings get 0x1a -> 0x800d97c0'),
     (0x800D953A, 399, 'settings get 0x24 -> 0x800d9810'),
     (0x800D955E, 463, 'settings get 0x36 -> 0x800d9890'),
+    (0x800E127A, 161, 'sequencer set 0x46 -> 0x800e1330'),
     (0x800D95A4, 551, 'settings get 0x59 -> 0x800d9940'),
     (0x800DC9F6, 299, 'pad get 0x64 (status)'),
     (0x800DC9FC, 695, 'pad get 0x67 (START) -> 0x800dcea0'),
@@ -359,10 +390,10 @@ TABLE_GUARDS = [
     (0x80018FBE, 621, 'system parameter set 0x141 (MARK Function) -> 0x8001921c'),
 ]
 POPUPS = {
-    'setup': 'BOUNCE A-1>A-9 | REPLACE A-1\\nNO TAIL | TAIL | LOOP | TAIL ONLY',
+    'setup': 'BOUNCE A-1>A-9 | REPLACE A-1\\nNO TAIL | TAIL | TAIL ONLY',
     'undo': 'UNDO BOUNCE?\\nORIG ON A-9',
     'waiting': 'BOUNCE A-1>A-9 | REPLACE A-1\\nWAIT SILENCE',
-    'running': 'BOUNCE A-1>A-9 | REPLACE A-1\\nNO TAIL 37% | LOOP 37% | TAIL 2.4s',
+    'running': 'BOUNCE A-1>A-9 | REPLACE A-1\\nNO TAIL 37% | TAIL 2.4s',
     'swapping': 'REPLACE A-1\\nSWAPPING | UNDO A-1\\nSWAPPING',
     'done': ['BOUNCED A-1\\nON A-9', 'REPLACED A-1\\nORIG ON A-9', 'UNDONE A-1\\nBOUNCE ON A-9'],
     'cancelled': 'BOUNCE CANCELLED\\nNOTHING CHANGED',
@@ -376,9 +407,15 @@ PAD_SETTINGS = dict(
     copied_when='VINYL MODE 0x77 with TEMPO SYNC on (sync needs it off), else the default 1; the loop flag 0x72 when '
                 'NO TAIL keeps a loop',
     neutral={'VOLUME 0x69': 127, 'PAN 0x78': 64, 'PITCH 0x73': 0, 'FINE 0x74': 0, 'SPEED 0x76': 10000,
-             'PLAY 0x75': 0, 'BUS FX Assign 0x7a': '0 (DRY)', 'Attack 0x7d': 0, 'Hold 0x7e': 100, 'Release 0x7f': 0},
-    by_mode='LOOP 0x6b: NO TAIL keeps the source\'s, LOOP on, TAIL off; loop point: NO TAIL of a loop at the source\'s '
-            'own offset, else START',
+             'PLAY 0x75': 0, 'BUS FX Assign 0x7a': '0 (DRY)', 'Attack 0x7d': 0, 'Hold 0x7e': 100},
+    release='Release 0x7f: 1 (23.6 ms, the shortest stock step) for a NO TAIL one-shot, whose effect is cut at END: '
+            'with Hold 100 the positional envelope fades its last 23.6 ms, and a GATE key-up fades over min(23.6 ms, '
+            'what is left). 0 for a NO TAIL of a loop (the fade would dip every pass) and for TAIL (it ends below '
+            '-72 dBFS)',
+    by_mode='LOOP 0x6b: NO TAIL keeps the source\'s, TAIL off; loop point: NO TAIL of a loop at the source\'s own '
+            'offset, else START',
+    name='the source\'s name, then " B", in the stock 23 characters: the source\'s cut to make room, its trailing spaces '
+         'dropped; a source with no name gives its pad (A1 B). The run\'s numbers stay in RAM (bnc_ui_state r_*)',
     pad_link='TO PAD: 0. REPLACE: the bounce takes the source\'s group and the parked original leaves it (0); UNDO '
              'puts it back. During the run the source is out of its group, so only the pad itself is recorded',
     stock_defaults='everything else as the stock finalize leaves any new sample (0x800cfa68), ORIGINAL BPM = REC BPM '
@@ -564,13 +601,28 @@ def build(inp: Path, out: Path, zig: Path, base: int):
     manifest = dict(
         revision=REVISION, status='hardware-unverified', published=False,
         description='bounce in place, stage 3: hold RESAMPLE and tap a sample pad; the pad is recorded through '
-                    'its effects, frame-exact, in NO TAIL, TAIL or LOOP mode, onto the first empty pad (TO PAD) or '
-                    'in its place (REPLACE: the stock pad exchange, the original kept on that pad), with UNDO',
+                    'its effects, frame-exact, in NO TAIL or TAIL mode, onto the first empty pad (TO PAD) or in its '
+                    'place (REPLACE: the stock pad exchange, the original kept on that pad), with UNDO; named after '
+                    'the source with " B"; a finished bounce returns to the main screen',
         parent_app1=str(inp), parent_sha256=parent_sha, parent_is_published_v946=parent_sha == PUBLISHED_V946,
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
         if parent_manifest.exists() else None,
-        replaces='bounce-3-test5 (the same six sites, the same parent)',
-        changes=["the take's start is found in the return alone: the first non-zero RX frame after 8 silent ones, at "
+        replaces='bounce-3-test6 (the same six sites, the same parent)',
+        changes=["no LOOP mode: the setup offers NO TAIL and TAIL (TAIL only for a loop not at its own rate). On the "
+                 "unit a LOOP take of a pad through a reverb started inside the previous pass's tail, so played once "
+                 "it clicked at its start; the user bounces one-shots. NO TAIL of a loop keeps one pass from T0 with "
+                 "LOOP and the loop point copied, as before. The pass comparison and its RAM are gone",
+                 "a NO TAIL one-shot gets Release 1 (23.6 ms, the shortest stock step) with Hold 100: the positional "
+                 "envelope fades its last 23.6 ms, so an effect cut at END fades instead of clicking; the length stays "
+                 "the source's. Not for a NO TAIL of a loop (the fade would dip every pass) nor TAIL (it ends quiet)",
+                 "the bounced pad is named after the source with \" B\", in the stock 23 characters (the source's name "
+                 "cut to make room); the test numbers stay in RAM (bnc_ui_state r_*)",
+                 "a finished bounce (BOUNCED, REPLACED, UNDONE) leaves RESAMPLE for the main screen: RESAMPLE mode off "
+                 "(settings 0x36), sequencer 0x46 back as the stock exit sets it, every LED redrawn, then the page "
+                 "request for page 1 (0x800da598), as the after-recording routine ends. Not its BUS 1/2 effects off, "
+                 "not the exit's REC_STOP, ALL SOUND OFF and bank and pad restore: the effects, bank, pad and END "
+                 "Snap stay as they were. EXIT or a refusal stays on RESAMPLE"],
+        changes_test6=["the take's start is found in the return alone: the first non-zero RX frame after 8 silent ones, at "
                  "most 24 frames before the return's onset (the RX onset; when none was measured, the TX onset's frame "
                  "plus L), not before T0; else L. test4 and test5 placed the search from the sound's first non-zero "
                  "TX frame, which says nothing of where the return begins (bounce-3-test5 on the unit: D1 L72-3 M69 "
