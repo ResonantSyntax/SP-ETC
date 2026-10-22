@@ -1,9 +1,10 @@
 /* FX deep edit (test build): extra screens on the FX screen for the effects (the input FX and BUS 1-4) that
  * edit the effect parameters stock 5.52 never sends to the effects chip (BMC).
  *
- * On the FX screen REMAIN + FX opens (stock's screen that stays until EXIT, REMAIN, or that FX button again)
- * VALUE press steps its screens. After screen 1 and screen 2 (where the effect has CTRL 4-6) come the effect's
- * extra screens: three settings a screen, on CTRL 1-3, in the stock popup:
+ * On the FX screen VALUE press steps its screens, and the screen stays from that press on, as with REMAIN + FX
+ * (test5: however the screen was opened; until EXIT, REMAIN, or that FX button again). After screen 1 and screen 2
+ * (where the effect has CTRL 4-6) come the effect's extra screens: three settings a screen, on CTRL 1-3, in the
+ * stock popup:
  *
  *   TAPE ECHO 3/5
  *   C1 SYNC 0
@@ -63,6 +64,7 @@ typedef unsigned char u8;
 
 #define RECORDS ((const s32 *)0x802E5B40u)               /* by effect: the six parameter IDs CTRL 1-6 send */
 #define VIEW_REMAIN 0x1B3F                               /* the FX screen: REMAIN held when it showed */
+#define REMAIN_MODE ((volatile u8 *)0x80592320u)          /* set with it by the show method (0x80146f7a) */
 #define VIEW_SCREEN2 0x1B40                              /* the FX screen: screen 2 (CTRL 4-6) */
 
 #define EV_KEY 5
@@ -214,11 +216,18 @@ static void leave(void) {
 
 /* VALUE pressed on the FX screen: stock's toggle of screens 1 and 2 (0x801479a0, called with the screen from
  * the generic key handler 0x800cba46) jumps here. Screen 1, screen 2 where the effect has one, then the extra
- * screens, then screen 1 again. Only while the screen stays (REMAIN held when it opened); otherwise, as
- * stock, nothing. */
+ * screens, then screen 1 again. A screen that opened without REMAIN held (stock: the press does nothing, VALUE
+ * held peeks at screen 2) is held from this press on, as if REMAIN had been (test5: on the unit the screen came
+ * up unheld however REMAIN was used, so VALUE only peeked); an effect with neither screen 2 nor extra settings
+ * leaves it stock. */
 EXPORT void fde_value(u8 *screen) {
-    if (!screen[VIEW_REMAIN])
-        return;
+    if (!screen[VIEW_REMAIN]) {
+        follow();
+        if (!has_screen2(fde.effect) && !extra_screens())
+            return;
+        screen[VIEW_REMAIN] = 1;
+        *REMAIN_MODE = 1;
+    }
     if (fde.screen) {
         if (follow() && fde.screen < extra_screens()) {
             fde.screen++;

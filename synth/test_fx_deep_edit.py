@@ -1,4 +1,4 @@
-"""Checks for FX deep edit test 4 (build_fx_deep_edit.py): on the FX screen REMAIN + FX opens, VALUE through its
+"""Checks for FX deep edit test 5 (build_fx_deep_edit.py): on the FX screen REMAIN + FX opens, VALUE through its
 screens and the effect's extra screens, the input FX's too; an effect without extra settings says so; an FX
 button alone as stock.
 
@@ -513,12 +513,28 @@ def screen_checks(img, parent, man, st):
     check(sc.flag(VIEW_REMAIN) == sp.flag(VIEW_REMAIN) == 0 and
           m.uc.mem_read(REMAIN_GLOBAL, 1)[0] == p.uc.mem_read(REMAIN_GLOBAL, 1)[0],
           'an FX button alone opens the FX screen as on the parent (+0x1b3f clear: test 2\'s hold is gone)')
-    for mm, ss in ((m, sc), (p, sp)):
+    check(sp.run(2500), 'on the parent it asks to close after 2 s')
+    seq = []
+    for k in range(3):
+        m.clear()
+        sc.value()
+        seq.append((sc.flag(VIEW_REMAIN), sc.flag(VIEW_SCREEN2), m.state()['screen'], m.popups))
+    held = m.uc.mem_read(REMAIN_GLOBAL, 1)[0]
+    check(seq == [(1, 1, 0, []), (1, 1, 1, [(screen_text(rt, st, 1, TAPE_ECHO, 1), SCREEN_MS)]),
+                  (1, 1, 2, [(screen_text(rt, st, 1, TAPE_ECHO, 2), SCREEN_MS)])] and held == 1 and not sc.run(5000),
+          f'test5: there a VALUE press holds the screen as REMAIN + FX does (+0x1b3f and 0x80592320 set) and steps on: '
+          f'screen 2, then the extra screens; it stays (5 s, no close request) ({seq})')
+    out = []
+    for image, man_ in ((parent, None), (img, man)):
+        mm, ss = fx_machine(image, man_, fx=CRUSHER)
+        ss.open(remain=False)
+        mm.bus_effect(1, CRUSHER)
         mm.clear()
         ss.value()
-    check(sc.flag(VIEW_SCREEN2) == sp.flag(VIEW_SCREEN2) == 0 and not m.popups and m.state()['screen'] == 0 and
-          sc.run(2500) and sp.run(2500),
-          'there VALUE is stock\'s (no extra screen), and the screen asks to close after 2 s, as on the parent')
+        out.append((ss.flag(VIEW_REMAIN), ss.flag(VIEW_SCREEN2), mm.popups, bool(ss.run(2500))))
+    check(out[0] == out[1] == (0, 0, [], True),
+          f'an effect with neither screen 2 nor extra settings (Crusher), opened without REMAIN: VALUE is stock\'s, '
+          f'and the screen closes after 2 s, as on the parent ({out})')
     m, sc = fx_machine(img, man)
     p, sp = fx_machine(parent, None)
     for mm, ss in ((m, sc), (p, sp)):
