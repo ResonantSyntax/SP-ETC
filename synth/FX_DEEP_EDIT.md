@@ -10,6 +10,21 @@ firmware's own state is never changed and nothing is saved: values live in RAM, 
 until power-off. Outside the page the build behaves as v9.46, except that an edited value goes to
 the chip again whenever the firmware selects that effect on that bus.
 
+## Test 5 (fx-deep-edit-test5): VALUE holds the screen itself
+
+From the user's test of combined-test6: still no extra screens, never the NO EXTRA SETTINGS note, on the main
+screen with every FX button, and screen 2 never stayed for more presses: VALUE only peeked at screen 2. The FX
+screen is "held" (+0x1b3f) only if REMAIN is down at the moment the show method runs (`0x80146f66`); a screen
+that comes up otherwise stays while REMAIN is held but treats VALUE as stock does (the press does nothing, VALUE
+held shows screen 2), and the module stepped aside. Now a VALUE press on an FX screen that is not held holds it,
+as the show method would have (+0x1b3f and `0x80592320` set), when the effect has screen 2 or extra settings, and
+steps on from there: screen 2, the extra screens, screen 1. An effect with neither keeps stock's VALUE. So the
+extra screens come however the screen was opened, the FX button alone included; MFX's effect choice before any
+VALUE press is stock's.
+
+Checked in the emulator (70 checks pass): FX button alone, then VALUE: held, screen 2, extra screens, no close for
+5 s; Crusher opened alone: VALUE stock's, closes after 2 s as on the parent; every test 4 check.
+
 ## Test 4 (fx-deep-edit-test4): the input FX too, and a note when there is nothing
 
 From the user's test of combined-test5: on the held FX screen (REMAIN + FX) VALUE only flipped screens 1 and 2,

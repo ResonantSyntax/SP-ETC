@@ -51,7 +51,7 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'fx-deep-edit-test4'
+REVISION = 'fx-deep-edit-test5'
 SLOT = 0x4000                       # reserved: [base, base + SLOT)
 SLOT_CEILING = 0x83FE6000           # the FX probe's slot starts here
 EXPORTS = ('fde_filter', 'fde_dt1', 'fde_dt1_stock', 'fde_dt1_fxtype', 'fde_value', 'fde', 'fde_values',
@@ -462,9 +462,11 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
         guards=[dict(start=s, end=e, sha256=d, establishes=w) for s, e, d, w in GUARDS],
         fxmap=dict(path=str(fxmap_path), sha256=sha(fxmap_bytes),
                    note='DM-404 core/fx/fxmap.json (MIT): bases from a boot capture, knob ranges from a sweep'),
-        screens=dict(fx_button='an FX button alone is stock (the screen closes after 2 s); REMAIN + FX shows the '
+        screens=dict(fx_button='an FX button alone opens stock\'s screen (it closes after 2 s); REMAIN + FX the '
                                 'screen that stays (+0x1b3f set) while the bus has an effect, until EXIT, REMAIN or '
-                                'that FX button again: the screen the extra screens are on',
+                                'that FX button again. test5: a VALUE press on a screen opened without REMAIN held '
+                                'sets +0x1b3f (and 0x80592320, as the show method does) when the effect has screen 2 '
+                                'or extra settings, so it stays and steps from there; else stock',
                      value='VALUE press: screen 1, screen 2 where the effect has CTRL 4-6 (stock\'s +0x1b40), the '
                            'extra screens, screen 1 again',
                      bus='settings 0x3a (0 input FX, 1-4 BUS 1-4), what TOP\'s knob path 0x800cc030 and the FX '
