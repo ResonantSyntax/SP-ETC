@@ -19,10 +19,10 @@ Three changes in 5.52 space:
 - data: TOP's page vtable 0x8022ce5c, slot +0x08 (0x8022ce64), DOOM OS ED5E's page filter 0x6031c8f9 ->
   fde_filter, which hands every event the page doesn't take on to that filter;
 - code: the DT1 builder's first ten bytes (0x800d8118: push.w, sub sp, movw sb) -> movw ip / movt ip / bx ip
-  to fde_dt1. Its four instructions send anything but an FxType for BUS 1-4 straight to fde_dt1_stock (those
-  three instructions, then on at 0x800d8122) with the caller's stack and return address, so the builder runs
-  exactly as stock; an FxType for BUS 1-4 goes to fde_dt1_fxtype, which sends it and then that bus's edited
-  values for the effect. Nothing branches into the ten bytes but the entry;
+  to fde_dt1. Its four instructions send anything but an FxType for the input FX or BUS 1-4 (0x7e..0x82)
+  straight to fde_dt1_stock (those three instructions, then on at 0x800d8122) with the caller's stack and
+  return address, so the builder runs exactly as stock; such an FxType goes to fde_dt1_fxtype, which sends it
+  and then that slot's edited values for the effect. Nothing branches into the ten bytes but the entry;
 - code: the FX screen's VALUE toggle (0x801479a0, ten bytes: movw r1, #0x1b3f; ldrb r2, [r0, r1]; cmp r2, #0;
   it eq) -> movw ip / movt ip / bx ip to fde_value (the screens, then the extra screens). Its one caller is the
   generic key handler (0x800cba46); nothing branches into the bytes but the entry.
@@ -51,7 +51,7 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'fx-deep-edit-test3'
+REVISION = 'fx-deep-edit-test4'
 SLOT = 0x4000                       # reserved: [base, base + SLOT)
 SLOT_CEILING = 0x83FE6000           # the FX probe's slot starts here
 EXPORTS = ('fde_filter', 'fde_dt1', 'fde_dt1_stock', 'fde_dt1_fxtype', 'fde_value', 'fde', 'fde_values',
@@ -400,7 +400,7 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
                          f'{listing(stock, symbols["fde_dt1_stock"] & ~1)}')
     at = symbols['fde_dt1'] & ~1
     entry = listing(module[at - base:at - base + 16], at)
-    if entry != ['sub.w ip, r1, #0x7f', 'cmp.w ip, #3', f'bhi.w #{symbols["fde_dt1_stock"] & ~1:#x}',
+    if entry != ['sub.w ip, r1, #0x7e', 'cmp.w ip, #4', f'bhi.w #{symbols["fde_dt1_stock"] & ~1:#x}',
                  f'b.w #{symbols["fde_dt1_fxtype"] & ~1:#x}']:
         raise ValueError(f'fde_dt1 is not the four-instruction switch: {entry}')
 
@@ -447,9 +447,10 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
         revision=REVISION, status='hardware-unverified', published=False,
         description='on the FX screen REMAIN + FX opens (stock\'s screen that stays), VALUE steps its screens: 1, 2 '
                     '(CTRL 4-6), then extra screens with three each of the effect\'s parameters stock never sends to '
-                    'the effects chip (BMC) on CTRL 1-3, for the bus the CTRL knobs drive; values live in RAM per bus '
-                    'and effect and are sent again after every FxType write for that bus; an FX button alone is '
-                    'stock (test3: test2\'s hold kept MFX\'s effect choice away)',
+                    'the effects chip (BMC) on CTRL 1-3, for the slot the CTRL knobs drive (test4: the input FX too); '
+                    'values live in RAM per slot and effect and are sent again after every FxType write for that '
+                    'slot; an effect without extra settings says so on VALUE (test4); an FX button alone is stock '
+                    '(test3: test2\'s hold kept MFX\'s effect choice away)',
         parent_app1=str(inp), parent_sha256=sha(inp.read_bytes()),
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
         if parent_manifest.exists() else None,
@@ -466,16 +467,18 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
                                 'that FX button again: the screen the extra screens are on',
                      value='VALUE press: screen 1, screen 2 where the effect has CTRL 4-6 (stock\'s +0x1b40), the '
                            'extra screens, screen 1 again',
-                     bus='settings 0x3a (0 input FX, 1-4 BUS 1-4), what TOP\'s knob path 0x800cc030 uses; extra '
-                         'screens on BUS 1-4 only',
+                     bus='settings 0x3a (0 input FX, 1-4 BUS 1-4), what TOP\'s knob path 0x800cc030 and the FX '
+                         'screen use; extra screens on all five slots (test2 and test3: BUS 1-4 only)',
+                     none='an effect without extra settings: the VALUE press that goes back to screen 1 shows '
+                          '"CHORUS\nNO EXTRA SETTINGS" for 1.5 s, and stock\'s toggle runs',
                      effect='system 0x27c[bus] (0 none), what the knob path checks',
                      knobs='on an extra screen CTRL k (event 9, k, 0..127) sets its setting across the firmware\'s '
                            'min/max (min + ((max - min) x position + 63) / 127); a change is one DT1 (ID, slot = bus)',
                      leave='on an extra screen any button but VALUE and SHIFT leaves it (the popup goes) and goes on '
                            'as usual; pads go on as usual',
                      popup='"TAPE ECHO 3/5\nC1 SYNC 0\nC2 BASS 15\nC3 TREBLE 15" for 600 s, gone at once on leaving'),
-        resend='after the firmware sends FxType 0x7f..0x82 (BUS 1-4) = fx, the edited values of that bus for fx go '
-               'out again, in table order; nothing else adds a frame',
+        resend='after the firmware sends FxType 0x7e..0x82 (the input FX, BUS 1-4) = fx, the edited values of '
+               'that slot for fx go out again, in table order; nothing else adds a frame',
         settings_total=sum(len(s) for s in settings), effects=effects,
         dt1='F0 41 10 00 00 00 00 08 12 a1 a2 a3 a4 hi lo sum F7 via the stock builder 0x800d8118 (link '
             '0x80592500, ID, slot, value): packets 04 F0 41 10 / 04 00 00 00 / 04 00 08 12 / 04 a1 a2 a3 / '
