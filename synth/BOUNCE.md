@@ -12,6 +12,21 @@ RESAMPLE start fix v3 (the published v9.46 carries v2; see
 ran on the unit) on the same four sites, plus the pad-event dispatcher and, since bounce-3-test2, the
 RESAMPLE page's tick. Stage 1 is the bounce probe ([BOUNCE_PROBE.md](BOUNCE_PROBE.md)).
 
+**bounce-3-test9** follows the user's test of combined-test4 ("when i tried to bounce a pad that was
+previously bounced, only option is undo bounce"; "when you select the pad to bounce, its lights stay
+flashing like others"):
+- **A replaced pad sets up like any other**: the popup starts on the bounce you picked last, with a
+  third line `VALUE FOR UNDO`. **VALUE press** switches to `UNDO BOUNCE?` / `ORIG ON A-9` /
+  `VALUE FOR BOUNCE`, and back. UNDO comes first only when no pad is empty (then it is all there is).
+- **The target pad lights** steady white while the setup is up (the other empty pads keep the
+  RESAMPLE screen's blinking): the pad the bounce goes to, or the source for REPLACE and UNDO. The
+  module writes key light mode 1, 0xffffff every UI tick (the light writer sends only changes);
+  when the target changes or the setup ends, stock paints the pads again (0x802496f0 bit 2). A
+  target in another bank lights nothing.
+- **Unicorn**: the UNDO checks through VALUE press and back, UNDO first with no empty pad, and the
+  light (its key, mode and colour; the repaint at each change and at EXIT; nothing in another bank,
+  nothing idle).
+
 **bounce-3-test8** changes the setup after the user's test of combined-test3:
 - **A pad tap picks the target.** With the setup popup up, tap the source pad itself for REPLACE
   (in place), or an empty pad to bounce onto that pad (TO PAD). A pad with a sample shows
@@ -344,7 +359,8 @@ outside this repository.
    - Turn **VALUE** for the mode: NO TAIL or TAIL. Turning past either end stays on that end.
    - **Tap a pad** for the target (test8): the source pad itself for REPLACE (`REPLACE A-1`), an
      empty pad to bounce onto it (`BOUNCE A-1>A-5`). A pad with a sample is refused
-     (`PAD NOT EMPTY`). The popup starts on the first empty pad.
+     (`PAD NOT EMPTY`). The popup starts on the first empty pad. The target pad is lit steady
+     white (test9).
 3. Press **RESAMPLE** (or REC) to start, or **EXIT** to back out (`BOUNCE CANCELLED` /
    `NOTHING CHANGED`).
 4. The SP stops every sound, waits for silence (`WAIT SILENCE`, at most 10 s), then plays the
@@ -366,18 +382,22 @@ is kept in RAM only.
 
 ### UNDO
 
-On a pad you replaced since power-on, the same gesture offers the undo first:
+On a pad you replaced since power-on, the same gesture sets up a bounce as usual, with a third line
+`VALUE FOR UNDO` (test9; test8 offered the undo first). **VALUE press** switches to the undo:
 
 ```
 UNDO BOUNCE?
 ORIG ON A-9
+VALUE FOR BOUNCE
 ```
 
 - **RESAMPLE** (or REC) swaps the two pads back: `UNDONE A-1` / `BOUNCE ON A-9`. The original is back on its
   pad, bit for bit, with every setting it had. The bounce stays on A-9, as after TO PAD, and the
   SP goes back to the main screen.
 - **EXIT** leaves both pads as they are.
-- Tap a pad to bounce the pad again instead: the pad itself for REPLACE, an empty pad for TO PAD.
+- VALUE press again, or a tap, goes back to bouncing the pad: the pad itself for REPLACE, an empty pad
+  for TO PAD.
+- With no empty pad left, the undo is all the gesture offers, and it comes first.
 
 UNDO goes back one REPLACE per pad. It is kept for the last eight REPLACEs, in RAM. It is offered
 only while both pads still hold the same samples: if either was deleted, replaced or recorded

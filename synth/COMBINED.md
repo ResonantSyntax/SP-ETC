@@ -1,7 +1,8 @@
 # Combined: every feature test build in one APP1
 
-**combined-test4** (section 5) follows the user's test of combined-test3: the same steps at their new
-revisions, plus SUB PAD on the Sound Generator page, then the fast boot. Sections 1-4 describe combined-test1.
+**combined-test5** (section 6) follows the user's test of combined-test4: bounce, FX deep edit and note repeat
+at their new revisions, the rest as in combined-test4 (section 5), then the fast boot. Sections 1-4 describe
+combined-test1.
 
 A hardware test build (`combined-test1`) with the latest test build of each feature in one APP1, so they can
 be tried together. Branch `claude/combined`: the six feature branches merged on `main` (v9.46), plus
@@ -147,3 +148,22 @@ flashable APP1 (fast boot included), each feature suite with its step's manifest
 
 The patcher test (`node synth/test_browser.cjs`, branch `claude/publish-v9.47`) passes with v9.47 = combined-test4.
 **Not run:** dm-404, and the unit.
+
+## 6. combined-test5
+
+From the user's test of combined-test4, in one build. Branch `claude/combined` merges the three feature branches
+at their new revisions; the other five steps are combined-test4's. `build_combined.py`, then `build_fast_boot.py`.
+
+| Step | Feature | Module as in | What changed since combined-test4 |
+| --- | --- | --- | --- |
+| 1 | bounce in place | `bounce-3-test9` | a replaced pad sets up as a bounce (VALUE press for UNDO and back); the target pad lit steady white |
+| 2 | FX deep edit | `fx-deep-edit-test3` | no FX button hold (it kept MFX's effect choice away); the extra screens on REMAIN + FX's screen |
+| 6 | note repeat | `note-repeat-test4` | chromatic rolls: each pad its own division (byte 0x70 bits 4-7), 1/16 to start |
+
+- **Build:** every module byte for byte its own test build's (`--refs analysis/kit_pr1_audit/dev_combined5/refs`);
+  every patch in place and every guard holding on the final image, with the same 7 reviewed overlaps (`SHARED`).
+  Bounce's new guard (the key light `0x800d4910`) covers code nothing patches.
+- **APP1** (after the fast boot): `634f7af1…0bef`, 3,151,952 bytes, in `analysis/kit_pr1_audit/release/combined-test5`
+  (the combined build before it: `292462e7…9a0a`).
+- **The clicks** the user heard on chromatic rolls are RETRIG CUT on the sample's pad (NOTE_REPEAT.md 9.2): each
+  repeat stops the ringing note as a re-hit does; RETRIG set to a fade fades it instead.

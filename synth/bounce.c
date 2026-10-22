@@ -6,9 +6,10 @@
  * bank, then the other banks A..J (protected banks are skipped): TO PAD's destination until a pad is
  * tapped, REPLACE's place for the original. VALUE picks NO TAIL / TAIL. Tapping a pad picks the target
  * (test8): the source itself is REPLACE, an empty pad TO PAD onto it, a pad with a sample is refused
- * (PAD NOT EMPTY). UNDO is offered first on a pad this session replaced; a tap leaves it for a bounce.
- * RESAMPLE (or REC) starts, EXIT backs out. The mode and TO PAD / REPLACE are kept in RAM for the next
- * setup as soon as they are picked.
+ * (PAD NOT EMPTY). A pad this session replaced sets up like any other (test9), and VALUE press switches to
+ * UNDO and back; UNDO comes first only when no pad is empty. The pad the bounce goes to (the source for
+ * REPLACE and UNDO) is lit steady white over the page's blinking. RESAMPLE (or REC) starts, EXIT backs out.
+ * The mode and TO PAD / REPLACE are kept in RAM for the next setup as soon as they are picked.
  *
  * The run (UI task, from the popup tick, bnc_ui):
  *   1. pin REC length (settings 0x24) to FREE and END Snap (0x59) off, set the destination as the stock
@@ -123,6 +124,7 @@ typedef unsigned char u8;
 #define F_TRIGGER 0x800CDBD1u   /* pad note (global pad, velocity, 1) */
 #define F_MODAL 0x800CE421u     /* page modal state */
 #define F_POPUP 0x800D3FF1u     /* popup (text, ms) */
+#define F_LED 0x800D4911u       /* key light (key, mode: 1 lit, level: a pad's colour); it sends only changes */
 #define F_RANGE_DIRTY 0x800D6391u /* mark a pad's range (its file information +0x18..+0x20) for a new charge (pad) */
 #define F_CHARGE_DIRTY 0x800D7509u /* charge every marked pad again from its range, as the finalize does (gSmplMgr) */
 #define SMPL_MGR 0x80591800u
@@ -339,6 +341,8 @@ struct ui {
                                    REPLACE parks the original; NONE if there is none */
     u32 note, note_until;       /* a refused tap's popup (M_NOT_EMPTY ...), shown in the setup until then */
     u32 tapped;                 /* the pad that tap was */
+    /* test9 */
+    u32 lit;                    /* the pad the setup lights, + 1 (0: none) */
 };
 
 EXPORT volatile struct aud bnc_aud;
@@ -772,12 +776,17 @@ static void progress_text(void) {
         }
     }
     if (U.target == T_UNDO) {
-        *put_text(o, U.state == U_SETUP ? "UNDO BOUNCE?\nORIG ON \2" : "UNDO \1\nSWAPPING") = 0;
+        o = put_text(o, U.state == U_SETUP ? "UNDO BOUNCE?\nORIG ON \2" : "UNDO \1\nSWAPPING");
+        if (U.state == U_SETUP && U.home != NONE)
+            o = put(o, "\nVALUE FOR BOUNCE");
+        *o = 0;
         return;
     }
     o = put_text(o, U.target == T_REPLACE ? "REPLACE \1\n" : "BOUNCE \1>\2\n");
     if (U.state == U_SETUP) {
         o = put(o, U.modes == 1u << TAIL ? "TAIL ONLY" : MODE_TEXT[U.mode]);
+        if (U.undo_slot != NONE)
+            o = put(o, "\nVALUE FOR UNDO");
     } else if (U.state <= U_SILENCE) {
         o = put(o, "WAIT SILENCE");
     } else if (U.state == U_SWAP) {
@@ -1373,11 +1382,28 @@ EXPORT void bnc_tick(u32 page) {
         bnc_page = 0;
 }
 
+/* The setup lights the pad the bounce goes to (the source for REPLACE and UNDO) steady white over the page's
+ * blinking, while it is in the current bank; when that changes or the setup ends, stock paints the pads again. */
+static void target_light(void) {
+    u32 want = 0;
+    if (U.state == U_SETUP) {
+        u32 pad = U.target == T_PAD ? U.scratch : U.src;
+        if (pad != NONE && pad / 16 == (u32)project_get(0, NONE))
+            want = pad + 1;
+    }
+    if (U.lit && want != U.lit)
+        V16(LED_REFRESH) |= 2;
+    U.lit = want;
+    if (want)
+        CALL3(F_LED, (want - 1) % 16, 1, 0xFFFFFF);
+}
+
 /* The popup tick (UI task, every millisecond, before the stock tick). */
 EXPORT void bnc_ui(u32 elapsed) {
     U.ms += elapsed;
     if (U.state != U_IDLE)
         tick();
+    target_light();
     s32 left = (s32)V32(POPUP_TIMER);
     if (left >= 1 && (u32)left <= elapsed)  /* a popup closing in this tick would drop a new one */
         return;
@@ -1453,7 +1479,7 @@ EXPORT s32 bnc_event(u32 page, const volatile s16 *ev) {
                 U.note = M_NONE;
                 U.undo_slot = undo;
                 U.targets = (dst != NONE ? (1u << T_PAD) | (1u << T_REPLACE) : 0) | (undo != NONE ? 1u << T_UNDO : 0);
-                U.target = undo != NONE ? T_UNDO : U.last_target < T_UNDO ? U.last_target : T_PAD;
+                U.target = dst == NONE ? T_UNDO : U.last_target < T_UNDO ? U.last_target : T_PAD;
                 aim();
                 enter(U_SETUP);
             }
@@ -1473,6 +1499,14 @@ EXPORT s32 bnc_event(u32 page, const volatile s16 *ev) {
                 start_undo();
             else
                 start_run();
+        } else if (a1 == KEY_VALUE && U.state == U_SETUP && U.undo_slot != NONE) {
+            if (U.target != T_UNDO)             /* UNDO, and back to the bounce picked before */
+                U.target = T_UNDO;
+            else if (U.home != NONE)
+                U.target = U.last_target < T_UNDO ? U.last_target : T_PAD;
+            U.note = M_NONE;
+            aim();
+            U.refresh = 1;
         }
         return 1;
     }
