@@ -6,16 +6,19 @@ Unicorn runs of both hooks against the parent's stock instructions.
 """
 import hashlib
 import json
+import random
 import struct
 import sys
 from pathlib import Path
 
 from keystone import Ks, KS_ARCH_ARM, KS_MODE_THUMB, KS_MODE_LITTLE_ENDIAN  # noqa: E402
-from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_PROT_ALL  # noqa: E402
+from unicorn import Uc, UC_ARCH_ARM, UC_HOOK_CODE, UC_MODE_THUMB, UC_PROT_ALL  # noqa: E402
 from unicorn import arm_const as ar  # noqa: E402
 
 FLASH, COPY = 0x60080000, 0x600800E4
 SITE_A, SITE_B, TAIL_A = 0x8017F0AC, 0x800E9EFE, 0x8017F3B8
+MODE_TEST, MODE2_PATH = 0x8017EFE4, 0x8017EFEC     # REC_STOP: cmp r7, #2 ... bne SITE_A; mode 2 falls through
+MARGIN = 8                                        # frames startfix-3 keeps in front of the first sample above 8
 GETPARAM = 0x800D94D8
 REC, ENGINE, STACK, RET = 0x30000000, 0x30001000, 0x30108000, 0x30200000
 TABLE = (412, 652, 1036, 1462, 2066, 2920, 4124, 5826, 8230, 11626)
@@ -66,7 +69,6 @@ def stub_getparam(uc, p36, bpm100, calls):
 
     def hook(u, address, size, data):
         calls.append((u.reg_read(ar.UC_ARM_REG_R0), u.reg_read(ar.UC_ARM_REG_R1), u.reg_read(ar.UC_ARM_REG_R2)))
-    from unicorn import UC_HOOK_CODE
     uc.hook_add(UC_HOOK_CODE, hook, begin=GETPARAM, end=GETPARAM)
 
 
@@ -95,6 +97,29 @@ def run_trim(img, p36, k, channels, marker, start=0x800, end=0x40000):
         raise RuntimeError('trim path did not reach 0x8017f3b8')
     start_out = uc.reg_read(ar.UC_ARM_REG_R10) | (uc.reg_read(ar.UC_ARM_REG_R9) << 32)
     return start_out, calls, uc.reg_read(ar.UC_ARM_REG_R0), uc.reg_read(ar.UC_ARM_REG_R7)
+
+
+def first_sound(frames, thr):
+    """The stock writers' rule (0x1bdcc..0x1c0d6, one per sample format): the engine's frame counter at the first
+    frame whose left or right sample is above the threshold in magnitude, else -1 (none)."""
+    return next((i for i, (l, r) in enumerate(frames) if abs(l) > thr or abs(r) > thr), -1)
+
+
+def start_on(img, frames, channels=2, marker=8, p36=1):
+    """The START the stop path leaves for a take whose frames from REC_START are `frames`: (frames from REC_START,
+    the first-sound frame)."""
+    k = first_sound(frames, marker)
+    s, *_ = run_trim(img, p36, k, channels, marker)
+    return (s - 0x800) // (channels * 2), k
+
+
+def run_mode(img, mode):
+    """REC_STOP from its mode test: the first instruction after the branch, for mode `mode`."""
+    uc = machine(img)
+    uc.reg_write(ar.UC_ARM_REG_R7, mode)
+    uc.reg_write(ar.UC_ARM_REG_SP, STACK - 0x100)
+    uc.emu_start(MODE_TEST | 1, 0, count=4)
+    return uc.reg_read(ar.UC_ARM_REG_PC)
 
 
 def run_thr(img, p36, setting):
@@ -143,7 +168,7 @@ def main():
     for p36 in (0, 1, 3):
         for marker in (0, 412, 1036, 11626, 8):
             for channels in (1, 2):
-                for k in (-1, 0, 1, 150, 240, 383, 384, 600, 1133, 1134, 2399, 2400, 5000):
+                for k in (-1, 0, 1, 7, 8, 9, 10, 150, 240, 383, 384, 600, 1133, 1134, 2398, 2399, 2400, 5000):
                     s_new, calls_new, _, end_new = run_trim(img, p36, k, channels, marker)
                     s_old, calls_old, _, end_old = run_trim(parent, p36, k, channels, marker)
                     arg_ok = calls_new == calls_old == [(0x82E01144, 0x1B, 0xFFFFFFFF)]
@@ -152,17 +177,50 @@ def main():
                             ok_stock = False
                             print('  stock mismatch', p36, marker, channels, k, hex(s_new), hex(s_old))
                     else:
-                        want = 0x800 + (k * channels * 2 if 0 < k < 2400 else 0)
+                        want = 0x800 + ((k - MARGIN) * channels * 2 if MARGIN < k < 2400 else 0)
                         if s_new != want or not arg_ok or end_new != end_old:
                             ok_new = False
                             print('  resample mismatch', p36, channels, k, hex(s_new), hex(want), calls_new)
     check(ok_stock, 'trim: takes without the resample mark give exactly the stock START, END and REC BPM call')
-    check(ok_new, 'trim: marked takes get START = REC_START + first-sound frame for 1..2399 frames, mono and stereo, whatever mode 0x36 reads at stop')
+    check(ok_new, 'trim: marked takes get START = REC_START + first-sound frame - 8 for first sounds 9..2399 frames in, '
+                  'else REC_START, mono and stereo, whatever mode 0x36 reads at stop')
     check(run_trim(parent, 1, 600, 2, 412)[0] == 0x200 + 4 * 600,
           'stock reference: first sound 600 frames in -> stock START keeps 384 frames (8 ms) in front')
     s_old_example, *_ = run_trim(parent, 1, 240, 2, 412)
     s_new_example, *_ = run_trim(img, 1, 240, 2, 8)
     print(f'  example, stereo first sound 240 frames in: stock START {s_old_example:#x} (5 ms of silence kept), fixed {s_new_example:#x}')
+    # Takes through a return with a quiet lead-in. The unit's effects-chip return reaches the take a few frames before
+    # its first sample above 8 (a hi-hat bounced on bounce-3-test3: the first non-zero sample 7 frames before the main
+    # delay). START must sit at or before the first non-zero frame, with only exact zeros in front of it.
+    def take(lead, pre=300, n=400, first=3000):
+        return [(0, 0)] * pre + [(v, v) for v in lead] + [(first, -first)] + [(1000, 1000)] * n
+    for label, lead in (('a return whose first sample is 1 LSB and which crosses 8 five frames later', (1, 2, 3, 5, 7)),
+                        ('the unit\'s quiet lead-in, 7 frames before the main attack', (1, 1, 2, 2, 3, 4, 6)),
+                        ('a sharp attack (no lead-in)', ())):
+        frames = take(lead)
+        f = next(i for i, fr in enumerate(frames) if fr != (0, 0))
+        st, k = start_on(img, frames)
+        check(st <= f and all(fr == (0, 0) for fr in frames[st:f]) and f - st <= MARGIN,
+              f'{label}: START {st} at or before the first non-zero frame {f}, only zeros between ({f - st}); '
+              f'first sample above 8 at {k}')
+    # a floor under 8 with no exact zeros (a first-non-zero rule would not trim at all): START still comes to 8
+    # frames before the attack, and only floor frames are in front of it
+    rnd = random.Random(5)
+    floor = [(rnd.choice((-1, 1)) * rnd.randint(1, 7), rnd.choice((-1, 1)) * rnd.randint(1, 7)) for _ in range(600)]
+    frames = floor + [(2500, -2500)] + [(900, 900)] * 300
+    st, k = start_on(img, frames)
+    check(k == 600 and st == 600 - MARGIN and all(max(abs(l), abs(r)) <= 8 for l, r in frames[st:k]),
+          f'a noise floor under 8: START {st}, 8 frames of floor before the attack at {k}')
+    # the first sound 2400 frames or more in: START stays at REC_START, as stock leaves it
+    frames = [(0, 0)] * 2450 + [(1, 1), (3, 3), (5000, 5000)] + [(900, 900)] * 100
+    st, k = start_on(img, frames)
+    st_stock, k_stock = start_on(parent, frames, marker=412)
+    check(k == 2452 and st == 0 and (k_stock, st_stock) == (2452, 0),
+          f'a first sound 2452 frames in (over 2399): START stays at REC_START ({st}), as stock leaves it ({st_stock})')
+    # mode 2 (the pattern-select resample page) branches to its own stock trim before the hooked site
+    check([run_mode(x, m) for x in (img, parent) for m in (0, 1, 2, 3)] == [SITE_A, SITE_A, MODE2_PATH, SITE_A] * 2,
+          'mode 2: REC_STOP branches to its own stock trim (0x8017efec) and never reaches the hooked site; '
+          'modes 0, 1 and 3 reach it')
     # Threshold hook.
     ok_t = True
     for p36 in (0, 1, 2, 3):

@@ -150,6 +150,24 @@ edit. REC sampling, the pattern-select resample screen, pattern export and takes
 whose first sound comes more than 50 ms after recording starts keep stock
 behaviour. Mono takes aren't covered; the SP's own buttons always record stereo.
 
+### Start fix v3 (test builds only)
+
+The bounce test builds from bounce-3-test5 on carry v3 of the start fix
+(`resample-startfix-3`). The patcher still builds v2, and publishing v3 is a
+separate decision.
+
+With v2, a resampled pad's START could sit a few samples after the start of its
+wave. v2 puts START on the first sample above about −72 dBFS. The effects chip's
+return reaches the take with a quiet lead-in a few frames earlier: a hi-hat
+bounced on the unit started 7 frames before its main attack. The stock end of
+the recording then moves START to the nearest zero crossing, and in an
+oscillating lead-in that crossing lies inside it.
+
+v3 puts START 8 frames (0.17 ms) before that first sample, and never before the
+point where the recording started. A lead-in of up to 7 frames is kept whole,
+with at most 8 frames of silence in front of it, and the zero-cross step leaves
+START there. Everything else is as in v2.
+
 ## Bounce a kit into a bank
 
 BOUNC, the last item of the drum VALUE menu, writes the current kit's sixteen
@@ -488,7 +506,10 @@ python synth/build_start_fix.py out/kits-v946/SP404MKII_APP1.bin out/kits-v946-f
 
 A clean rebuild from stock 5.52 with these commands, followed by the RESAMPLE
 start fix stage, reproduces the v9.46-test3 APP1 (`7b5fbcb4…684a`, 3,094,624
-bytes). The kit stage alone gives `88384c3c…92ba` (3,094,032 bytes). v9.46-test2
+bytes). The kit stage alone gives `88384c3c…92ba` (3,094,032 bytes). On the
+branch `claude/bounce-stage3`, from bounce-3-test5 on, `build_start_fix.py`
+builds v3 instead: `7d13c1e2…61cc` (3,094,624 bytes) from the same kit stage.
+v2 rebuilds from that branch's `56c0b56` or earlier. v9.46-test2
 (`e94b36f8…295b`) rebuilds from commit `17d3ca5` and v9.46-test1 (`e762c495…bcae`)
 from `c8d584a`. Earlier
 candidates rebuild the same way from their branches: v9.45-test1 (`claude/kits-
@@ -689,6 +710,22 @@ The kit checks below were run again on v9.46-test3:
   0x36 reads at stop; and at standby only RESAMPLE gets the −72 dBFS threshold
   (4 modes × 12 settings). A real take through the recorder and the SD card can
   only be checked on the unit.
+- Start fix v3 (`test_start_fix.py` on this branch): 540 combinations; marked takes
+  get START = REC_START + first sound − 8 frames (REC_START when that is 8 frames
+  or fewer). Takes are fed through the stock writers' first-sound rule
+  (`0x1bdcc`–`0x1c0d6`: the first frame with either sample above the threshold).
+  - Cases that must keep only exact zeros between START and the first non-zero
+    sample: a lead-in from 1 LSB that crosses 8 five frames later; the unit's
+    7-frame lead-in; a sharp attack.
+  - A floor under 8: START still comes to 8 frames before the attack.
+  - A first sound after 2399 frames, as stock.
+  - Mode 2 branches to its own stock trim and never reaches the hooked site.
+
+  The same checks fail v2 four times. In dm-404 (the real firmware), a lead-in of
+  `1 −1 2 −2 3 −4` before a sharp attack:
+  - v2 START lands on the attack;
+  - v3 START lands two zero frames before the lead-in, and the end of the
+    recording's zero-cross step leaves it there.
 
 Hardware timing, output, CPU headroom and writes to the SP's storage are not yet
 verified on a device.
