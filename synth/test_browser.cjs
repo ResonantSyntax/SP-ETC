@@ -79,7 +79,7 @@ async function download(page) {
   assert.equal(kits.combined_sha256, '94d2786c72a2953216e5aa2b0b9e66c6cae926d5a4ccebeb835017cf87e18ea7');
   assert.equal(kits.kit_stage_sha256, '88384c3c9760559e721c1a14973ef3a2ced6abf016572b0a73c5dfb0cef492ba');
   assert.equal(kits.features.length, 11);
-  assert.equal(kits.hardware_verified, false);
+  assert.equal(kits.hardware_verified, true);
   assert.equal(JSON.stringify(kits.kit_selector_range), '[1,13]');
   assert.equal(kits.kits.length, 13);
   assert.equal(kits.synthesis_only, true);

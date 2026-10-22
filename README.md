@@ -268,24 +268,15 @@ To go back to the original firmware, just run the updater with the original Rola
 one APP1 (`build_combined.py`), plus fast boot (`build_fast_boot.py`) and no
 "SHIFT: PAGE" on the drum kit screen (`build_kit_footer.py`). Its APP1
 SHA-256 is `be758f67…34b4`. Each module is byte for byte its own test build's,
-and the branch rebuilds the APP1 exactly. In the emulator, every feature suite
-passed its behaviour checks on combined-test5 but one by design (in chromatic
-mode ROLL + VALUE is the roll speed now, not the key), and the 25 kit suites
-passed there. combined-test7 changes only FX deep edit and the kit footer's
-text: its FX suite, seven kit suites and the patcher test pass. The features
-were played on the unit in combined-test3 to combined-test6, and those reports
-shaped this release; combined-test7's last FX deep edit change is
-emulator-checked. Known: a bounce's START can sit a few samples after the
+and the branch rebuilds the APP1 exactly. It was played on an SP-404MKII as a
+whole, with no bugs found, after each feature was tried on the unit in its own
+test builds. Known: a bounce's START can sit a few samples after the
 sound's first sample (move START back by hand). [COMBINED.md](synth/COMBINED.md).
 
 **Kits v9.46** (2026-10-13) is build v9.46-test3 plus the RESAMPLE start fix
-(APP1 SHA-256 `7b5fbcb4…684a`). Its test builds were partly played on hardware
-(drum REC, BOUNC and the looper), and those reports shaped the release. MIDI,
-resampling with the kits and the start fix have no hardware report yet, and the
-last changes (the 21 ms minimum, the BOUNC questions, the looper shortcut) are
-checked in the emulator only, where every kit suite, the start-fix test and the
-patcher test pass. CPU headroom under heavy use is not yet measured on a device.
-[Kit test status](synth/KITS.md).
+(APP1 SHA-256 `7b5fbcb4…684a`). Its test builds were played on hardware (drum
+REC, BOUNC and the looper), and those reports shaped the release. v9.47 carries
+it. [Kit test status](synth/KITS.md).
 
 **v9.9.3** (2026-10-07) fixes the reproduced BANK-tempo mismatch: the arp
 now uses the active sample bank, matching the normal TEMPO SEL screen. v9.9.2

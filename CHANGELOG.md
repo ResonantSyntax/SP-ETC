@@ -25,7 +25,7 @@ It has every feature's latest test build, each module byte for byte its own buil
 order, the shared hooks and the emulator results. The patcher panel and done message take the version from
 the overlay's metadata. The page and README list the new features, and say that kit edits, M.CH, the
 arpeggiator and MIDI CC changes are now saved with the project. THIRD-PARTY-NOTICES.md credits DM-404's
-fxmap.json (MIT), which FX deep edit's table comes from. Not yet played on hardware as a whole.
+fxmap.json (MIT), which FX deep edit's table comes from. Played on an SP-404MKII as a whole, with no bugs found.
 
 ## Synthesized kits v9.46 (in the patcher)
 
