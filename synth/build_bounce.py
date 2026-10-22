@@ -52,7 +52,7 @@ HERE = Path(__file__).resolve().parent
 FLASH, COPY, ZERO = 0x60080000, 0x600800E4, 0x60080100   # scatter rows: copy, zero fill
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
 PUBLISHED_V946 = '7b5fbcb4c3ce1e8782fef4b5803be74c7d14eddf25a1b53682abe00c9ed3684a'
-REVISION = 'bounce-3-test7'
+REVISION = 'bounce-3-test8'
 SLOT = 0x5000                       # reserved: [base, base + SLOT)
 SLOT_CEILING = 0x83FED000           # the CPU meter test build's slot, then the start fix at 0x83FEF000
 BRIDGES = {'tx': 0x00, 'rx': 0x30, 'ui': 0x80, 'gate': 0xC0, 'tick': 0x100}
@@ -603,12 +603,20 @@ def build(inp: Path, out: Path, zig: Path, base: int):
         description='bounce in place, stage 3: hold RESAMPLE and tap a sample pad; the pad is recorded through '
                     'its effects, frame-exact, in NO TAIL or TAIL mode, onto the first empty pad (TO PAD) or in its '
                     'place (REPLACE: the stock pad exchange, the original kept on that pad), with UNDO; named after '
-                    'the source with " B"; a finished bounce returns to the main screen',
+                    'the source with " B"; a finished bounce returns to the main screen. test8: a pad tapped in the '
+                    'setup picks the target (the source itself REPLACE, an empty pad TO PAD onto it, a pad with a '
+                    'sample PAD NOT EMPTY), RESAMPLE (or REC) starts',
         parent_app1=str(inp), parent_sha256=parent_sha, parent_is_published_v946=parent_sha == PUBLISHED_V946,
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
         if parent_manifest.exists() else None,
-        replaces='bounce-3-test6 (the same six sites, the same parent)',
-        changes=["no LOOP mode: the setup offers NO TAIL and TAIL (TAIL only for a loop not at its own rate). On the "
+        replaces='bounce-3-test7 (the same six sites, the same parent)',
+        changes=["a pad tapped in the setup picks the target (the user's ask after combined-test3): the source itself "
+                 "is REPLACE (the original parked on the home pad, the first empty one), an empty pad TO PAD onto that "
+                 "pad, a pad with a sample is refused with PAD NOT EMPTY and its name for a second (a protected bank: "
+                 "BANK PROTECTED); in the UNDO popup a tap leaves UNDO for that bounce. VALUE press no longer picks the "
+                 "target (VALUE turned still picks NO TAIL / TAIL)",
+                 "RESAMPLE pressed starts the bounce (or the UNDO), as REC does"],
+        changes_test7=["no LOOP mode: the setup offers NO TAIL and TAIL (TAIL only for a loop not at its own rate). On the "
                  "unit a LOOP take of a pad through a reverb started inside the previous pass's tail, so played once "
                  "it clicked at its start; the user bounces one-shots. NO TAIL of a loop keeps one pass from T0 with "
                  "LOOP and the loop point copied, as before. The pass comparison and its RAM are gone",
