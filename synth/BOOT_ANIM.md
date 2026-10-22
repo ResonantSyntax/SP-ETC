@@ -65,11 +65,7 @@ passes. Not timed on the unit.
 
 ## combined-test2 (2026-10-22)
 
-combined-test1 with HELLO as the Homer car: 13 frames from a 1.7 s clip, played in reverse so the turn ends on
-the car's front. The conversion was done by hand, outside this repository:
-- **Crop:** the car's extent over the clip, 2:1.
-- **Pixels:** its yellow and green lit, cut to its hull. The cartoon's black outlines were thickened before the
-  3.3x shrink so they survive.
-
-Only HELLO's frames and step row changed: 8,846 bytes. `build_combined.check_combined` still passes on the
-image. Not run on the unit. The frames are from a TV clip, so the build is for the owner's unit only.
+combined-test1 with a private 13-frame HELLO animation, converted by hand outside this repository (a 2:1 crop,
+outlines thickened before the 3.3x shrink so they survive). Only HELLO's frames and step row changed: 8,846
+bytes. `build_combined.check_combined` still passes on the image. Not run on the unit, and not published: the
+frames are not ours to share.

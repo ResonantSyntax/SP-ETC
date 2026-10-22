@@ -57,7 +57,7 @@ The local workspace output is `firmware/doom-poly-waves-v3-budget/`. Use both BI
 from that folder together. APP0 is unchanged stock 5.52. Keep the working
 `firmware/doom-poly-v4/` and the official stock update for rollback.
 
-Alternatively, open [our web patcher](https://tracelistener.github.io/doom-os-etc./)
+Alternatively, open [our web patcher](https://tracelistener.github.io/SP-ETC/)
 or refresh this fork's local `index.html`, load **stock 5.52 APP1**,
 and select the Wave Lab option only for an explicit candidate test. The patcher applies exact SHA-guarded
 stock → DOOM → poly-v4 → Wave Lab overlays locally. Leave Wave Lab OFF for the

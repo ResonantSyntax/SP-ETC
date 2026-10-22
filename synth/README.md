@@ -61,7 +61,7 @@ stability still need device testing.
 ## Our online or local browser patcher
 
 1. Back up samples/projects/settings and keep the original Roland 5.52 update.
-2. Open [our patcher](https://tracelistener.github.io/doom-os-etc./), or open
+2. Open [our patcher](https://tracelistener.github.io/SP-ETC/), or open
    **this fork's `index.html` locally**. The upstream patcher does not contain
    this fork's additions.
 3. Supply the **unmodified stock 5.52 `SP404MKII_APP1.bin`**, not our v4 binary

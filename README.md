@@ -1,6 +1,6 @@
 # Tracelistener's SP-404MKII Sound Generator mod
 
-**[Open the patcher](https://tracelistener.github.io/doom-os-etc./)**
+**[Open the patcher](https://tracelistener.github.io/SP-ETC/)**
 
 The patcher builds **Sound Generator + Kits v9.47** for the SP-404MKII:
 Sound Generator **v9.9.3** (four live voices, 17 new waveforms, nine
@@ -9,7 +9,7 @@ thirteen synthesized machine kits. v9.47 also adds bounce in place, pad
 envelopes, note repeat, chromatic scales, saved kit edits and Sound Generator
 settings, SUB PAD on the Sound Generator, FX deep edit and fast boot. It is built on, and includes, **DOOM OS 0.6.1**
 (build ED5E), Klangfeld Labs' pattern sequencer for the SP: hold REMAIN and
-press SUB PAD to open it ([DOOM OS quickstart](https://tracelistener.github.io/doom-os-etc./manual/)).
+press SUB PAD to open it ([DOOM OS quickstart](https://tracelistener.github.io/SP-ETC/manual/)).
 Drop in the stock firmware and press Patch; there is nothing to choose. Firmware
 processing happens locally in your browser; nothing is uploaded. [Kit controls,
 reproduction and validation](synth/KITS.md).
@@ -245,14 +245,14 @@ build and tests](synth/ARP.md).
 
 Use this fork's web patcher, which includes the new synth options:
 
-[Open the patcher](https://tracelistener.github.io/doom-os-etc./)
+[Open the patcher](https://tracelistener.github.io/SP-ETC/)
 
 You can also download this repository as a ZIP file (under the Code button), unzip it and open index.html in your browser. Just follow the instructions on the page.
 
 ### Manual installation
 
 1. Download the 5.52 system update from [Roland's support page](https://www.roland.com/global/support/by_product/sp-404mk2/updates_drivers/) and unzip it.
-2. Open [our patcher](https://tracelistener.github.io/doom-os-etc./), load the stock `SP404MKII_APP1.bin` and press Patch firmware. It builds Sound Generator + Kits v9.47. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
+2. Open [our patcher](https://tracelistener.github.io/SP-ETC/), load the stock `SP404MKII_APP1.bin` and press Patch firmware. It builds Sound Generator + Kits v9.47. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
 3. Download the patched `SP404MKII_APP1.bin` and use it with the unchanged official 5.52 `SP404MKII_APP0.bin` for your test update. Back up first and keep your known-good update for rollback.
 4. Insert the card, hold **SHIFT** while you turn the SP on, and press the **VALUE** knob when the update menu appears.
 5. When the update is done, turn the SP off and on again.
@@ -269,9 +269,11 @@ and the branch rebuilds the APP1 exactly. In the emulator, every feature suite
 passed its behaviour checks on combined-test5 but one by design (in chromatic
 mode ROLL + VALUE is the roll speed now, not the key), and the 25 kit suites
 passed there. combined-test7 changes only FX deep edit and the kit footer's
-text: its FX suite, seven kit suites and the patcher test pass. Bounce in place passed its two checks on the unit as
-bounce-3-test6. The other features, and this combined build, have no hardware
-report yet. [COMBINED.md](synth/COMBINED.md).
+text: its FX suite, seven kit suites and the patcher test pass. The features
+were played on the unit in combined-test3 to combined-test6, and those reports
+shaped this release; combined-test7's last FX deep edit change is
+emulator-checked. Known: a bounce's START can sit a few samples after the
+sound's first sample (move START back by hand). [COMBINED.md](synth/COMBINED.md).
 
 **Kits v9.46** (2026-10-13) is build v9.46-test3 plus the RESAMPLE start fix
 (APP1 SHA-256 `7b5fbcb4…684a`). Its test builds were partly played on hardware
