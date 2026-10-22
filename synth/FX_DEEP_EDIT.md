@@ -10,6 +10,25 @@ firmware's own state is never changed and nothing is saved: values live in RAM, 
 until power-off. Outside the page the build behaves as v9.46, except that an edited value goes to
 the chip again whenever the firmware selects that effect on that bus.
 
+## Test 4 (fx-deep-edit-test4): the input FX too, and a note when there is nothing
+
+From the user's test of combined-test5: on the held FX screen (REMAIN + FX) VALUE only flipped screens 1 and 2,
+and the extra screens never came, even after a restart. The extra screens follow the slot the CTRL knobs drive
+(settings `0x3a`) and its effect (`0x27c[slot]`), as the FX screen itself does (its update `0x80146598` reads the
+same two). Tests 2 and 3 offered them on BUS 1-4 only, so with the knobs on the input FX (slot 0), or on an effect
+without extra settings (11 of 48), VALUE quietly did stock's toggle.
+
+- **The input FX** gets its extra screens too. Slot 0 is part of the chip's address map (`03 hi lo aa` with
+  hi:lo = (effect − 1) × 5 + slot), and the stock knob path already sends it with slot = `0x3a`. Values are kept per
+  slot (`fde_values[5][142]`), and an FxType for slot 0 (`0x7e`) sends the input FX's edited values again, as the
+  FxTypes for BUS 1-4 do (`fde_dt1` now passes `0x7e..0x82` to `fde_dt1_fxtype`).
+- **An effect without extra settings** says so: the VALUE press that goes back to screen 1 (every press, on an
+  effect without screen 2) shows `CHORUS` / `NO EXTRA SETTINGS` for 1.5 s, and stock's toggle runs as before.
+
+Checked in the emulator (68 checks pass): the input FX's extra screen (Reverb's DENSITY on slot 0, `03 .. .. ..`
+for slot 0), Crusher's note with stock's flag toggles as on the parent, the input FX's FxType re-sending its edits
+(and adding nothing without), the builder's address for all 710 setting/slot pairs, and every test 3 check.
+
 ## Test 3 (fx-deep-edit-test3): no FX button hold
 
 From the user's test of combined-test4: "fx screen hold is broken. now on mfx, once pressed cannot get to menu to

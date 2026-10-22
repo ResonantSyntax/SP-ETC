@@ -1,5 +1,6 @@
-"""Checks for FX deep edit test 3 (build_fx_deep_edit.py): on the FX screen REMAIN + FX opens, VALUE through its
-screens and the effect's extra screens; an FX button alone as stock.
+"""Checks for FX deep edit test 4 (build_fx_deep_edit.py): on the FX screen REMAIN + FX opens, VALUE through its
+screens and the effect's extra screens, the input FX's too; an effect without extra settings says so; an FX
+button alone as stock.
 
 usage: python synth/test_fx_deep_edit.py OUT_DIR [FXMAP]     (unicorn, keystone, capstone on PYTHONPATH)
 
@@ -25,10 +26,10 @@ Checks:
   REMAIN + FX opens the screen that stays while the bus has an effect, as on the parent, and asks to close when that
   FX button turns the effect off or the bus has none;
 - VALUE through the screens (REMAIN + FX): Tape Echo (screen 2, three extra screens), Isolator (one extra screen),
-  Crusher (none: stock's toggle, as on the parent); the popups; nothing sent;
+  Crusher (none: stock's toggle, as on the parent, and "CRUSHER / NO EXTRA SETTINGS"); the popups; nothing sent;
 - on an extra screen CTRL 1-3 set its settings across their ranges, one frame per change; a knob without a setting
   does nothing; pads go on as usual; another button leaves (the popup goes) and goes on as usual; afterwards the
-  knobs are stock's; every setting of every effect reaches its min and max; per bus; the input FX has none;
+  knobs are stock's; every setting of every effect reaches its min and max; per bus; the input FX (slot 0) too;
 - re-sending: after the firmware sends a bus's FxType (the effect select through the stock effect choice, the system
   setter, the bus swap), that bus's edited values for that effect follow it at once, and the rest of the traffic is
   the parent's byte for byte; a knob turn, another bus's FxType, the chip reset (FxType 0) and FxType for an effect
@@ -415,7 +416,7 @@ def builder_checks(img, parent, man, fxmap, st):
     bad, n = [], 0
     for fx in range(1, 49):
         for s in st.by_fx[fx]:
-            for bus in range(1, 5):
+            for bus in range(5):
                 m.clear()
                 m.call(DT1, BMC, s['id'], bus, 0x5A)
                 got, other, ok = m.frames()
@@ -423,7 +424,7 @@ def builder_checks(img, parent, man, fxmap, st):
                 if not ok or other or got != [fx_frame(fx, bus, s['aa'], 0x5A)] or \
                         [x['addr'] for x in fxmap[fx]['params'] if x['name'] == s['name'] and x['default'] is None] != [s['aa']]:
                     bad.append((fx, s['name'], bus))
-    check(not bad and n == 568, f'through the jump, the builder sends fxmap\'s address for all {n} setting/bus pairs '
+    check(not bad and n == 710, f'through the jump, the builder sends fxmap\'s address for all {n} setting/slot pairs '
                                 f'({bad[:4]})')
 
 
@@ -578,8 +579,11 @@ def screen_checks(img, parent, man, st):
             ss.value()
             flags.append((ss.flag(VIEW_SCREEN2), mm.popups))
         out.append(flags)
-    check(out[0] == out[1] == [(1, []), (0, []), (1, [])],
-          'Crusher (no screen 2, no extra settings): VALUE toggles stock\'s screen flag, as on the parent with REMAIN')
+    note = (f'{st.effect_names[CRUSHER]}\nNO EXTRA SETTINGS', 1500)
+    check([f for f, _ in out[0]] == [f for f, _ in out[1]] == [1, 0, 1] and all(not q for _, q in out[0]) and
+          all(q == [note] for _, q in out[1]),
+          f'Crusher (no screen 2, no extra settings): VALUE toggles stock\'s screen flag, as on the parent with REMAIN, '
+          f'and says so for 1.5 s: {note[0]!r} ({out[1]})')
 
     # the knobs on an extra screen
     m, sc = fx_machine(img, man)
@@ -648,11 +652,16 @@ def screen_checks(img, parent, man, st):
     m, sc = fx_machine(img, man)
     m.knob_bus(0)
     sc.open()
-    seq = []
-    for k in range(2):
-        sc.value()
-        seq.append(m.state()['screen'])
-    check(seq == [0, 0], 'the knobs on the input FX: no extra screens')
+    m.bus_effect(0, REVERB)
+    sc.value()
+    sc.value()                                          # Reverb has CTRL 4-6: screen 2, then DENSITY
+    rv = st.by_fx[REVERB][0]
+    m.clear()
+    m.dispatch(EV_KNOB, 1, 0)
+    got, other, ok = m.frames()
+    check(ok and got == [fx_frame(REVERB, 0, rv['aa'], rv['min'])] and m.state()['bus'] == 0 and
+          m.popups[-1] == (screen_text(rt, st, 0, REVERB, 1, {'DENSITY': rv['min']}), SCREEN_MS),
+          'the knobs on the input FX (test4): its extra screens too, Reverb\'s DENSITY goes to slot 0')
 
 
 def range_checks(img, man, st):
@@ -690,13 +699,14 @@ def resend_checks(img, parent, man, st):
     e = man['entries']
     te = {s['name']: (i, s) for i, s in enumerate(st.by_fx[TAPE_ECHO])}
     first = m.r32(e['fde_first'] + TAPE_ECHO) & 0xFF
-    edits = {(1, 'TAPE DIST'): 2, (1, 'BASS'): 10, (2, 'TREBLE'): 19}
-    for (bus, name), v in edits.items():               # held as the extra screens leave them
+    edits = {(1, 'TAPE DIST'): 2, (1, 'BASS'): 10, (2, 'TREBLE'): 19, (0, 'BASS'): 7}
+    for (bus, name), v in edits.items():               # held as the extra screens leave them (slot 0: the input FX)
         i = first + te[name][0]
-        m.uc.mem_write(e['fde_values'] + (bus - 1) * 142 + i, bytes([v]))
-        m.uc.mem_write(e['fde_edited'] + (bus - 1) * 142 + i, bytes([1]))
+        m.uc.mem_write(e['fde_values'] + bus * 142 + i, bytes([v]))
+        m.uc.mem_write(e['fde_edited'] + bus * 142 + i, bytes([1]))
     ours1 = [fx_frame(TAPE_ECHO, 1, te['BASS'][1]['aa'], 10), fx_frame(TAPE_ECHO, 1, te['TAPE DIST'][1]['aa'], 2)]
     ours2 = [fx_frame(TAPE_ECHO, 2, te['TREBLE'][1]['aa'], 19)]
+    ours0 = [fx_frame(TAPE_ECHO, 0, te['BASS'][1]['aa'], 7)]
 
     def both(action, label, insert):
         """action on parent and image; the image must send the parent's frames with `insert` (FxType frame ->
@@ -734,15 +744,15 @@ def resend_checks(img, parent, man, st):
     both(lambda mm: mm.call(DT1, 0x80B62F09, 0x7F, 0, TAPE_ECHO),
          'FxType1 = Tape Echo sent straight to the builder, as the BUS 1/2 swap 0x8001b8e2 sends it',
          {fxtype_frame(1, TAPE_ECHO): ours1})
-    both(lambda mm: mm.call(DT1, 0x80B62F09, 0x7E, 0, TAPE_ECHO), 'FxType0 (the input FX) = Tape Echo: not a bus',
-         {})
+    both(lambda mm: mm.call(DT1, 0x80B62F09, 0x7E, 0, TAPE_ECHO), 'FxType0 (the input FX) = Tape Echo: the input '
+         'FX\'s edited values (test4)', {fxtype_frame(0, TAPE_ECHO): ours0})
     both(lambda mm: (mm.call(SYS_INIT, SYSPRM), mm.call(CHIP_RESET, 0x80591794, count=50_000_000)),
          'system init and the chip reset (every effect\'s CTRL 1-3 again, FxType 0 everywhere)', {})
     for mm in (m, p):
         mm.w32(FXTYPE_SENT + 4, 0xFFFFFFFF)            # the select's cache as boot leaves it
     both(lambda mm: mm.set_bus(1, TAPE_ECHO), 'after it, BUS 1 Tape Echo chosen again', {fxtype_frame(1, TAPE_ECHO): ours1})
     st_ = m.state()
-    check(st_['resent'] == 2 + 2 + 1 + 2 + 2, f'the module counted 9 values sent again ({st_})')
+    check(st_['resent'] == 2 + 2 + 1 + 2 + 1 + 2, f'the module counted 10 values sent again ({st_})')
 
 
 def stop_checks(img, parent, man):
@@ -798,7 +808,7 @@ def passthrough_checks(img, parent, man):
         a, b = Machine(parent), Machine(img, e)
         for m in (a, b):                                # BUS 1 with an effect on, so knobs reach the chip
             m.set_bus(1, REVERB)
-        for bus in range(4):                            # an edited value held for every bus's Reverb and Tape Echo
+        for bus in range(5):                            # an edited value held for every slot's Reverb and Tape Echo
             for fx in (REVERB, TAPE_ECHO):
                 i = b.r32(e['fde_first'] + fx) & 0xFF
                 b.uc.mem_write(e['fde_values'] + bus * 142 + i, bytes([3]))
