@@ -18,9 +18,11 @@ reproduction and validation](synth/KITS.md).
 
 - **Bounce in place:** hold RESAMPLE and tap a pad that holds a sample, then:
   - tap where it goes: the same pad to bounce in place, an empty pad to bounce
-    onto it (a pad with a sample says PAD NOT EMPTY);
+    onto it (a pad with a sample says PAD NOT EMPTY). The pad you pick lights
+    up;
   - turn VALUE for NO TAIL or TAIL;
-  - press RESAMPLE to start. UNDO swaps an in-place bounce back.
+  - press RESAMPLE to start. On a pad you bounced in place, VALUE press
+    switches to UNDO, which swaps it back.
 
   The bounce is named after the pad with ` B`. [BOUNCE.md](synth/BOUNCE.md)
 - **Pad envelopes:** SHIFT + PITCH/SPEED, then turn VALUE (or tap SHIFT)
@@ -37,8 +39,8 @@ reproduction and validation](synth/KITS.md).
 - **Note repeat:** hold ROLL and a pad and it repeats at the pad's Roll
   division. Turn VALUE while holding ROLL to change the division; triplets are
   included. Tap ROLL to latch it, and HOLD keeps rolls going. In chromatic mode
-  every pad rolls at one division, 1/16 to start. SHIFT + ROLL and DJ mode stay
-  stock. [NOTE_REPEAT.md](synth/NOTE_REPEAT.md)
+  each pad has its own roll division, 1/16 to start. SHIFT + ROLL and DJ mode
+  stay stock. [NOTE_REPEAT.md](synth/NOTE_REPEAT.md)
 - **Chromatic scales:** in chromatic mode, hold VALUE and turn to choose from
   the Sound Generator's 34 scales (a press steps to the next); hold SHIFT too for
   the key. The pads walk the scale and reach an octave above stock's top (+27).
@@ -51,8 +53,8 @@ reproduction and validation](synth/KITS.md).
   [KITS_SAVE.md](synth/KITS_SAVE.md)
 - **SUB PAD on the Sound Generator:** plays the last pad again, in melodic and
   drum mode. [SG_SUBPAD.md](synth/SG_SUBPAD.md)
-- **FX deep edit:** an FX button's screen stays up until EXIT or that button
-  again. Press VALUE to go through its screens and on to extra screens with the
+- **FX deep edit:** hold REMAIN and press an FX button, so its screen stays up.
+  Press VALUE to go through its screens and on to extra screens with the
   settings the SP never sends to its effects chip, three at a time on CTRL 1-3
   (Tape Echo's TAPE DIST, Reverb's DENSITY and more). These live in RAM only,
   the values are raw numbers, and some gains get loud.
@@ -258,9 +260,9 @@ To go back to the original firmware, just run the updater with the original Rola
 
 ## Status
 
-**v9.47** (2026-10-22) is combined-test4: every feature's latest test build in
+**v9.47** (2026-10-22) is combined-test5: every feature's latest test build in
 one APP1 (`build_combined.py`), plus fast boot (`build_fast_boot.py`). Its APP1
-SHA-256 is `adcb6f70…157f`. Each module is byte for byte its own test build's,
+SHA-256 is `634f7af1…0bef`. Each module is byte for byte its own test build's,
 and the branch rebuilds the APP1 exactly. In the emulator, every feature suite
 passes its behaviour checks on this image, but one by design: in chromatic mode
 ROLL + VALUE is the roll speed now, not the key. The 25 kit suites and the
