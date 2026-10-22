@@ -188,3 +188,20 @@ results as combined-test4's, with the new checks passing.
 
 The patcher test (`node synth/test_browser.cjs`, branch `claude/publish-v9.47`) passes with v9.47 = combined-test5.
 **Not run:** dm-404, and the unit.
+
+## 7. combined-test6
+
+From the user's test of combined-test5: the FX deep edit's extra screens never came (VALUE only flipped screens
+1 and 2), and the drum kit screen's "SHIFT: PAGE" should go. `build_combined.py` with FX deep edit at
+`fx-deep-edit-test4` (the input FX gets the extra screens too; an effect without any says NO EXTRA SETTINGS), the
+other seven steps as in combined-test5; then `build_fast_boot.py`; then the new `build_kit_footer.py`.
+
+- **Kit footer:** the kit stage's `kit_ui_footer_draw` (`kits/kit_ui.inc`) clears the Sound Generator page's footer
+  while a kit is on and draws "SHIFT: PAGE" there (the first draw after entering drum mode showed it in the big
+  font, cut to "SHIFT: PA"). The kit stage is baked into every feature build's parent, so the text goes in a step on
+  top, as the fast boot does: the string's first byte at `0x83fbaf36` (the kit blob's boot copy row to
+  `0x83fa2000`) becomes 0, so the footer is cleared and nothing is drawn. Guards: the 12 bytes, the footer's one
+  literal for them (`0x83fa7718`) and that nothing else in the image refers to them.
+- **APP1:** `e54935c3…d6e6`, 3,152,352 bytes, in `analysis/kit_pr1_audit/release/combined-test6` (the combined build
+  `7fd46808…bf57`, after the fast boot `52d91be4…23e9`). Every module byte for byte its own test build's; the same
+  7 reviewed overlaps.
