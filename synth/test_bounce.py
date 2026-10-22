@@ -108,6 +108,7 @@ STUBS = {
     0x800D8B90: 'nop',               # the project's change broadcast (its listeners are not built here)
     0x800E11D0: 'seq',               # sequencer parameter set: logged (its object is not built here)
     0x800DA598: 'page',              # page request: logged (the UI task's page switch does not run here)
+    0x800D4910: 'led',               # key light (key, mode, level): logged (the panel link is not built here)
     # around the exchange in command 0x40d's case: preview files closed, a debug line, the remote's notice
     0x800DEBD8: 'nop', 0x8003A7A0: 'zero', 0x800D31C6: 'nop', 0x800D9F58: 'nop', 0x800E1190: 'one',
     RING: 'ring', DISPATCH_A: 'other',
@@ -136,7 +137,7 @@ FIELDS_U = ('state ms since shown refresh src dst mode modes loop_src loop_pin l
             'swap_a swap_b want_len_a want_ch_a want_len_b want_ch_b fence undo_slot undo_next partial err dropped '
             'r_win r_cached').split()
 UNDO_FIELDS = 'used pad keep len_pad ch_pad len_keep ch_keep link'.split()
-FIELDS_U2 = 'home note note_until tapped'.split()             # test8, after the UNDO records
+FIELDS_U2 = 'home note note_until tapped lit'.split()         # test8 (lit: test9), after the UNDO records
 UNDOS = 8
 SIGNED = {'l', 'l_est', 'l_meas', 'p0', 'p_sum', 'p16', 'd', 'saved_len', 'saved_snap', 'cal_off', 'r_l',
           'r_est', 'r_meas', 'r_p16', 'r_d', 'saved_ext', 'link_src', 'err', 'r_win'}
@@ -301,6 +302,7 @@ class Machine:
         self.param_saves = 0
         self.ring = []
         self.texts = []
+        self.leds = []
         self.ui_ms = 0
         self.swap_fail = None
         self.stall = False
@@ -414,6 +416,8 @@ class Machine:
             self.log.append(('seq', r1, sr[2], sr[3]))
         elif name == 'page':
             self.log.append(('page', sr[0]))
+        elif name == 'led':
+            self.leds.append((self.ui_ms, r0, r1, r2))
         elif name == 'get':
             value = self.settings.get(r1, 0)
         elif name == 'set':
@@ -1784,12 +1788,14 @@ def replace_checks(img, man):
     recs = m.undos()
     check(len(recs) == 1 and recs[0]['pad'] == 0 and recs[0]['keep'] == 1 and recs[0]['link'] == 4 and
           recs[0]['len_keep'] == 3000, f'an UNDO record: bounce on A-1, original on A-2, PAD LINK 4 ({recs})')
-    # UNDO: the gesture on the bounced pad offers it first
+    # UNDO (test9): the gesture on the bounced pad sets up the bounce picked last; VALUE press for UNDO and back
     m.ui(300)
     m.gesture(0)
     m.ui(1)
-    check(m.popup() == 'UNDO BOUNCE?\nORIG ON A-2' and m.u('target') == T_UNDO,
-          f'the gesture on the bounced pad: UNDO BOUNCE? first ({m.popup()!r})')
+    first = (m.popup(), m.u('target'))
+    m.tap(KEY_VALUE)
+    m.ui(1)
+    undo = (m.popup(), m.u('target'), m.u('dst'))
     seen = []
     for d in (1, -1):
         m.turn(d)
@@ -1797,14 +1803,19 @@ def replace_checks(img, man):
         seen.append(m.popup())
     m.tap(KEY_VALUE)
     m.ui(1)
-    seen.append(m.popup())
-    check(seen == ['UNDO BOUNCE?\nORIG ON A-2', 'UNDO BOUNCE?\nORIG ON A-2', 'UNDO BOUNCE?\nORIG ON A-2'],
-          f'in UNDO VALUE turned or pressed changes nothing ({seen})')
+    back = (m.popup(), m.u('target'))
+    check(first == ('REPLACE A-1\nNO TAIL\nVALUE FOR UNDO', T_REPLACE) and
+          undo == ('UNDO BOUNCE?\nORIG ON A-2\nVALUE FOR BOUNCE', T_UNDO, 1) and
+          seen == ['UNDO BOUNCE?\nORIG ON A-2\nVALUE FOR BOUNCE'] * 2 and back == first,
+          f'the gesture on the bounced pad: the bounce picked last (REPLACE) and VALUE FOR UNDO; VALUE press: UNDO '
+          f'BOUNCE? (VALUE turned changes nothing there); VALUE press again: back ({first}, {undo}, {seen}, {back})')
     seen = []
     m.tap(KEY_EXIT)
     m.ui(300)
-    for pad, want in ((2, 'BOUNCE A-1>A-3\nNO TAIL'), (0, 'REPLACE A-1\nNO TAIL')):
+    for pad, want in ((2, 'BOUNCE A-1>A-3\nNO TAIL\nVALUE FOR UNDO'), (0, 'REPLACE A-1\nNO TAIL\nVALUE FOR UNDO')):
         m.gesture(0)
+        m.ui(1)
+        m.tap(KEY_VALUE)                                # UNDO
         m.ui(1)
         m.event(EV_PAD, pad, 100)
         m.event(EV_PAD_UP, pad, 0)
@@ -1815,6 +1826,8 @@ def replace_checks(img, man):
     check(all(seen), f'in UNDO a tap leaves it for a bounce: an empty pad (A-3) TO PAD onto it, the pad itself REPLACE '
                      f'({seen})')
     m.gesture(0)
+    m.ui(1)
+    m.tap(KEY_VALUE)                                    # UNDO
     m.ui(1)
     m.log = []
     m.tap(KEY_RESAMPLE)
@@ -1852,6 +1865,8 @@ def replace_checks(img, man):
     m.ui(300)
     m.gesture(0)
     m.ui(1)
+    m.tap(KEY_VALUE)                                    # UNDO
+    m.ui(1)
     m.load_pad(1, 2222, tag='another')
     m.log = []
     m.tap(KEY_REC)
@@ -1866,12 +1881,31 @@ def replace_checks(img, man):
     m.w32(TARGET_VALUES + 4, 15)
     m.gesture(0)
     m.ui(1)
+    m.tap(KEY_VALUE)                                    # UNDO
+    m.ui(1)
     m.tap(KEY_REC)
     for _ in range(40):
         m.ui(1)
     check(m.popup() == 'UNDONE A-1\nBOUNCE ON A-2' and m.u('fence') == 14 and m.record(0) == orig and
           m.r32(TARGET_VALUES + 4) == 0xFFFFFFFF,
           f'a stale target value 15: the fence writes 14, the UNDO completes ({m.popup()!r})')
+    # no empty pad left (banks B-J protected, A full): UNDO first, the only choice; VALUE stays on it
+    m, pcm = setup(seed=39)
+    run_bounce(m, 0, 0, target=T_REPLACE)
+    m.ui(300)
+    for b in range(1, 10):
+        m.protect(b)
+    for p in range(2, 16):
+        m.load_pad(p, 1000 + p, tag='full')
+    m.gesture(0)
+    m.ui(1)
+    first = (m.popup(), m.u('target'))
+    m.tap(KEY_VALUE)
+    m.ui(1)
+    check(first == ('UNDO BOUNCE?\nORIG ON A-2', T_UNDO) and (m.popup(), m.u('target')) == first,
+          f'no empty pad left: UNDO first, the only choice, VALUE stays on it ({first}, {m.popup()!r})')
+    m.tap(KEY_EXIT)
+    m.ui(300)
 
     # a source in a protected bank: no REPLACE
     m, pcm = setup(seed=44)
@@ -1927,6 +1961,51 @@ def replace_checks(img, man):
     check(len(recs) == 8 and sorted(r['pad'] for r in recs) == list(range(18, 26)),
           f'ten REPLACEs: the last eight can be undone ({sorted(r["pad"] for r in recs)})')
     note('REPLACE and UNDO')
+
+
+def light_checks(img, man):
+    """test9: the pad the bounce goes to is lit steady white over the page's blinking while the setup is up."""
+    refresh = 0x802496F0
+
+    def setup(seed):
+        m = boot(img, man, seed=seed)
+        pcm = pcm_burst(3000, seed)
+        m.load_pad(0, 3000)
+        m.voice = Voice(m, 0, pcm, 0, 3000, 0, 1)
+        return m
+
+    m = setup(71)
+    m.ui(50)
+    idle = list(m.leds)
+    m.gesture(0)
+    m.ui(1)
+    seen = [(m.leds[-1][1:] if m.leds else None, m.u2('lit'))]
+    m.uc.mem_write(refresh, b'\0\0')
+    for pad in (0, 4):
+        m.event(EV_PAD, pad, 100)
+        m.event(EV_PAD_UP, pad, 0)
+        m.ui(1)
+        seen.append((m.leds[-1][1:], m.u2('lit'), m.r16(refresh) & 2))
+        m.uc.mem_write(refresh, b'\0\0')
+    n = len(m.leds)
+    m.tap(KEY_EXIT)
+    m.ui(5)
+    after = (len(m.leds) - n, m.u2('lit'), m.r16(refresh) & 2)
+    check(not idle and seen == [((1, 1, 0xFFFFFF), 2), ((0, 1, 0xFFFFFF), 1, 2), ((4, 1, 0xFFFFFF), 5, 2)] and
+          after == (0, 0, 2),
+          f'the setup lights its target pad steady white (key light mode 1, 0xffffff): TO PAD\'s A-2, the source when '
+          f'tapped (REPLACE), A-5 when tapped; each change and EXIT ask stock to paint the pads again (0x802496f0 bit '
+          f'2), then nothing is lit; idle, no light is written ({seen}, {after})')
+    m = setup(72)
+    for p in range(1, 16):
+        m.load_pad(p, 1000 + p, tag='full')
+    m.ui(50)
+    m.gesture(0)
+    m.ui(5)
+    check(m.u('dst') == 16 and not m.leds and m.u2('lit') == 0,
+          f'TO PAD\'s destination in bank B (A full) while bank A shows: nothing lit ({m.u("dst")}, {m.leds})')
+    m.tap(KEY_EXIT)
+    note('the target light')
 
 
 def leak_checks(img, man):
@@ -2956,6 +3035,7 @@ def main():
     r = runs(img, man)
     settings_checks(img, man)
     replace_checks(img, man)
+    light_checks(img, man)
     fence_checks(img, man)
     audit_checks(img, man)
     leak_checks(img, man)

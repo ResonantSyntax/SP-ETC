@@ -1446,8 +1446,9 @@ class ChromaMachine(Machine):
         """The millisecond of each note-on of a chromatic pad (pad events of type 0xC)."""
         return [t for t, p, k, v, _ in self.events if k == 0xC and p == pad and v and t >= since]
 
-    def chroma_div(self):
-        return self.r8(self.sym['nr'] + 31)
+    def chroma_kept(self, pad):
+        """A pad's chromatic division as kept: byte 0x70 bits 4-7, steps along VALUE's order from 1/16."""
+        return ORDER[((self.ext(pad, FOLLOW_BYTE) >> 4) + 9) % 16]
 
     def roll_popups(self):
         return [t for _, t in self.popups if t in ['Roll ' + n for n in ALL_NAMES]]
@@ -1472,11 +1473,12 @@ def chroma_checks(img, man):
     for i in range(16):
         t0 = roll(m, [i], 700)
         got = m.chroma_ons(i, t0 + 1)
-        if got != expected_ticks(4, ChromaMachine.SOURCE_TEMPO, 4, t0) or m.kept(i) != (0, 0, 0):
+        if got != expected_ticks(4, ChromaMachine.SOURCE_TEMPO, 4, t0) or m.kept(i) != (0, 0, 0) or \
+                m.ext(i, FOLLOW_BYTE):
             bad.append((i, [t - t0 for t in got], m.kept(i)))
-    check(not bad and not m.rolls and m.chroma_div() == 0,
+    check(not bad and not m.rolls,
           f'chromatic mode: every pad, ROLL + pad repeats at 1/16 of the sample\'s pad\'s tempo (90 BPM: 167, 334, '
-          f'500, 667 ms) from power-on; the pad\'s own Roll (Off) and byte 0x70 stay as they were ({bad[:2]})')
+          f'500, 667 ms) to begin with; the pad\'s own Roll (Off) and byte 0x70 stay as they were ({bad[:2]})')
     m = ChromaMachine(img, man['entries'])
     m.set(P_ROLL, 6, 9)                                 # first: the setter keeps a LOOP pad's Roll
     m.set(P_LOOP, 1, 9)
@@ -1489,8 +1491,10 @@ def chroma_checks(img, man):
           f'pad 10 holding a LOOP sample without GATE, set to ignore ROLL, its Roll at 1/64: in chromatic mode it '
           f'still rolls at 1/16, by re-hits, no stock roll asked for; its settings untouched ({[t - t0 for t in got]}, '
           f'{m.rolls}, {m.kept(9)})')
-    # VALUE: one division for every chromatic pad, at once, kept for the next roll; the pads' Roll untouched
+    # VALUE: each repeating chromatic pad's own division, at once, kept with the pad (byte 0x70 bits 4-7) and saved
+    # once nothing repeats; the pads' Roll untouched, the other pads where they were
     m = ChromaMachine(img, man['entries'])
+    m.uc.mem_write(SMPL + 0x1C, b'\0')
     m.press(KEY_ROLL)
     m.run(2)
     for i in (2, 9):
@@ -1500,43 +1504,67 @@ def chroma_checks(img, man):
     t1 = m.ms
     m.run(500)
     gaps = {i: [b - a for a, b in zip(m.chroma_ons(i, t1 + 1), m.chroma_ons(i, t1 + 1)[1:])] for i in (2, 9)}
+    posted = [x for x in m.posts if x[1] == 0xD]
     for i in (2, 9):
         m.pad_up(i)
     m.let_go(KEY_ROLL)
-    m.run(5)
+    t2 = m.ms
+    m.run(1100)
+    saves = [x[0] - t2 for x in m.posts if x[1] == 0xD]
     p = frames_period(10, ChromaMachine.SOURCE_TEMPO) / 48       # 3/64 (3/16 beat) at 90 BPM: 125 ms
     steady = all(g and all(abs(x - p) <= 1 for x in g) for g in gaps.values())
+    kept = [m.chroma_kept(i) for i in range(16)]
     t0 = roll(m, [5], 700)
-    later = m.chroma_ons(5, t0 + 1)
-    check(steady and m.roll_popups() == ['Roll 3/64'] and m.chroma_div() == 10 and
-          later == expected_ticks(10, ChromaMachine.SOURCE_TEMPO, 5, t0) and
-          all(m.kept(i) == (0, 0, 0) for i in range(16)),
-          f'VALUE while two chromatic pads roll: both go to the next division (3/64) at once, popup "Roll 3/64"; the '
-          f'next roll starts there; no pad\'s Roll or byte 0x70 changes ({gaps}, {m.roll_popups()}, {later[:3]})')
+    later5 = m.chroma_ons(5, t0 + 1)
+    t0b = roll(m, [2], 700)
+    later2 = m.chroma_ons(2, t0b + 1)
+    check(steady and m.roll_popups() == ['Roll 3/64'] and kept == [10 if i in (2, 9) else 4 for i in range(16)] and
+          [m.ext(i, FOLLOW_BYTE) for i in (2, 9)] == [0x10, 0x10] and m.r8(SMPL + 0x1C) == 1 and
+          not posted and len(saves) == 1 and 995 <= saves[0] <= 1005 and
+          all(m.kept(i) == (0, 0, 0) for i in range(16)) and
+          later5 == expected_ticks(4, ChromaMachine.SOURCE_TEMPO, 4, t0) and
+          later2 == expected_ticks(10, ChromaMachine.SOURCE_TEMPO, 5, t0b),
+          f'VALUE while two chromatic pads roll: each goes to its next division (1/16 -> 3/64) at once, popup "Roll '
+          f'3/64", kept with the pad (byte 0x70 bits 4-7, the pads marked edited) and saved a second after nothing '
+          f'repeats; pad 3 rolls there next time, pad 6 still at 1/16; no pad\'s Roll, triplet or follow bit changes '
+          f'({gaps}, {m.roll_popups()}, {kept}, {saves}, {later5[:2]}, {later2[:2]})')
+    m.clear()
+    m.press(KEY_ROLL)
+    m.run(2)
+    m.pad(9, 80)
+    m.run(100)
+    m.turn(1)
+    m.pad_up(9)
+    m.let_go(KEY_ROLL)
+    m.run(5)
+    check([m.chroma_kept(i) for i in (2, 9, 5)] == [10, 14, 4] and m.roll_popups() == ['Roll 1/16T'],
+          f'VALUE while one chromatic pad rolls moves only that pad (pad 10: 3/64 -> 1/16T; pad 3 stays at 3/64) '
+          f'({[m.chroma_kept(i) for i in (2, 9, 5)]}, {m.roll_popups()})')
     m.clear()
     m.press(KEY_ROLL)
     m.tap(KEY_VALUE)
-    m.turn(-1)
+    m.turn(1)
     m.let_go(KEY_ROLL)
-    check(m.roll_popups() == ['Roll 3/64', 'Roll 1/16'] and m.chroma_div() == 4 and
-          all(m.kept(i) == (0, 0, 0) for i in range(160)) and not m.posts,
-          f'ROLL + VALUE press shows the chromatic division and toggles no follow flag; with nothing repeating, ROLL + '
-          f'VALUE steps it ({m.roll_popups()}, {m.posts})')
+    m.run(5)
+    check(m.roll_popups() == ['Roll 1/16T', 'Roll 1/32'] and m.chroma_kept(9) == 5 and m.chroma_kept(2) == 10 and
+          all(m.kept(i) == (0, 0, 0) for i in range(160)),
+          f'ROLL + VALUE press shows the last chromatic pad\'s division and toggles no follow flag; with nothing '
+          f'repeating, ROLL + VALUE steps that pad\'s (pad 10: 1/16T -> 1/32) ({m.roll_popups()})')
     m.clear()
     m.tap(KEY_ROLL)                                     # latch
     m.pad(4, 80)
     m.run(100)
     m.press(KEY_VALUE)
     m.turn(1)
-    held = (m.chroma_div(), m.roll_popups())
+    held = (m.chroma_kept(4), m.roll_popups())
     m.let_go(KEY_VALUE)
     m.turn(1)
     m.pad_up(4)
     m.tap(KEY_ROLL)                                     # unlatch
     m.run(5)
-    check(held == (4, []) and m.chroma_div() == 10 and m.roll_popups()[-1] == 'Roll 3/64',
+    check(held == (4, []) and m.chroma_kept(4) == 10 and m.roll_popups()[-1] == 'Roll 3/64',
           f'latched with a chromatic pad repeating: a VALUE turn with VALUE held is not taken (the page\'s push-turn), '
-          f'without it steps the division ({held}, {m.roll_popups()})')
+          f'without it steps the pad\'s division ({held}, {m.roll_popups()})')
 
 
 def main():

@@ -1,11 +1,11 @@
-"""Checks for FX deep edit test 2 (build_fx_deep_edit.py): the FX screen as REMAIN + FX, VALUE through its screens
-and the effect's extra screens.
+"""Checks for FX deep edit test 3 (build_fx_deep_edit.py): on the FX screen REMAIN + FX opens, VALUE through its
+screens and the effect's extra screens; an FX button alone as stock.
 
 usage: python synth/test_fx_deep_edit.py OUT_DIR [FXMAP]     (unicorn, keystone, capstone on PYTHONPATH)
 
 Reads OUT_DIR/manifest.json for the parent APP1 and DM-404's fxmap.json (or FXMAP). Static checks first: only the
-header's scatter pointer, the TOP vtable slot, the DT1 builder's first ten bytes, the FX screen's REMAIN question,
-the FX screen's VALUE toggle and the appended tail differ from the parent, the guards hold on the parent, the
+header's scatter pointer, the TOP vtable slot, the DT1 builder's first ten bytes, the FX screen's VALUE toggle and
+the appended tail differ from the parent, the guards hold on the parent, the
 settings are exactly the parameters stock never sends, every popup line fits. Then the parent and the new image are
 booted in Unicorn the way their scatter loader does it, with the boot's static constructors run (the RTOS under them
 stubbed: its pool by a bump allocator, object creation by an id), the TOP page object made by its registry handler
@@ -21,11 +21,11 @@ stubbed), the effects chip itself, EXIT while the FX screen is up (stock destroy
 Checks:
 - the builder, entered through the jump, sends fxmap's address for every setting on every bus, and exactly the
   parent's bytes for every parameter on every slot and for the whole boot chip reset;
-- the FX screen: an FX button alone opens it as REMAIN + FX (on the parent only with REMAIN held); it stays while
-  the bus has an effect and asks to close when that FX button turns the effect off or the bus has none; on the
-  parent it asks to close after 2 s;
-- VALUE through the screens: Tape Echo (screen 2, three extra screens), Isolator (one extra screen), Crusher (none:
-  stock's toggle, as on the parent with REMAIN); the popups; nothing sent;
+- the FX screen: an FX button alone opens it as on the parent (it asks to close after 2 s; VALUE there is stock's);
+  REMAIN + FX opens the screen that stays while the bus has an effect, as on the parent, and asks to close when that
+  FX button turns the effect off or the bus has none;
+- VALUE through the screens (REMAIN + FX): Tape Echo (screen 2, three extra screens), Isolator (one extra screen),
+  Crusher (none: stock's toggle, as on the parent); the popups; nothing sent;
 - on an extra screen CTRL 1-3 set its settings across their ranges, one frame per change; a knob without a setting
   does nothing; pads go on as usual; another button leaves (the popup goes) and goes on as usual; afterwards the
   knobs are stock's; every setting of every effect reaches its min and max; per bus; the input FX has none;
@@ -47,8 +47,8 @@ from unicorn import UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE, UC_MEM_WRITE
 from unicorn import arm_const as ar
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_fx_deep_edit import GUARDS, Runtime, scatter, decompress, branches_into, DT1, DT1_HEAD, REMAIN_ASK, \
-    REMAIN_HEAD, REMAIN_NEW, TOGGLE, TOGGLE_HEAD  # noqa: E402
+from build_fx_deep_edit import GUARDS, Runtime, scatter, decompress, branches_into, DT1, DT1_HEAD, TOGGLE, \
+    TOGGLE_HEAD  # noqa: E402
 
 FLASH, COPY, DECOMPRESS, ZERO = 0x60080000, 0x600800E4, 0x60080088, 0x60080100
 HEAP = 0x32000000
@@ -334,13 +334,12 @@ def static_checks(out, man, img, parent, fxmap, st):
 
     def file_off(addr):
         return [load - FLASH + addr - dst for load, dst, n, fn in prow if fn == COPY and load and dst <= addr < dst + n][0]
-    vt, dt, ra, tg = file_off(VTABLE_SLOT), file_off(DT1), file_off(REMAIN_ASK), file_off(TOGGLE)
+    vt, dt, tg = file_off(VTABLE_SLOT), file_off(DT1), file_off(TOGGLE)
     diff = [i for i in range(len(parent)) if img[i] != parent[i]]
-    allowed = set(range(0x80, 0x88)) | set(range(vt, vt + 4)) | set(range(dt, dt + 10)) | set(range(ra, ra + 4)) | \
-        set(range(tg, tg + 10))
+    allowed = set(range(0x80, 0x88)) | set(range(vt, vt + 4)) | set(range(dt, dt + 10)) | set(range(tg, tg + 10))
     check(set(diff) <= allowed and img[:len(parent)] != parent,
-          f'only the scatter pointer, the TOP vtable slot, the DT1 builder\'s first ten bytes, the FX screen\'s REMAIN '
-          f'question and its VALUE toggle change inside the parent ({len(diff)} bytes)')
+          f'only the scatter pointer, the TOP vtable slot, the DT1 builder\'s first ten bytes and the FX screen\'s VALUE '
+          f'toggle change inside the parent; its show method (REMAIN held?) is stock ({len(diff)} bytes)')
     e = man['entries']
     check(parent[vt:vt + 4] == struct.pack('<I', DOOM_FILTER | 1) and img[vt:vt + 4] == struct.pack('<I', e['fde_filter']),
           'TOP vtable +8: DOOM OS\'s filter on the parent, fde_filter here')
@@ -349,8 +348,6 @@ def static_checks(out, man, img, parent, fxmap, st):
                        0xF2C0 | (hi >> 12) | ((hi >> 11) & 1) << 10, ((hi >> 8) & 7) << 12 | 12 << 8 | hi & 0xFF, 0x4760)
     check(parent[dt:dt + 10] == DT1_HEAD and img[dt:dt + 10] == want,
           'DT1 builder entry: push.w / sub sp / movw sb on the parent, movw ip / movt ip / bx ip to fde_dt1 here')
-    check(parent[ra:ra + 4] == REMAIN_HEAD and img[ra:ra + 4] == REMAIN_NEW,
-          'the FX screen\'s show method: bl 0x800d9f20 (REMAIN held?) on the parent, movs r0, #1; nop here')
     lo, hi = e['fde_value'] & 0xFFFF, e['fde_value'] >> 16
     want = struct.pack('<4HH', 0xF240 | (lo >> 12) | ((lo >> 11) & 1) << 10, ((lo >> 8) & 7) << 12 | 12 << 8 | lo & 0xFF,
                        0xF2C0 | (hi >> 12) | ((hi >> 11) & 1) << 10, ((hi >> 8) & 7) << 12 | 12 << 8 | hi & 0xFF, 0x4760)
@@ -476,7 +473,7 @@ class Screen:
     def flag(self, off):
         return self.m.uc.mem_read(self.view() + off, 1)[0]
 
-    def open(self, key=KEY_FX1, remain=False):
+    def open(self, key=KEY_FX1, remain=True):
         m = self.m
         if remain:
             m.dispatch(EV_KEY, KEY_REMAIN)
@@ -510,26 +507,36 @@ def screen_checks(img, parent, man, st):
     m, sc = fx_machine(img, man)
     p, sp = fx_machine(parent, None)
     for mm, ss in ((m, sc), (p, sp)):
+        ss.open(remain=False)
+        mm.bus_effect(1, TAPE_ECHO)
+    check(sc.flag(VIEW_REMAIN) == sp.flag(VIEW_REMAIN) == 0 and
+          m.uc.mem_read(REMAIN_GLOBAL, 1)[0] == p.uc.mem_read(REMAIN_GLOBAL, 1)[0],
+          'an FX button alone opens the FX screen as on the parent (+0x1b3f clear: test 2\'s hold is gone)')
+    for mm, ss in ((m, sc), (p, sp)):
+        mm.clear()
+        ss.value()
+    check(sc.flag(VIEW_SCREEN2) == sp.flag(VIEW_SCREEN2) == 0 and not m.popups and m.state()['screen'] == 0 and
+          sc.run(2500) and sp.run(2500),
+          'there VALUE is stock\'s (no extra screen), and the screen asks to close after 2 s, as on the parent')
+    m, sc = fx_machine(img, man)
+    p, sp = fx_machine(parent, None)
+    for mm, ss in ((m, sc), (p, sp)):
         ss.open()
         mm.bus_effect(1, TAPE_ECHO)
-    check(sc.flag(VIEW_REMAIN) == 1 and m.uc.mem_read(REMAIN_GLOBAL, 1)[0] == 1 and sp.flag(VIEW_REMAIN) == 0,
-          'an FX button alone opens the FX screen as REMAIN + FX does (+0x1b3f set, 0x80592320 = 1); on the parent '
-          'only with REMAIN held')
-    check(not sc.run(5000) and sp.run(2500),
-          'the screen stays (5 s of its 50 ms updates, no close request) while the bus has an effect; on the parent '
-          'it asks to close after 2 s')
-    m.dispatch(EV_KEY, KEY_FX1)
-    m.dispatch(EV_KEY_UP, KEY_FX1)
-    check(m.call(SYS_GET, SYSPRM, 0x276, 1) == 0 and sc.run(50),
-          'the same FX button again: the effect goes off and the screen asks to close at its next update')
+    check(sc.flag(VIEW_REMAIN) == sp.flag(VIEW_REMAIN) == 1 and not sc.run(5000) and not sp.run(5000),
+          'REMAIN + FX: the screen that stays (5 s of its 50 ms updates, no close request) while the bus has an '
+          'effect, as on the parent')
+    again = []
+    for mm, ss in ((m, sc), (p, sp)):
+        mm.dispatch(EV_KEY, KEY_FX1)
+        mm.dispatch(EV_KEY_UP, KEY_FX1)
+        again.append((mm.call(SYS_GET, SYSPRM, 0x276, 1), bool(ss.run(50))))
+    check(again[0] == again[1],
+          f'the same FX button again: the effect and the screen as on the parent ({again})')
     m, sc = fx_machine(img, man)
     sc.open()
     m.bus_effect(1, 0)
     check(sc.run(50), 'no effect on the bus: the screen asks to close, as stock\'s REMAIN screen does')
-    p, sp = fx_machine(parent, None)
-    sp.open(remain=True)
-    p.bus_effect(1, TAPE_ECHO)
-    check(sp.flag(VIEW_REMAIN) == 1 and not sp.run(5000), 'on the parent, REMAIN + FX gives the same screen')
 
     # VALUE: screen 1, 2, the extra screens, screen 1
     m, sc = fx_machine(img, man)
@@ -563,7 +570,7 @@ def screen_checks(img, parent, man, st):
     out = []
     for image, man_ in ((parent, None), (img, man)):
         mm, ss = fx_machine(image, man_, fx=CRUSHER)
-        ss.open(remain=image is parent)
+        ss.open()
         mm.bus_effect(1, CRUSHER)
         flags = []
         for k in range(3):
@@ -785,8 +792,7 @@ def run_script(m, script):
 
 
 def passthrough_checks(img, parent, man):
-    """No extra screen up, with edited values held: every event as on the parent (an FX button's screen is REMAIN's
-    now: its flags aside, the same bytes, popups and calls)."""
+    """No extra screen up, with edited values held: every event as on the parent, the FX buttons alone included."""
     e = man['entries']
     for label, script in SCRIPTS:
         a, b = Machine(parent), Machine(img, e)

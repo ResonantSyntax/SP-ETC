@@ -10,6 +10,20 @@ firmware's own state is never changed and nothing is saved: values live in RAM, 
 until power-off. Outside the page the build behaves as v9.46, except that an edited value goes to
 the chip again whenever the firmware selects that effect on that bus.
 
+## Test 3 (fx-deep-edit-test3): no FX button hold
+
+From the user's test of combined-test4: "fx screen hold is broken. now on mfx, once pressed cannot get to menu to
+change. just get rid of that for now." Test 3 drops test 2's hold (the patch at `0x80146f66`): an FX button alone
+is stock again (its screen closes after 2 s, and MFX's effect choice is stock's). The extra screens stay on the
+screen REMAIN + FX opens (stock's screen that stays): there VALUE press steps screen 1, screen 2, the extra screens
+and screen 1 again, as test 2 did. Three changes in 5.52 space now (the TOP vtable slot, the DT1 builder's entry,
+the VALUE toggle).
+
+Checked in the emulator (68 checks pass): only those three sites change inside the parent; an FX button alone opens
+the FX screen as on the parent (+0x1b3f clear, VALUE stock's, the close request after 2 s); REMAIN + FX gives the
+screen that stays, as on the parent, and the same FX button again does what the parent does (the effect stays on,
+the screen stays); every test 2 check of the screens, knobs and re-sending, now with REMAIN + FX.
+
 ## Test 2 (fx-deep-edit-test2): on the FX screen
 
 From the user's test of combined-test3: the FX screen should stay up after an FX button, as it does with REMAIN +

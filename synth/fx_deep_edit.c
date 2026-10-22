@@ -1,8 +1,7 @@
 /* FX deep edit (test build): extra screens on the FX screen for the bus effects (BUS 1-4) that edit the
  * effect parameters stock 5.52 never sends to the effects chip (BMC).
  *
- * Test 2: an FX button opens the FX screen the way REMAIN + FX does in stock (the screen's show method
- * 0x80146f64 reads REMAIN as held): it stays until EXIT, REMAIN, or that FX button again (the effect off), and
+ * On the FX screen REMAIN + FX opens (stock's screen that stays until EXIT, REMAIN, or that FX button again)
  * VALUE press steps its screens. After screen 1 and screen 2 (where the effect has CTRL 4-6) come the effect's
  * extra screens: three settings a screen, on CTRL 1-3, in the stock popup:
  *
@@ -15,7 +14,8 @@
  * uses) and the effect that bus's (system 0x27c[bus], what the knob path checks). An effect's settings are
  * its parameters that are not in its six-ID knob record (fx_deep_edit_tables.h, made by build_fx_deep_edit.py
  * from the firmware's tables and DM-404's fxmap.json). On an extra screen any button but VALUE and SHIFT leaves
- * it and then does what it always does; pads work as usual. (Test 1's TOP page, EXIT + VALUE, is gone.)
+ * it and then does what it always does; pads work as usual. (Test 1's TOP page, EXIT + VALUE, is gone, and
+ * test 3 drops test 2's FX button hold, which kept MFX's effect choice away: an FX button alone is stock's.)
  *
  * Every change is one DT1 through the stock builder 0x800d8118 (link 0x80592500, parameter ID,
  * slot = bus, value), the call the bus-effect knobs end in, inside the firmware's own min/max for
@@ -210,8 +210,8 @@ static void leave(void) {
 
 /* VALUE pressed on the FX screen: stock's toggle of screens 1 and 2 (0x801479a0, called with the screen from
  * the generic key handler 0x800cba46) jumps here. Screen 1, screen 2 where the effect has one, then the extra
- * screens, then screen 1 again. Only while the screen stays (REMAIN when it opened, which every FX button now
- * is); otherwise, as stock, nothing. */
+ * screens, then screen 1 again. Only while the screen stays (REMAIN held when it opened); otherwise, as
+ * stock, nothing. */
 EXPORT void fde_value(u8 *screen) {
     if (!screen[VIEW_REMAIN])
         return;

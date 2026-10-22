@@ -39,7 +39,7 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'note-repeat-test3'
+REVISION = 'note-repeat-test4'
 SLOT = 0x2000                       # reserved: [base, base + SLOT)
 GAP = (0x83FC9000, 0x83FF0000)      # above the fork's rows (end 0x83FC8450), below the end of cacheable SDRAM
 # Every other fork module's reserved RAM (branch, start, end).
@@ -422,8 +422,8 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
                     'follows or ignores '
                     'ROLL (saved with the pad); HOLD while rolling: held rolls, until the pad is hit again, HOLD '
                     'again or EXIT + ROLL; LOOP pads without GATE keep the stock roll; DJ mode stays stock; '
-                    'chromatic pads (test3) roll at one chromatic division, 1/16 from power-on, at the sample\'s '
-                    'tempo, whatever the pad under the finger holds',
+                    'chromatic pads (test4) roll at their own chromatic division, 1/16 until VALUE moves it, at '
+                    'the sample\'s tempo, whatever else the pad under the finger holds',
         parent_app1=str(inp), parent_sha256=sha(inp.read_bytes()),
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
         if parent_manifest.exists() else None,
@@ -453,12 +453,14 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
                  'EXIT + ROLL; a held roll\'s pad blinks white (light page 6) when its bank is the current one and '
                  'the page is not DOOM OS\'s (0x5f), HOLD is lit; stock repaints pads and keys after (0x802496f0 '
                  'bits 2, 0x10); stock\'s HOLD runs as well, every time',
-            chromatic='(test3) in chromatic mode (project 0xBF, not the Sound Generator\'s page) a pad\'s roll '
-                      'takes nothing from the pad under the finger: all chromatic pads repeat at one chromatic '
-                      'division (1/16 from power-on; VALUE steps it for them all, popup "Roll 1/32"; ROLL + VALUE '
-                      'press shows it and toggles no follow flag), at the tempo of the pad whose sample chromatic '
-                      'mode plays (project 0xC1), always by re-hits; the pad\'s Roll, LOOP, GATE and follow flag '
-                      'are not read or written; latched with VALUE held, a VALUE turn goes on to the page',
+            chromatic='(test4) in chromatic mode (project 0xBF, not the Sound Generator\'s page) a pad\'s roll '
+                      'takes only its chromatic division from the pad under the finger: PADCONF reserved byte 0x70 '
+                      'bits 4-7, steps along VALUE\'s order from 1/16 (0, the default); VALUE steps each repeating '
+                      'chromatic pad\'s own (none repeating: ROLL + VALUE steps the last chromatic pad played), '
+                      'popup "Roll 1/32", saved as the follow flag is; ROLL + VALUE press shows that pad\'s and '
+                      'toggles no follow flag; at the tempo of the pad whose sample chromatic mode plays (project '
+                      '0xC1), always by re-hits; the pad\'s Roll, LOOP, GATE and follow flag are not read or '
+                      'written; latched with VALUE held, a VALUE turn goes on to the page',
             stock='SHIFT + ROLL (the Roll popup), EXIT + ROLL (all rolls off), DJ Mixer Mode (all of ROLL and HOLD), '
                   'HOLD with nothing rolling, SHIFT + HOLD, patterns\' recorded rolls, LOOP pads without GATE (the '
                   'stock ring roll, started by the module)'),

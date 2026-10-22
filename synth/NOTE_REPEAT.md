@@ -397,6 +397,42 @@ heard (the press plays, no repeats; at 1/64, 33 hits a second).
 
 - A LOOP sample without GATE as the chromatic sample: re-hits may stop and start it.
 
+## 9. Test 4: a chromatic division per pad (note-repeat-test4)
+
+From the user's test of combined-test4: "last version chromatic roll speed could be changed per pad". Test 3 gave
+every chromatic pad one division.
+
+### 9.1 What it does
+
+- Each pad has its own **chromatic division**, kept with the pad in PADCONF reserved byte 0x70, **bits 4-7**: the
+  number of steps along VALUE's order from 1/16 (0, the default, is 1/16; 1 is 3/64 ... 6 is 1/64T; 7 wraps round
+  to 1/2 ... 15 is 1/8T). It is not Roll, so a drum-mode Roll of 1/64 doesn't make the chromatic pad fast (test 3's
+  fix stays), and the pad's Roll, LOOP, GATE and follow flag are still not read or written.
+- **VALUE** (ROLL held, or latched with pads repeating) steps each repeating chromatic pad's own division at once;
+  with none repeating, ROLL + VALUE steps the last chromatic pad played. Popup `Roll 3/64`. Saved as the follow
+  flag is: the pads marked edited, command 0xd a second after the last change once no pad repeats.
+- **ROLL + VALUE press** in chromatic mode shows the last chromatic pad's division.
+- Stock clears byte 0x70 for a new sample and INIT PARAM clears it (bytes 0x40-0x7F), so those pads start at 1/16
+  again; copy, move and exchange carry it with the pad.
+
+### 9.2 The clicks
+
+The user also heard clicks on chromatic rolls. Each repeat stops the note still ringing, as any re-hit does (the
+voice manager `0x800d63c8`: chromatic mono stops it for any note, poly for the same note). Run in Unicorn on
+combined-test4 with the pad envelope test's re-hit machine: the repeat's note-off (`0x800c0a80`, type 0xC) leaves a
+one-shot note alone (the slot must be gated, slot `+0x3c`), and the note-on's stop gives the old voice stock's
+1.3 ms declick with RETRIG CUT, or the fade with RETRIG FADE (14 blocks at 19 ms), with or without that note-off,
+mono or poly: the same as a tap. So RETRIG on the sample's pad (ENVELOPE page 4, CTRL 2) decides; the module
+doesn't change it.
+
+### 9.3 Checked in the emulator
+
+Section `chroma` (7 checks): every pad at 1/16 to begin with, byte 0x70 untouched; pad 10's LOOP, ignore and 1/64
+case as in test 3; VALUE while two pads roll moves each to 3/64 at once, kept in bits 4-7 (0x10), the pads marked
+edited, the save a second after the rolls end, a third pad still at 1/16, the moved pad at 3/64 next time; VALUE
+while one pad rolls moves only that pad; ROLL + VALUE press shows the last pad's division, and with nothing
+repeating ROLL + VALUE steps it; latched, a turn with VALUE held is the page's. All 103 checks pass.
+
 ## Build
 
 ```sh
