@@ -262,6 +262,25 @@ You can also download this repository as a ZIP file (under the Code button), unz
 
 To go back to the original firmware, just run the updater with the original Roland firmware.
 
+## Questions
+
+**I already have DOOM OS, or an older version of this mod. Can I install this?**
+Yes. Patch the file as above, then run the normal update on your SP. Whatever
+your SP runs now (the original firmware, DOOM OS or an older version of this
+mod), the update replaces it.
+
+**Which file do I need?** Roland's original firmware 5.52 update, on your
+computer: `SP404MKII_APP1.bin` and `SP404MKII_APP0.bin`. Load the APP1 file into
+the patcher. It won't take a file that is already patched, or another firmware
+version. Your SP doesn't need the original firmware installed first.
+
+**Will I lose my work?** No. Updating the firmware doesn't erase your projects
+or samples, but back up before any update anyway. Projects you make with this
+firmware still open on the original firmware or DOOM OS; the extra settings are
+just ignored there. If you have a newer DOOM OS than 0.6.1, this takes you back
+to DOOM OS 0.6.1: your projects and samples stay, but settings or patterns from
+the newer DOOM OS might not carry over.
+
 ## Status
 
 **v9.47** (2026-10-22) is combined-test7: every feature's latest test build in

@@ -137,6 +137,10 @@ async function download(page) {
   assert.doesNotMatch(html, /synth-data\.js|waves-data\.js|kits-midi-data|MIDI test guide|v9\.43|v9\.44/);
   assert.doesNotMatch(html, /[Tt]ick one|unticked|Pick one of/);
   assert.match(html, /What's new in v9\.47/);
+  for (const q of ['I already have DOOM OS, or an older version of this mod', 'Which file do I need?',
+                   'Will I lose my work?']) {
+    assert.ok(html.includes(q) && readme.includes(q), 'the page and README answer: ' + q);
+  }
   for (const feature of ['DOOM OS included', 'Bounce in place', 'Pad envelopes', 'Note repeat', 'Chromatic scales',
                          'Saved with the project', 'SUB PAD on the Sound Generator', 'Hidden effect settings',
                          'Faster start-up', 'Cleaner resampling']) {
