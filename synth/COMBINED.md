@@ -212,3 +212,15 @@ and the kit suites kits, capture, chord, shortcut, midi, restart and hot resampl
 kit module's two hashes first; the runner re-points them at the module with the footer's one byte, and says so
 in the view's manifest. Not rerun: the other feature suites and the 18 kit bounce runs, whose modules and code
 are combined-test5's byte for byte. The patcher test passes with v9.47 = combined-test6.
+
+## 8. combined-test7
+
+From the user's test of combined-test6: the FX deep edit's extra screens still never came, on the main screen with
+every FX button, and never the NO EXTRA SETTINGS note; screen 2 never stayed for more VALUE presses. So the FX
+screen was not "held" when VALUE came (held is decided once, by REMAIN being down when the screen shows), and the
+module stepped aside. FX deep edit at `fx-deep-edit-test5`: a VALUE press holds the screen itself when the effect
+has screen 2 or extra settings, then steps on. The rest as in combined-test6, then the fast boot and the kit footer.
+
+- **APP1:** `be758f67…34b4`, 3,152,432 bytes, in `analysis/kit_pr1_audit/release/combined-test7` (the combined build
+  `94d2786c…8ea7`, after the fast boot `407d4a99…2b70`). Every module byte for byte its own test build's; the same 7
+  reviewed overlaps.
