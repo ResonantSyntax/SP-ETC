@@ -52,7 +52,7 @@ HERE = Path(__file__).resolve().parent
 FLASH, COPY, ZERO = 0x60080000, 0x600800E4, 0x60080100   # scatter rows: copy, zero fill
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
 PUBLISHED_V946 = '7b5fbcb4c3ce1e8782fef4b5803be74c7d14eddf25a1b53682abe00c9ed3684a'
-REVISION = 'bounce-3-test8'
+REVISION = 'bounce-3-test9'
 SLOT = 0x5000                       # reserved: [base, base + SLOT)
 SLOT_CEILING = 0x83FED000           # the CPU meter test build's slot, then the start fix at 0x83FEF000
 BRIDGES = {'tx': 0x00, 'rx': 0x30, 'ui': 0x80, 'gate': 0xC0, 'tick': 0x100}
@@ -100,6 +100,8 @@ GUARDS = [
      'frame; a timer running out closes the popup and clears a pending one'),
     (0x800D3FF0, 0x800D4026, '7399e6400e3ea2ddd99ad6a9f4de1469abffae638c380038c1d7aedbee61886b',
      'popup(text, ms): copies the text and arms the stock type-3 popup'),
+    (0x800D4910, 0x800D4960, 'b7c408906e2460a05df41460731fd5473b6c78e23b0022c77e32a3c9e24dc70a',
+     'key light (key, mode, level): keys below 0x32, the mode and level cached per key, sent only when they change'),
     (0x8017F810, 0x8017F8A0, '2e74dee22543eae62b1b431882ebcc5b954d5805a315a8caba5a7826aedd357d',
      'REC_START: state 1/3 -> 2, destination from target params 0/1, engine start, sub-state 2'),
     (0x8017F8A0, 0x8017F970, '5435502d46f2ea259436294b6233586746daae706868d219302d4ba35995503c',
@@ -605,12 +607,21 @@ def build(inp: Path, out: Path, zig: Path, base: int):
                     'place (REPLACE: the stock pad exchange, the original kept on that pad), with UNDO; named after '
                     'the source with " B"; a finished bounce returns to the main screen. test8: a pad tapped in the '
                     'setup picks the target (the source itself REPLACE, an empty pad TO PAD onto it, a pad with a '
-                    'sample PAD NOT EMPTY), RESAMPLE (or REC) starts',
+                    'sample PAD NOT EMPTY), RESAMPLE (or REC) starts. test9: a replaced pad sets up as a bounce, VALUE '
+                    'press for UNDO; the target pad lit steady white',
         parent_app1=str(inp), parent_sha256=parent_sha, parent_is_published_v946=parent_sha == PUBLISHED_V946,
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
         if parent_manifest.exists() else None,
-        replaces='bounce-3-test7 (the same six sites, the same parent)',
-        changes=["a pad tapped in the setup picks the target (the user's ask after combined-test3): the source itself "
+        replaces='bounce-3-test8 (the same six sites, the same parent)',
+        changes=["a pad this session replaced sets up like any other pad (the user's report on combined-test4: only UNDO "
+                 "was offered): the bounce picked last, with a third popup line VALUE FOR UNDO; VALUE press switches to "
+                 "UNDO (UNDO BOUNCE? / ORIG ON .. / VALUE FOR BOUNCE) and back. UNDO comes first only when no pad is "
+                 "empty (it is all there is)",
+                 "the pad the bounce goes to (TO PAD's destination; the source for REPLACE and UNDO) is lit steady "
+                 "white (key light mode 1, 0xffffff, written every UI tick: the light writer sends only changes) over "
+                 "the RESAMPLE page's blinking, while it is in the current bank; when it changes or the setup ends, "
+                 "the pads are painted again by stock (0x802496f0 |= 2)"],
+        changes_test8=["a pad tapped in the setup picks the target (the user's ask after combined-test3): the source itself "
                  "is REPLACE (the original parked on the home pad, the first empty one), an empty pad TO PAD onto that "
                  "pad, a pad with a sample is refused with PAD NOT EMPTY and its name for a second (a protected bank: "
                  "BANK PROTECTED); in the UNDO popup a tap leaves UNDO for that bounce. VALUE press no longer picks the "
