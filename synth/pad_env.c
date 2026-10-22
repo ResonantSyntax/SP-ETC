@@ -34,19 +34,21 @@
  *              0x80024580; for the voice manager's re-hits of a FADE pad, the key-up release instead
  *   ENVELOPE page vtable 0x8021ec14: +0x04 (leave) env_ui_leave, +0xC8 (pad change) env_ui_pad,
  *              +0xCC (redraw) env_ui_draw, +0xD0 (tick) env_ui_poll, +0xD8 (key press) env_ui_key,
- *              +0xE4 (knob) env_ui_knob
+ *              +0xE0 (encoder) env_ui_turn, +0xE4 (knob) env_ui_knob
  *
- * The ENVELOPE page (SHIFT + PITCH/SPEED) gets four pages; tap SHIFT (press and release, nothing else
- * touched) for the next. The screen shows them, no popups: the CTRL 1-3 labels on top, their values under
- * them, the pad's real envelope in the graph, and on pages 2-4 "A-1 SHAPE 2/4" at the bottom:
- *   1 A-H-R  stock's page: CTRL 1-3 ATTACK / HOLD / RELEASE; with FINE on, ATTACK and RELEASE are fine
- *            indices (the stock fields get the nearest stock value) and the screen shows the times
- *   2 SHAPE  CTRL 1 attack curve, CTRL 2 TIME: STOCK / FINE, CTRL 3 release curve
+ * The ENVELOPE page (SHIFT + PITCH/SPEED) gets four pages. A VALUE turn goes to the next or previous page
+ * (round), and so does a SHIFT tap (press and release, nothing else touched) to the next. The screen shows
+ * them, no popups: the CTRL 1-3 labels on top, their values under them, the pad's real envelope in the
+ * graph, and the pad, the page and its number at the bottom ("A-1 AMP 1/4", "A-1 SHAPE 2/4"):
+ *   1 AMP    stock's page: CTRL 1-3 ATTACK / HOLD / RELEASE. VALUE press switches TIME between STOCK and
+ *            FINE ("A-1 AMP FINE 1/4"); with FINE on, ATTACK and RELEASE are fine indices (the stock
+ *            fields get the nearest stock value) and the screen shows the times
+ *   2 SHAPE  CTRL 1 attack curve, CTRL 3 release curve
  *   3 DECAY  CTRL 1 decay (OFF, 0.5 ms - 8 s), CTRL 2 sustain 0-100 %, CTRL 3 decay curve
  *   4 MODE   CTRL 1 LOOP: EVERY / FIRST (pass), CTRL 2 RETRIG: CUT / the fade (0.5 ms - 8 s), CTRL 3
  *            REVERSE: MIRROR / TIME
  * Later stages add pages through env_more_pages[]. A pad with stock settings keeps stock's graph, and on
- * page 1 the whole stock screen.
+ * page 1 the whole stock screen but its bottom line.
  * Holding COPY or REMAIN applies a turn to the mute group or bank, as stock's apply 0x800f5df0 does.
  * DEL (stock's page ignores it) asks "RESET A-1? press VALUE": VALUE puts every envelope setting of the pad
  * back to stock (0x64-0x6F, and the later stages' 0x71-0x7F; note repeat's 0x70 stays, as do stock's own
@@ -95,6 +97,8 @@ typedef unsigned long long u64;
 #define STOCK_LEAVE ((void *(*)(void *))0x800F6239u)          /* ENVELOPE page deleting destructor */
 #define STOCK_KEY ((s32 (*)(void *, s32))0x800F5AD9u)            /* ENVELOPE page key press */
 #define FX_KNOBS ((s32 (*)(void *))0x800CE421u)               /* non-zero: the knobs drive the effect */
+#define UI_HELD ((s32 (*)(void))0x800C3F19u)                  /* non-zero: stock's VALUE press is the base
+                                                                 class's (0x800c9788); else it does nothing */
 #define EDITABLE ((s32 (*)(s32))0x800D9E31u)                  /* the pad holds a sample the setter edits */
 #define GETTER ((s32 (*)(u32, s32, s32))0x800DC6B9u)          /* (CSmplPrm, param, pad) */
 #define SETTER ((void (*)(u32, s32, s32, s32))0x800DA721u)    /* (CSmplPrm, param, value, pad) */
@@ -906,16 +910,14 @@ static u32 zone(s32 raw, u32 n) {
 /* ---- the pages after the stock one */
 
 static void shape_value(u32 pad, u32 ctrl, char *out) {
-    if (ctrl == 2)
-        put0(out, setting(pad, B_FLAGS) & F_FINE ? "FINE" : "STOCK");
+    if (ctrl == 2)                       /* TIME is VALUE press on page 1 */
+        *out = 0;
     else
         put0(out, curve_names[setting(pad, B_CURVES) >> (ctrl == 1 ? 0 : 4) & 3]);
 }
 
 static void shape_turn(u32 pad, u32 ctrl, s32 raw) {
-    if (ctrl == 2)
-        store(pad, B_FLAGS, F_FINE, zone(raw, 2) ? F_FINE : 0);
-    else
+    if (ctrl != 2)
         store(pad, B_CURVES, 3u << (ctrl == 1 ? 0 : 4), zone(raw, 4) << (ctrl == 1 ? 0 : 4));
 }
 
@@ -970,7 +972,7 @@ static void mode_turn(u32 pad, u32 ctrl, s32 raw) {
 }
 
 static const struct env_page built_in[BUILT_IN] = {
-    {"SHAPE", {"C1:ATTACK", "C2:TIME", "C3:RELEASE"}, shape_value, shape_turn, 0},
+    {"SHAPE", {"C1:ATTACK", "", "C3:RELEASE"}, shape_value, shape_turn, 0},
     {"DECAY", {"C1:DECAY", "C2:SUSTAIN", "C3:CURVE"}, decay_value, decay_turn, 0},
     {"MODE", {"C1:LOOP", "C2:RETRIG", "C3:REVERSE"}, mode_value, mode_turn, 0},
 };
@@ -1089,9 +1091,10 @@ static void value_row(u32 ctx, char v[3][16]) {
         text(ctx, column[k], VALUE_Y, v[k]);
 }
 
+/* "A-1 SHAPE 2/4"; page 1 "A-1 AMP 1/4", or "A-1 AMP FINE 1/4" with TIME on FINE */
 static void bottom_line(u32 ctx, u32 pad, const struct env_page *pg, u32 n) {
     char *p = pad_name(env_text, pad);
-    const char *s = pg->name;
+    const char *s = pg ? pg->name : setting(pad, B_FLAGS) & F_FINE ? "AMP FINE" : "AMP";
     *p++ = ' ';
     for (u32 k = 0; k < 12 && s[k]; k++)
         *p++ = s[k];
@@ -1167,6 +1170,8 @@ static void draw(void *page) {
             *time_text(v[2], sh.rel) = 0;
             value_row(ctx, v);
         }
+        bottom_line(ctx, (u32)pad, 0, 0);
+        env_ui.bottom = 1;
         return;
     }
     for (u32 k = 0; k < 3; k++) {
@@ -1228,9 +1233,26 @@ EXPORT s32 env_ui_knob(void *page, s32 ctrl, s32 raw) {
     return 1;
 }
 
+/* ENVELOPE page encoder turned (vtable + 0xE0; stock returns 0): VALUE (encoder 0) goes to the next page (a
+ * turn right) or the previous one, round; it cancels the reset's question and is no SHIFT tap. Not while the
+ * knobs drive the effect. */
+EXPORT s32 env_ui_turn(void *page, s32 which, s32 delta) {
+    if (which || !delta || FX_KNOBS(page))
+        return 0;
+    u32 count = page_count(), now = page_now();
+    if (env_ui.shift == SH_DOWN)
+        env_ui.used = 1;
+    env_ui.asking = 0;
+    env_ui.page = (u8)(delta > 0 ? (now + 1) % count : (now + count - 1) % count);
+    env_ui_draw(page);
+    return 1;
+}
+
 /* ENVELOPE page key press (vtable + 0xD8). DEL (stock's: nothing) asks for the reset, for the pads COPY or
  * REMAIN reach when it is pressed; VALUE then resets, any other key cancels and does what it does (EXIT only
- * cancels: the page stays). DEL with SHIFT held, on an empty pad or while the knobs drive the effect: stock. */
+ * cancels: the page stays). On page 1 VALUE press switches TIME (STOCK / FINE) for the pads a turn reaches, when
+ * stock's press does nothing (UI_HELD clear). DEL with SHIFT held, on an empty pad or while the knobs drive the
+ * effect: stock. */
 EXPORT s32 env_ui_key(void *page, s32 key) {
     s32 pad = page_pad(page);
     if (env_ui.asking) {
@@ -1249,6 +1271,11 @@ EXPORT s32 env_ui_key(void *page, s32 key) {
         if (mode > 2 || (mode == 1 && !GETTER(CSMPLPRM, P_MUTE, pad)))
             mode = 0;
         env_ui.asking = (u8)(1 + mode);
+        env_ui_draw(page);
+        return 1;
+    }
+    if (key == KEY_VALUE && !page_now() && (u32)pad < PADS && EDITABLE(pad) && !FX_KNOBS(page) && !UI_HELD()) {
+        store((u32)pad, B_FLAGS, F_FINE, setting((u32)pad, B_FLAGS) & F_FINE ? 0 : F_FINE);
         env_ui_draw(page);
         return 1;
     }

@@ -35,7 +35,7 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY = 0x60080000, 0x600800E4
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'pad-env-test5'
+REVISION = 'pad-env-test6'
 SLOT = 0x3000                       # reserved: [base, base + SLOT)
 GAP = (0x83FC9000, 0x83FF0000)      # above the fork's rows (end 0x83FC8450), below the end of cacheable SDRAM
 # Every other fork module's reserved RAM (branch, start, end).
@@ -98,9 +98,6 @@ GUARDS = [
      'voice param setter: PITCH/FINE store voice + 0xd4/+0xd8 and set the step voice + 0x160 directly'),
     (0x800C0660, 0x800C06C8, '8fc9e8cc40a884facd9598e2733b99a3527deb4befa73c822c843cc4e266fd77',
      'line (context, {x, y}, {x, y}): the pages\' graphs'),
-    (0x000168FE, 0x00016F50, '051324b2c5e1be61dbd40602196d0b8d6e2f187c8c2af086bebdf822e8abb739',
-     'the stream consumer: a 64-frame block whose chunk is not filled yet (header word != -1, or none left) plays '
-     'nothing and adds 1 to 0x82e0b940 (0x16cc4, 0x16cdc), which nothing else reads: the page\'s DROPS'),
 ]
 
 # ---------------------------------------------------------------- tables
@@ -371,14 +368,11 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
                     gain='LP and HP input x 1 / sqrt(Q / 0.7071) (Q15); BP = k * v1 (unity peak)',
                     clip='soft knee above 24576, saturating at 32767',
                     bypass='a block where an LP is at 127 or an HP at 0 without resonance passes as it is'),
-        drops='CURVES page CTRL 2: stock\'s count 0x82e0b940 of 64-frame blocks the stream consumer found no filled '
-              'chunk for (played as silence), since power-on',
-        ui=dict(page='ENVELOPE (0x10), SHIFT + PITCH/SPEED, tap SHIFT: pages 5-8 after stage 1\'s four',
+        ui=dict(page='ENVELOPE (0x10), SHIFT + PITCH/SPEED, turn VALUE or tap SHIFT: pages 5-8 after stage 1\'s four',
                 pages=['5 PITCH: DEPTH -24..+24 st (OFF), ATTACK, DECAY (or HOLD); graph: the pitch envelope',
                        '6 FILTER: TYPE OFF/LPF/BPF/HPF, CUTOFF 20 Hz - 20 kHz, RESO Q 0.7 - 16; graph: stage 1\'s',
                        '7 F-ENV: AMOUNT -63..+63 (+-9.9 octaves), ATTACK, DECAY (or HOLD); graph: the cutoff envelope',
-                       '8 CURVES: PITCH and FILTER envelope curves LIN/EXP/LOG/S, DROPS (stock\'s dropout count) '
-                       'between them; graph: stage 1\'s'],
+                       '8 CURVES: PITCH and FILTER envelope curves LIN/EXP/LOG/S; graph: stage 1\'s'],
                 apply='COPY held: the mute group; REMAIN held: the bank (stage 1\'s env_targets); Edited and the save '
                       'timer through env_touched'),
         tool='synth/build_pad_pitch_filter.py')

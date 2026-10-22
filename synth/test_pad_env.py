@@ -3,7 +3,7 @@
 usage: python synth/test_pad_env.py OUT_DIR [N]          (unicorn, capstone on PYTHONPATH; N random cases, default 60)
 
 Reads OUT_DIR/manifest.json for the parent APP1. Static checks first: only the header's scatter pointer, the five
-code sites, the five ENVELOPE vtable words and the appended tail differ from the parent; the guards and the
+code sites, the seven ENVELOPE vtable words and the appended tail differ from the parent; the guards and the
 displaced bytes hold on the parent and nothing reaches into those bytes; the module's copies of them are exact; the
 slot overlaps no row and no other fork module; the tables are the documented formulas. Then the parent and the new
 image are booted in Unicorn the way their scatter loader does it, with the boot's static constructors run (the RTOS
@@ -555,8 +555,8 @@ def static_checks(out, man, img, parent):
         allowed |= set(range(file_off(VTABLE + off), file_off(VTABLE + off) + 4))
     diff = [i for i in range(len(parent)) if img[i] != parent[i]]
     check(set(diff) <= allowed and img[:len(parent)] != parent,
-          f'only the scatter pointer, the five code sites and five ENVELOPE vtable words change inside the parent '
-          f'({len(diff)} bytes)')
+          f'only the scatter pointer, the five code sites and {len(VTABLE_SLOTS)} ENVELOPE vtable words change inside '
+          f'the parent ({len(diff)} bytes)')
     e = man['entries']
     rt, nrt = Runtime(parent), Runtime(img)
     ok = []
@@ -570,8 +570,8 @@ def static_checks(out, man, img, parent):
                    f'never-run nops) here; at 0x8009424e movw ip / movt ip / blx ip, back right after ({ok})')
     ok = [rt.word(VTABLE + off) == old and nrt.word(VTABLE + off) == e[entry] for off, old, entry, _ in VTABLE_SLOTS]
     ok += [rt.word(VTABLE + off) == want == nrt.word(VTABLE + off) for off, want, _ in VTABLE_KEEP]
-    check(all(ok), 'ENVELOPE vtable: +0x04 / +0xC8 / +0xCC / +0xD0 / +0xE4 stock on the parent and the module\'s '
-                   'here; DOOM OS\'s +0x08 and the current-pad +0x14C untouched')
+    check(all(ok), 'ENVELOPE vtable: +0x04 / +0xC8 / +0xCC / +0xD0 / +0xD8 / +0xE0 / +0xE4 stock on the parent and '
+                   'the module\'s here; DOOM OS\'s +0x08 and the current-pad +0x14C untouched')
     check(all(sha(rt.read(s, en - s)) == d for s, en, d, w in GUARDS), f'{len(GUARDS)} guards hold on the parent')
     inside = []
     for at, original, _, _, _ in SITES + CALL_SITES:
@@ -1142,9 +1142,11 @@ def dispatcher_checks(img, parent, man):
 
 # ---------------------------------------------------------------- the ENVELOPE page
 # ---------------------------------------------------------------- the ENVELOPE page and its screen
-PAGE_LABELS = [['C1:ATTACK', 'C2:HOLD', 'C3:RELEASE'], ['C1:ATTACK', 'C2:TIME', 'C3:RELEASE'],
+PAGE_LABELS = [['C1:ATTACK', 'C2:HOLD', 'C3:RELEASE'], ['C1:ATTACK', '', 'C3:RELEASE'],
                ['C1:DECAY', 'C2:SUSTAIN', 'C3:CURVE'], ['C1:LOOP', 'C2:RETRIG', 'C3:REVERSE']]
-PAGE_NAMES = ['', 'SHAPE', 'DECAY', 'MODE']
+PAGE_NAMES = ['AMP', 'SHAPE', 'DECAY', 'MODE']
+EV_ENCODER = 7                                           # (encoder 0 = VALUE, delta): the page's vtable +0xE0
+UI_HELD = 0x80592598 + 8                                 # set: stock's VALUE press on the page is the base class's
 CURVE_NAMES = ['LIN', 'EXP', 'LOG', 'S']
 SPAN = (0, 288000)                                       # every test pad's START and END: 6 s
 R_LOOP, R_PLAY = 0x14, 0x3C                              # pad record: LOOP; PLAY (bit 0 reverse)
@@ -1201,13 +1203,14 @@ class Screens:
         if n == 0:
             if sh and sh['fine']:
                 v['values'] = [time_text(sh['atk']), str(h), time_text(sh['rel'])]
+            v['bottom'] = f'{pad_label(pad)} {"AMP FINE" if eff[0] & 1 else "AMP"} 1/{count}'
             return v
         if extra:
             v['labels'], v['values'], name = extra['labels'], extra['values'], extra['name']
         else:
             v['labels'], name = PAGE_LABELS[n], PAGE_NAMES[n]
             if n == 1:
-                v['values'] = [CURVE_NAMES[eff[3] & 3], 'FINE' if eff[0] & 1 else 'STOCK', CURVE_NAMES[eff[3] >> 4 & 3]]
+                v['values'] = [CURVE_NAMES[eff[3] & 3], '', CURVE_NAMES[eff[3] >> 4 & 3]]
             elif n == 2:
                 dec = eff[4] & 127 if eff[0] & 2 else 0
                 v['values'] = [time_text(self.F[dec]) if dec else 'OFF', f'{min(eff[5], 100)}%',
@@ -1332,33 +1335,34 @@ def ui_checks(img, parent, man, frames, curves):
           'the ENVELOPE page made on entry has vtable 0x8021ec14 (knob, redraw and pad change are the module\'s) and '
           'arms the stock 50-tick page timer (+0x10 -> 0x800738a8) that drives its tick; it starts on page 1, and '
           'SHIFT, down since the opening chord, is not armed')
-    check(m.screen() == p.screen() and m.screen()[0] != bytes(8192),
-          'opened on a pad with stock settings: the screen and its static layer are the parent\'s, byte for byte')
+    check(matches(m, screens, 0, 5) and m.screen()[1] == p.screen()[1] and m.screen()[0] != bytes(8192),
+          'opened on a pad with stock settings: the parent\'s screen with "A-6 AMP 1/4" at the bottom, and the '
+          'parent\'s static layer, byte for byte')
     # page 1 with stock settings is stock
     seq = []
     for ctrl, raw in ((1, 40), (2, 64), (3, 100), (1, 0), (3, 127)):
         for mm in (m, p):
             mm.clear()
             mm.knob(ctrl, raw)
-        seq.append((m.setters, m.ext(5), m.screen()) == (p.setters, p.ext(5), p.screen()) and
+        seq.append((m.setters, m.ext(5)) == (p.setters, p.ext(5)) and matches(m, screens, 0, 5) and
                    [m.get(x, 5) for x in (0x7D, 0x7E, 0x7F)] == [p.get(x, 5) for x in (0x7D, 0x7E, 0x7F)])
     check(all(seq), f'page 1, stock settings: the knobs are stock\'s (the same setter calls and values, no bytes) and '
-                    f'the screen is the parent\'s after each turn ({seq})')
+                    f'the screen is the parent\'s but the bottom line after each turn ({seq})')
     # SHIFT taps: each page on the screen
     m.clear()
     m.tick(2)                            # SHIFT still down from the opening chord: never a tap
     for mm in (m, p):
         mm.dispatch(EV_KEY_UP, KEY_SHIFT)
     m.tick()
-    first = m.ui()['page'] == 0 and m.ui()['shift'] == 1 and m.screen() == p.screen()
+    first = m.ui()['page'] == 0 and m.ui()['shift'] == 1 and matches(m, screens, 0, 5)
     pages = []
     for k in (1, 2, 3, 0):
         m.clear()
         m.tap()
         pages.append((m.ui()['page'], matches(m, screens, m.ui()['page'], 5)))
-    check(first and pages == [(1, True), (2, True), (3, True), (0, True)] and m.screen() == p.screen(),
+    check(first and pages == [(1, True), (2, True), (3, True), (0, True)],
           f'SHIFT held when the page opens is no tap; each tap shows the next page on the screen, labels, values and '
-          f'"A-6 SHAPE 2/4" at the bottom, then page 1 is the parent\'s screen again ({pages})')
+          f'"A-6 SHAPE 2/4" at the bottom, then page 1 again ({pages})')
     not_taps = []
     m.clear()
     m.dispatch(EV_KEY, KEY_SHIFT)
@@ -1436,7 +1440,8 @@ def ui_checks(img, parent, man, frames, curves):
     go_to(m, 0)
     m.draw()
     p.draw()
-    check(m.screen() == p.screen(), 'back on page 1 with stock settings: the parent\'s screen and layer again')
+    check(matches(m, screens, 0, 5) and m.screen()[1] == p.screen()[1],
+          'back on page 1 with stock settings: the parent\'s screen but the bottom line, and its layer, again')
 
     # turning the knobs updates the screen (pages 2-4), every turn checked against the reference
     seq = []
@@ -1446,8 +1451,12 @@ def ui_checks(img, parent, man, frames, curves):
         seq.append(matches(m, screens, 2, 5))
     go_to(m, 1)
     for ctrl, raw in ((1, 40), (3, 127), (2, 100), (1, 100)):
+        before = m.ext(5)
         m.knob(ctrl, raw)
-        seq.append(matches(m, screens, 1, 5))
+        seq.append(matches(m, screens, 1, 5) and (ctrl != 2 or m.ext(5) == before))
+    go_to(m, 0)
+    press(m, KEY_VALUE)                  # TIME: FINE (page 2's CTRL 2 writes nothing now)
+    seq.append(matches(m, screens, 0, 5) and m.ext(5)[0] & 1 == 1)
     go_to(m, 3)
     fades = []
     for ctrl, raw in ((1, 100), (3, 90), (2, 30), (3, 10), (2, 0), (2, 48)):
@@ -1474,6 +1483,44 @@ def ui_checks(img, parent, man, frames, curves):
     check(all(seq) and times == [[time_text(f)] for f in frames],
           f'page 1 with FINE: the screen shows the times (0.5ms .. 8.00s; the graph follows), every fine index drawn '
           f'as its time ({seq})')
+    # VALUE: a press on page 1 switches TIME; a press elsewhere does nothing; a turn changes the page
+    go_to(m, 0)
+    press(m, KEY_VALUE)
+    off = (m.ext(5)[0] & 1, matches(m, screens, 0, 5), m.ext(5)[1:3])
+    press(m, KEY_VALUE)
+    on = (m.ext(5)[0] & 1, matches(m, screens, 0, 5), m.ext(5)[1:3])
+    elsewhere = []
+    for n in (1, 2, 3):
+        go_to(m, n)
+        before = m.ext(5)
+        press(m, KEY_VALUE)
+        elsewhere.append(m.ext(5) == before and matches(m, screens, n, 5))
+    go_to(m, 0)
+    m.w32(UI_HELD, 1)
+    before = m.ext(5)
+    press(m, KEY_VALUE)
+    held = m.ext(5) == before
+    m.w32(UI_HELD, 0)
+    m.draw()
+    check(off[:2] == (0, True) and on[:2] == (1, True) and off[2] == on[2] and all(elsewhere) and held,
+          f'VALUE press on page 1 switches TIME: STOCK ("A-6 AMP 1/4"), then FINE again ("A-6 AMP FINE 1/4") with the '
+          f'fine times kept; on pages 2-4 it does nothing, nor on page 1 while stock\'s press is the base class\'s '
+          f'([0x80592598 + 8] set) ({off}, {on}, {elsewhere}, {held})')
+    turns = []
+    for delta, n in ((1, 1), (1, 2), (-1, 1), (-1, 0), (-1, 3), (1, 0), (3, 1), (-2, 0)):
+        m.dispatch(EV_ENCODER, 0, delta)
+        turns.append(m.ui()['page'] == n and matches(m, screens, n, 5))
+    m.dispatch(EV_KEY, KEY_SHIFT)
+    m.tick()
+    m.dispatch(EV_ENCODER, 0, 1)
+    m.dispatch(EV_KEY_UP, KEY_SHIFT)
+    m.tick()
+    shift_turn = m.ui()['page']
+    go_to(m, 0)
+    check(all(turns) and shift_turn == 1,
+          f'VALUE turned (the page\'s +0xE0, encoder 0): right the next page, left the previous one, round (4 -> 1 and '
+          f'1 -> 4), a step a turn event, each on the screen; a turn with SHIFT down moves one page and is no SHIFT tap '
+          f'({turns}, {shift_turn})')
     # a pad change redraws (stock reads the new pad's START/END first)
     go_to(m, 1)
     setup(m, 7, ext_bytes(3, 16, 64, 0x2A, 40, 70), 30, 50, 60, 0, 0)
@@ -1615,17 +1662,21 @@ def ui_checks(img, parent, man, frames, curves):
     for k in range(4):
         m.knob(1, 99)
         m.knob(3, 99)
+        press(m, KEY_VALUE)
         m.tap()
     check(m.ext(5) == ext_bytes(1, 20, 20) and len(m.stock_knobs) == 2 and not m.fanouts,
-          'a pad holding no sample: pages 2-4 write nothing; page 1 goes to stock\'s knob even with FINE set')
+          'a pad holding no sample: pages 2-4 write nothing, nor does VALUE press on page 1; page 1 goes to stock\'s '
+          'knob even with FINE set')
     m.load_pad(5)
-    texts = [t for _, _, t in m.texts] + [x for row in PAGE_LABELS for x in row] + ['A-16 SHAPE 2/4', 'J-16 MODE 4/4']
+    texts = [t for _, _, t in m.texts] + [x for row in PAGE_LABELS for x in row] + ['A-16 SHAPE 2/4', 'J-16 MODE 4/4',
+                                                                                     'J-16 AMP FINE 1/4']
     mine = [t for t, lr in m.popup_log if man['blob_base'] <= lr < man['blob_base'] + man['blob_size']]
     stock = sorted({t for t, lr in m.popup_log})
     check(not mine and stock == ['to Current PAD', 'to MUTE GROUP'] and
-          all(len(t) <= 10 for row in PAGE_LABELS for t in row) and all(len(t) <= 16 and t.isascii() for t in texts),
+          all(len(t) <= 10 for row in PAGE_LABELS for t in row) and
+          all(len(t) <= (17 if '/' in t else 16) and t.isascii() for t in texts),
           f'the module shows no popups (only stock\'s own COPY ones: {stock}); every label is at most 10 characters, '
-          f'every value and bottom line at most 16')
+          f'every value at most 16, every bottom line at most 17 (its width is checked with the reset\'s questions)')
     reset_checks(m, p, screens, man)
 
 
@@ -1801,7 +1852,8 @@ def reset_checks(m, p, screens, man):
           'page 1 (stock\'s screen): DEL asks in the bottom line; EXIT gives stock\'s screen back')
     # the question's width: every pad name, group and bank
     widths = []
-    for text in ['RESET J-16? press VALUE', 'RESET GROUP? press VALUE', 'RESET BANK J? press VALUE']:
+    for text in ['RESET J-16? press VALUE', 'RESET GROUP? press VALUE', 'RESET BANK J? press VALUE',
+                 'J-16 AMP FINE 1/8']:
         p.uc.mem_write(SCREEN_PIX, bytes(8192))
         ctx = p.r32(p.page + 0x34)
         p.uc.mem_write(SCRATCH + 0x7840, text.encode() + b'\0')
@@ -1812,7 +1864,8 @@ def reset_checks(m, p, screens, man):
         widths.append((min(xs), max(xs)))
     p.leave()
     check(all(12 <= a and b <= 115 for a, b in widths),
-          f'the longest questions stay inside the bottom line\'s box (x 12-115) ({widths})')
+          f'the longest questions, and the longest bottom line ("J-16 AMP FINE 1/8"), stay inside the bottom line\'s '
+          f'box (x 12-115) ({widths})')
     # stock's INIT PARAM (SHIFT + pad 6, then OK) on the parent: command 0x40a; its handler clears 0x40-0x7F
     q = Machine(m_parent_img(man), arm_max=True)
     q.load_pad(5)

@@ -27,7 +27,8 @@ Checks:
   cutoff envelopes up and down, resonance, mono and stereo), with its state carried across chunks;
 - both at once; a new start (the recompute from Init, through stage 1's dispatcher) resets the envelopes and the
   filter; other recomputes don't;
-- the ENVELOPE pages 5-8 (stage 1's screen harness, boot's surfaces made): the taps reach them after stage 1's four;
+- the ENVELOPE pages 5-8 (stage 1's screen harness, boot's surfaces made): the taps and VALUE turns reach them after
+  stage 1's four;
   the screen and its static layer are a reference's byte for byte (drawn on the parent with stock's calls from the
   settings: labels, values, the envelope graphs, "A-6 PITCH 5/8"); each turn writes its byte and the layout version;
   every value the knobs reach is shown as the model says; COPY / REMAIN reach the mute group / bank; the save goes
@@ -681,7 +682,7 @@ def restart_checks(img, man, model):
           'stage 1\'s env_stages[0] is pf_stage in the running image')
 
 
-# ---------------------------------------------------------------- test 5: the bypass, the race, the drop counter
+# ---------------------------------------------------------------- test 5: the bypass, the race
 def robust_checks(img, parent, man, model):
     e = man['entries']
     # an LP fully open (or an HP fully down) without resonance passes the frames as they are
@@ -744,29 +745,6 @@ def robust_checks(img, parent, man, model):
           f'a new start while a fill runs (pf_gen bumped during the chunk, as another task\'s Init on a reused voice '
           f'would): the fill\'s clock and filter state are not written back, and the next chunk starts the envelopes '
           f'from zero ({after == before}, {calls[:2]}, clock {fresh[1]})')
-    # stock's drop counter: the stream consumer adds 1 for a 64-frame block whose chunk isn't filled, and plays
-    # nothing in it; a filled chunk plays and counts nothing
-    p = Fill(parent)
-    S, C, OUT, POS = 0x30079000, 0x3007A000, 0x3007D000, 0x3007D400
-    seq = []
-    for filled in (False, True, False):
-        p.uc.mem_write(S, bytes(0x40))
-        p.uc.mem_write(S, b'\x01\x00')
-        p.m.w32(S + 0x20, C)
-        p.uc.mem_write(C, bytes(0x2090))
-        if filled:
-            p.m.w32(C, M32)
-            p.m.w32(C + 8, 2048)
-            p.uc.mem_write(C + 0x80, struct.pack('<64h', *range(100, 164)))
-        p.uc.mem_write(OUT, bytes(0x200))
-        p.m.w32(POS, 0)
-        before = p.m.r32(DROPS)
-        rc = p.m.call(0x168FE | 1, S, OUT, POS)
-        seq.append((p.m.r32(DROPS) - before, rc if not filled else None,
-                    bytes(p.uc.mem_read(OUT, 0x200)) != bytes(0x200)))
-    check(seq == [(1, 2, False), (0, None, True), (1, 2, False)],
-          f'stock\'s dropout counter 0x82e0b940: the stream consumer adds 1 for a block whose chunk is not filled yet '
-          f'and plays nothing in it (returns 2); a filled chunk plays and counts nothing ({seq})')
 
 
 # ---------------------------------------------------------------- CPU
@@ -803,8 +781,7 @@ def cpu_checks(img, parent, man):
 
 # ---------------------------------------------------------------- the ENVELOPE pages
 PF_LABELS = [['C1:DEPTH', 'C2:ATTACK', 'C3:DECAY'], ['C1:TYPE', 'C2:CUTOFF', 'C3:RESO'],
-             ['C1:AMOUNT', 'C2:ATTACK', 'C3:DECAY'], ['C1:PITCH', 'DROPS', 'C3:FILTER']]
-DROPS = 0x82E0B940                                       # stock's dropout counter (the stream consumer's)
+             ['C1:AMOUNT', 'C2:ATTACK', 'C3:DECAY'], ['C1:PITCH', '', 'C3:FILTER']]
 PF_NAMES = ['PITCH', 'FILTER', 'F-ENV', 'CURVES']
 FILTER_NAMES = ['OFF', 'LPF', 'BPF', 'HPF']
 CURVE_NAMES = ['LIN', 'EXP', 'LOG', 'S']
@@ -823,7 +800,7 @@ def zone(raw, n):
     return max(0, min(127, raw)) * n >> 7
 
 
-def pf_values(model, k, b, drops=0):
+def pf_values(model, k, b):
     """the three values page 5 + k shows for bytes 0x71-0x7f"""
     e = b if b[14] == 1 else bytes(15)
     F = model.F
@@ -841,7 +818,7 @@ def pf_values(model, k, b, drops=0):
         a = max(-63, min(63, s8(e[6])))
         t = (abs(a) * 156942 + 50000) // 100000
         return ['0' if not a else f'{"-" if a < 0 else "+"}{t // 10}.{t % 10}oct'] + times(7, 8)
-    return [CURVE_NAMES[e[9] & 3], str(drops), CURVE_NAMES[e[9] >> 2 & 3]]
+    return [CURVE_NAMES[e[9] & 3], '', CURVE_NAMES[e[9] >> 2 & 3]]
 
 
 def pf_graph(model, k, b):
@@ -870,7 +847,7 @@ def pf_matches(m, screens, model, pad, k):
     """the image's screen and static layer are the reference's for page 5 + k of pad"""
     st = T.pad_state(m, pad)
     b2 = ext2_of(m, pad)
-    v = dict(labels=PF_LABELS[k], values=pf_values(model, k, b2, m.r32(DROPS)),
+    v = dict(labels=PF_LABELS[k], values=pf_values(model, k, b2),
              bottom=f'{T.pad_label(pad)} {PF_NAMES[k]} {5 + k}/{PAGES}')
     g = pf_graph(model, k, b2)
     if g is None:
@@ -916,7 +893,17 @@ def ui_checks(img, parent, man, model):
                     T.matches(m, screens, n, 5, count=PAGES)))
     check(seq == [(1, True), (2, True), (3, True), (4, True), (5, True), (6, True), (7, True), (0, True)],
           f'tapping SHIFT: stage 1\'s pages ("A-6 SHAPE 2/8" ...), then PITCH 5/8, FILTER 6/8, F-ENV 7/8, CURVES 8/8 on '
-          f'the screen (labels, values, graph, bottom line, byte for byte with the reference), then page 1 ({seq})')
+          f'the screen (labels, values, graph, bottom line, byte for byte with the reference), then page 1 '
+          f'("A-6 AMP 1/8") ({seq})')
+    turned = []
+    for delta in (-1, -1, 1, 1):
+        m.dispatch(T.EV_ENCODER, 0, delta)
+        n = m.ui()['page']
+        turned.append((n, pf_matches(m, screens, model, 5, n - 4) if 4 <= n < 8 else
+                       T.matches(m, screens, n, 5, count=PAGES)))
+    check(turned == [(7, True), (6, True), (7, True), (0, True)],
+          f'VALUE turned: left from page 1 to CURVES 8/8 (round), F-ENV 7/8, right back to 8/8 and round to 1/8, each '
+          f'on the screen; CURVES shows nothing for CTRL 2 ({turned})')
     # every page for several kinds of settings
     bad = []
     for what, b2, b1 in PF_CONFIGS:
@@ -972,7 +959,7 @@ def ui_checks(img, parent, man, model):
             m.texts.clear()
             m.knob(ctrl, raw)
             shown = [s for x, y, s in m.texts if y == T.VALUE_Y and x == T.COLUMNS[ctrl - 1]]
-            texts.append((shown[-1:] == [pf_values(model, k, ext2_of(m, 5), m.r32(DROPS))[ctrl - 1]], shown[-1:]))
+            texts.append((shown[-1:] == [pf_values(model, k, ext2_of(m, 5))[ctrl - 1]], shown[-1:]))
     sample = [t[1] for t in texts[0::37]]
     check(all(t[0] for t in texts), f'every value the knobs reach is shown as the model says: depths, attack and decay '
                                     f'times (and HOLD), cutoffs in Hz and k, Q, amounts in octaves ({len(texts)} turns; '
@@ -1031,22 +1018,14 @@ def ui_checks(img, parent, man, model):
     check(ext2_of(m, 5) == before, 'a pad holding no sample: pages 5-8 write nothing (stage 1 calls no turn)')
     m.load_pad(5)
     lines = [s for _, _, s in m.texts] + [x for k in range(4) for x in PF_LABELS[k] + PF_NAMES[k:k + 1]]
-    m.w32(DROPS, 12345)
-    T.go_to(m, 0)
-    m.texts.clear()
-    T.go_to(m, 7)                        # the labels are drawn when the page comes up
+    T.go_to(m, 7)
     m.draw()
-    shown = [(x, s) for x, y, s in m.texts if y == T.VALUE_Y]
-    first = ('DROPS' in [s for x, y, s in m.texts if y == T.LABEL_Y]) and (T.COLUMNS[1], '12345') in shown and \
-        pf_matches(m, screens, model, 5, 3)
-    m.w32(DROPS, 12399)
+    first = pf_matches(m, screens, model, 5, 3)          # the reference's label and value for CTRL 2 are empty
     b = ext2_of(m, 5)
-    m.texts.clear()
     m.knob(2, 77)
-    again = [(x, s) for x, y, s in m.texts if y == T.VALUE_Y and x == T.COLUMNS[1]][-1:]
-    check(first and again == [(T.COLUMNS[1], '12399')] and ext2_of(m, 5) == b,
-          f'page 8 shows stock\'s dropout count (0x82e0b940) under DROPS, in CTRL 2\'s place; turning CTRL 2 '
-          f'writes nothing and shows the count again ({shown[-3:]}, {again})')
+    check(first and pf_matches(m, screens, model, 5, 3) and ext2_of(m, 5) == b and PF_LABELS[3][1] == '',
+          'page 8 (CURVES) has nothing in CTRL 2\'s place, no label and no value (the screen is the reference\'s, '
+          'byte for byte); turning CTRL 2 writes nothing and shows nothing')
     check(all(len(s) <= 16 and s.isascii() for s in lines) and all(len(x) <= 10 for k in range(4) for x in PF_LABELS[k]),
           f'labels at most 10 characters, values and names at most 16 ({max(lines, key=len)!r})')
     # DEL, then VALUE, on one of these pages: stage 1's reset clears this stage's bytes too, 0x70 stays

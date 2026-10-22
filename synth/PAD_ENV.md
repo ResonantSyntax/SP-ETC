@@ -46,13 +46,14 @@ frames). Anchors, as the screen shows them: 8 = 0.9 ms, 16 = 1.6 ms, 24 = 2.9 ms
 
 ## Using it (the ENVELOPE page, SHIFT + PITCH/SPEED)
 
-Tap SHIFT (press and let go within a second, touching nothing else) for the next page. The screen shows the
-page, no popups (test 1 used popups; test 2 draws on the page itself):
+Turn VALUE for the next or previous page (round: from the last to the first and back), or tap SHIFT (press and
+let go within a second, touching nothing else) for the next. The screen shows the page, no popups (test 1 used
+popups; test 2 draws on the page itself):
 
 | Page | CTRL 1 | CTRL 2 | CTRL 3 | Bottom line |
 |---|---|---|---|---|
-| 1 A-H-R (stock) | `C1:ATTACK` | `C2:HOLD` | `C3:RELEASE` | `A-1` (stock's) |
-| 2 SHAPE | `C1:ATTACK` LIN/EXP/LOG/S | `C2:TIME` STOCK / FINE | `C3:RELEASE` curve | `A-1 SHAPE 2/4` |
+| 1 AMP (stock) | `C1:ATTACK` | `C2:HOLD` | `C3:RELEASE` | `A-1 AMP 1/4`, `A-1 AMP FINE 1/4` |
+| 2 SHAPE | `C1:ATTACK` LIN/EXP/LOG/S | nothing | `C3:RELEASE` curve | `A-1 SHAPE 2/4` |
 | 3 DECAY | `C1:DECAY` OFF or the time | `C2:SUSTAIN` 0-100% | `C3:CURVE` the decay's | `A-1 DECAY 3/4` |
 | 4 MODE | `C1:LOOP` EVERY / FIRST | `C2:RETRIG` CUT or the fade | `C3:REVERSE` MIRROR / TIME | `A-1 MODE 4/4` |
 
@@ -63,7 +64,12 @@ page, no popups (test 1 used popups; test 2 draws on the page itself):
   curves, decay and sustain, the release ending at the HOLD point; a looping pad on FIRST PASS holds its
   sustain level to the end; a reverse pad on REV-TIME is drawn mirrored (the attack at the END side, as heard
   first). A pad with stock settings keeps stock's graph, and on page 1 stock's whole screen.
-- Page 1 is stock's own page. With FINE on, ATTACK and RELEASE choose the fine index (knob = index), the values
+- **TIME** (STOCK or FINE) is VALUE press on page 1 (test 6; tests 1-5 had it on page 2's CTRL 2). The bottom line
+  says which. It reaches the pads a turn reaches (COPY, REMAIN). It only toggles while stock's own VALUE press
+  would do nothing: `0x800f5bf4` hands it to the base class `0x800c9788` while `0x800c3f18` (`[0x80592598 + 8]`)
+  is set, else returns 0.
+- Page 1 is stock's own page, with the module's bottom line (test 6). With FINE on, ATTACK and RELEASE choose the
+  fine index (knob = index), the values
   show the times (`5.4ms`, `216ms`, `2.53s`), and the stock fields get the nearest stock value (216 ms -> 9), so
   stock firmware plays the closest stock time.
 - Turning TIME to FINE keeps the pad's fine times when its stock values still match them, else starts from the
@@ -378,7 +384,7 @@ pad FX's):
 Stock saves, loads, copies, moves and exchanges them with the rest of the block and resets them for a new sample
 (pad FX study section 5.2). A sounding voice reads them at every chunk.
 
-## The pages (ENVELOPE screen, tap SHIFT)
+## The pages (ENVELOPE screen, turn VALUE or tap SHIFT)
 
 After stage 1's four, through `env_more_pages[0..3]`:
 
@@ -387,15 +393,31 @@ After stage 1's four, through `env_more_pages[0..3]`:
 | 5 PITCH | `C1:DEPTH` OFF, -24st .. +24st | `C2:ATTACK` 0ms .. 8.00s | `C3:DECAY` HOLD, 0.5ms .. 8.00s | the pitch envelope, up for +, down for - |
 | 6 FILTER | `C1:TYPE` OFF, LPF, BPF, HPF | `C2:CUTOFF` 20Hz .. 20.0k | `C3:RESO` 0.7 .. 16.0 (Q) | stage 1's |
 | 7 F-ENV | `C1:AMOUNT` -9.9oct .. +9.9oct | `C2:ATTACK` | `C3:DECAY` | the cutoff envelope |
-| 8 CURVES | `C1:PITCH` LIN EXP LOG S | `DROPS`: stock's dropout count (test 5) | `C3:FILTER` LIN EXP LOG S | stage 1's |
+| 8 CURVES | `C1:PITCH` LIN EXP LOG S | nothing | `C3:FILTER` LIN EXP LOG S | stage 1's |
 
 The bottom line reads `A-1 PITCH 5/8`; stage 1's pages count to 8 too. A turn writes the pad's byte (and, with COPY
 or REMAIN held, its mute group's or bank's, through `env_targets`), the layout version, then `env_touched` (Edited,
 the save 1 s after the last change). Bytes under an unknown layout version didn't count, so a turn clears them first.
-TYPE from OFF to LPF or BPF with CUTOFF at 0 opens the cutoff fully. A pad without a sample gets nothing. DROPS
-shows `0x82e0b940`, which the stream consumer `0x168fe` adds 1 to for every 64-frame block whose chunk isn't filled
-in time (`0x16cc4` / `0x16cdc`; it plays nothing for that block, about 1.3 ms); nothing else reads it. It counts
-from power-on, every pad's voices. Stage 1's DEL reset clears these bytes too.
+TYPE from OFF to LPF or BPF with CUTOFF at 0 opens the cutoff fully. A pad without a sample gets nothing. Stage 1's
+DEL reset clears these bytes too.
+
+Test 5 showed DROPS in CTRL 2's place on CURVES: `0x82e0b940`, which the stream consumer `0x168fe` adds 1 to for
+every 64-frame block whose chunk isn't filled in time (`0x16cc4` / `0x16cdc`; that block plays nothing, about 1.3
+ms). Nothing else reads it. On the unit it stayed 0, so test 6 takes it off the page.
+
+## Test 6: the screen (pad-env-test6)
+
+From the user's test of combined-test3:
+- **Page 1's bottom line** names the page like the others: `A-1 AMP 1/8`, or `A-1 AMP FINE 1/8`.
+- **TIME** is VALUE press on page 1, no longer page 2's CTRL 2.
+- **DROPS** is off page 8.
+- **A VALUE turn** changes the page. That's the page's vtable +0xE0 (encoder, delta), which stock's page leaves
+  at `0x800f5ad0` (returns 0); now it's `env_ui_turn`.
+
+`test_pad_env.py` passes 64 checks and `test_pad_pitch_filter.py` 44:
+- the page-1 screens are now the reference's (stock's screen with the module's bottom line);
+- new checks for VALUE press (page 1 only, not while stock's press is the base class's, not on an empty pad) and
+  VALUE turns (round, one page a turn event, no SHIFT tap).
 
 ## The patches
 
