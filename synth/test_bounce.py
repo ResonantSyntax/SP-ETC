@@ -29,8 +29,9 @@ Checks:
 - bridges against the parent's own instructions (mixer arguments and stack depth, the feed's
   capture, meter and gate call, the popup tick's registers, the pad-event dispatcher's paths);
 - the page filter: every event reaches DOOM OS's filter unless it is the gesture, or a bounce is
-  set up or running; the gesture's conditions; the setup popup, VALUE, VALUE pressed, SHIFT+VALUE;
-  the target and mode kept once picked;
+  set up or running; the gesture's conditions; the setup popup, VALUE; the target picked by a pad
+  tap (test8: the source REPLACE, an empty pad TO PAD onto it, a pad with a sample or in a protected
+  bank refused for a second); RESAMPLE or REC starts; the target and mode kept once picked;
 - the same keys through the UI task's own dispatcher, and a whole REPLACE that way;
 - the looper through its stock code: refused only while it plays, records, overdubs or is armed;
 - whole runs through the bridges (NO TAIL, TAIL; one-shots and loops; at their own rate and
@@ -135,6 +136,7 @@ FIELDS_U = ('state ms since shown refresh src dst mode modes loop_src loop_pin l
             'swap_a swap_b want_len_a want_ch_a want_len_b want_ch_b fence undo_slot undo_next partial err dropped '
             'r_win r_cached').split()
 UNDO_FIELDS = 'used pad keep len_pad ch_pad len_keep ch_keep link'.split()
+FIELDS_U2 = 'home note note_until tapped'.split()             # test8, after the UNDO records
 UNDOS = 8
 SIGNED = {'l', 'l_est', 'l_meas', 'p0', 'p_sum', 'p16', 'd', 'saved_len', 'saved_snap', 'cal_off', 'r_l',
           'r_est', 'r_meas', 'r_p16', 'r_d', 'saved_ext', 'link_src', 'err', 'r_win'}
@@ -542,6 +544,10 @@ class Machine:
     def u(self, name):
         return self.field('u', name)
 
+    def u2(self, name):
+        return self.r32(self.sym['bnc_ui_state'] + 4 * len(FIELDS_U) + 4 * len(UNDO_FIELDS) * UNDOS +
+                        4 * FIELDS_U2.index(name))
+
     def undo(self, i):
         base = self.sym['bnc_ui_state'] + 4 * len(FIELDS_U) + 4 * len(UNDO_FIELDS) * i
         r = {k: self.r32(base + 4 * j) for j, k in enumerate(UNDO_FIELDS)}
@@ -857,9 +863,10 @@ def boot(img, man, d=0, p=61, L=77, seed=1):
     return m
 
 
-def run_bounce(m, src_pad, mode_turns=0, budget=4000, exit_at=None, during=None, target=None):
-    """The gesture, VALUE turns, the target (VALUE pressed until it shows), REC, then audio periods until the
-    controller is idle again."""
+def run_bounce(m, src_pad, mode_turns=0, budget=4000, exit_at=None, during=None, target=None, dest=None,
+               start=KEY_RESAMPLE):
+    """The gesture, VALUE turns, the target (REPLACE: the source tapped; TO PAD onto dest: that pad tapped),
+    RESAMPLE (or start), then audio periods until the controller is idle again."""
     r = m.gesture(src_pad)
     m.ui(1)
     for _ in range(abs(mode_turns)):
@@ -867,15 +874,17 @@ def run_bounce(m, src_pad, mode_turns=0, budget=4000, exit_at=None, during=None,
         m.ui(1)
     if m.u('state') != U_SETUP:
         return dict(gesture=r, setup=False)
-    if target is not None:
-        for _ in range(3):
-            if m.u('target') == target:
-                break
-            m.tap(KEY_VALUE)
-            m.ui(1)
+    if target == T_REPLACE or dest is not None:
+        m.event(EV_PAD, src_pad if dest is None else dest, 100)
+        m.event(EV_PAD_UP, src_pad if dest is None else dest, 0)
+        m.ui(1)
+    elif target == T_PAD and m.u('target') != T_PAD:
+        m.event(EV_PAD, m.u2('home') % 16, 100)      # the home pad, in the source's bank
+        m.event(EV_PAD_UP, m.u2('home') % 16, 0)
+        m.ui(1)
     setup_text = m.popup()
-    m.key(KEY_REC)
-    m.key(KEY_REC, False)
+    m.key(start)
+    m.key(start, False)
     states = []
     for i in range(budget):
         if during:
@@ -1132,8 +1141,9 @@ def filter_checks(img, man):
     mg.ui(1)
     check(r == 1 and not passed and mg.u('state') == U_SETUP and mg.popup() == 'BOUNCE A-1>A-2\nNO TAIL',
           f'gesture: RESAMPLE held + sample pad: setup popup, the pad is not played ({mg.popup()!r})')
-    for kind, a1, a2 in ((EV_KEY, 0x16, 0), (EV_KEY_UP, 0x16, 0), (EV_KNOB, 3, 30), (EV_PAD, 3, 90), (EV_PAD_UP, 3, 0),
-                         (0x12, 3, 50), (EV_ENCODER, 1, 1), (EV_KEY_UP, KEY_VALUE, 0)):
+    for kind, a1, a2 in ((EV_KEY, 0x16, 0), (EV_KEY_UP, 0x16, 0), (EV_KNOB, 3, 30), (EV_PAD_UP, 3, 0),
+                         (0x12, 3, 50), (EV_ENCODER, 1, 1), (EV_KEY, KEY_VALUE, 0), (EV_KEY_UP, KEY_VALUE, 0),
+                         (EV_PAD, 16, 90), (EV_PAD, 0x13, 90)):
         r, passed = mg.event(kind, a1, a2)
         check(r == 1 and not passed and mg.u('state') == U_SETUP and not [x for x in mg.log if x[0] == 'post'],
               f'setup: event {kind:#x}/{a1:#x} is swallowed and changes nothing')
@@ -1147,20 +1157,51 @@ def filter_checks(img, man):
         seen.append(mg.popup().split('\n')[1])
     check(seen == ['TAIL', 'TAIL', 'TAIL', 'NO TAIL', 'NO TAIL', 'NO TAIL'],
           f'VALUE: NO TAIL / TAIL, clamped; no LOOP (bounce-3-test7) ({seen})')
-    # the target: VALUE pressed steps TO PAD -> REPLACE -> TO PAD; SHIFT + VALUE steps, clamped; the mode stays
+    # the target, by a tap (test8): the source REPLACE, an empty pad TO PAD onto it, a pad with a sample refused
     mg.turn(1)
+    mg.load_pad(6, 4800)                                # A-7 holds a sample
     seen = []
-    for act in ('press', 'press', 'shift+', 'shift+', 'shift-', 'shift-', 'turn+'):
-        if act == 'press':
-            mg.tap(KEY_VALUE)
+    for act in ((EV_PAD, 0), (EV_PAD, 4), (EV_PAD, 6), (0, 1200), (EV_PAD, 0), (EV_PAD, 1), (EV_ENCODER, 1)):
+        if act[0] == EV_PAD:
+            mg.event(EV_PAD, act[1], 100)
+            mg.event(EV_PAD_UP, act[1], 0)
+            mg.ui(1)
+        elif act[0] == EV_ENCODER:
+            mg.turn(act[1], shift=True)
+            mg.ui(1)
         else:
-            mg.turn(1 if act[-1] == '+' else -1, shift=act.startswith('shift'))
-        mg.ui(1)
-        seen.append(mg.popup())
-    check(seen == ['REPLACE A-1\nTAIL', 'BOUNCE A-1>A-2\nTAIL', 'REPLACE A-1\nTAIL', 'REPLACE A-1\nTAIL',
-                   'BOUNCE A-1>A-2\nTAIL', 'BOUNCE A-1>A-2\nTAIL', 'BOUNCE A-1>A-2\nTAIL'],
-          f'target: VALUE pressed toggles TO PAD / REPLACE, SHIFT + VALUE steps and stops at the ends, VALUE alone the '
-          f'mode, which stops at TAIL ({seen})')
+            mg.ui(act[1])
+        seen.append((mg.popup(), mg.u('target'), mg.u('dst')))
+    check(seen == [('REPLACE A-1\nTAIL', T_REPLACE, 1), ('BOUNCE A-1>A-5\nTAIL', T_PAD, 4),
+                   ('PAD NOT EMPTY\nA-7', T_PAD, 4), ('BOUNCE A-1>A-5\nTAIL', T_PAD, 4), ('REPLACE A-1\nTAIL', T_REPLACE, 1),
+                   ('BOUNCE A-1>A-2\nTAIL', T_PAD, 1), ('BOUNCE A-1>A-2\nTAIL', T_PAD, 1)] and
+          not [x for x in mg.log if x[0] in ('post', 'set', 'target')],
+          f'target by a tap: the source pad REPLACE (the original to A-2, the first empty pad), an empty pad TO PAD '
+          f'onto it, a pad with a sample "PAD NOT EMPTY" with its name for a second and the target stays; SHIFT + '
+          f'VALUE no longer picks; nothing posted ({seen})')
+    mp = boot(img, man)
+    mp.load_pad(0, 4800)
+    mp.protect(0)                                       # the source's bank protected: TO PAD goes to bank B
+    mp.gesture(0)
+    mp.ui(1)
+    mp.event(EV_PAD, 4, 100)
+    mp.event(EV_PAD_UP, 4, 0)
+    mp.ui(1)
+    shown = (mp.popup(), mp.u('target'), mp.u('dst'))
+    mp.ui(1200)
+    check(shown == ('BANK PROTECTED\nA-5', T_PAD, 16) and mp.popup() == 'BOUNCE A-1>B-1\nNO TAIL',
+          f'an empty pad in a protected bank: BANK PROTECTED with its name for a second, the target stays B-1 '
+          f'({shown}, {mp.popup()!r})')
+    mn = boot(img, man)
+    mn.load_pad(0, 4800)
+    mn.gesture(0)
+    mn.ui(1)
+    mn.w32(mn.sym['bnc_ui_state'] + 4 * len(FIELDS_U) + 4 * len(UNDO_FIELDS) * UNDOS, 0xFFFFFFFF)   # no home pad
+    mn.event(EV_PAD, 0, 100)
+    mn.event(EV_PAD_UP, 0, 0)
+    mn.ui(1)
+    check(mn.popup() == 'NO EMPTY PAD\nFOR THE ORIGINAL' and mn.u('target') == T_PAD,
+          f'the source tapped with no empty pad for the original: refused, TO PAD stays ({mn.popup()!r})')
     mg.tap(KEY_EXIT)
     mg.ui(1)
     check(mg.u('state') == U_IDLE and mg.popup() == 'BOUNCE CANCELLED\nNOTHING CHANGED' and
@@ -1173,7 +1214,8 @@ def filter_checks(img, man):
     mg.gesture(0)
     mg.ui(1)
     first = mg.popup()
-    mg.tap(KEY_VALUE)
+    mg.event(EV_PAD, 0, 100)                            # the source: REPLACE
+    mg.event(EV_PAD_UP, 0, 0)
     mg.ui(1)
     mg.tap(KEY_EXIT)
     mg.ui(300)
@@ -1756,17 +1798,26 @@ def replace_checks(img, man):
     m.tap(KEY_VALUE)
     m.ui(1)
     seen.append(m.popup())
-    m.tap(KEY_VALUE)
+    check(seen == ['UNDO BOUNCE?\nORIG ON A-2', 'UNDO BOUNCE?\nORIG ON A-2', 'UNDO BOUNCE?\nORIG ON A-2'],
+          f'in UNDO VALUE turned or pressed changes nothing ({seen})')
+    seen = []
+    m.tap(KEY_EXIT)
+    m.ui(300)
+    for pad, want in ((2, 'BOUNCE A-1>A-3\nNO TAIL'), (0, 'REPLACE A-1\nNO TAIL')):
+        m.gesture(0)
+        m.ui(1)
+        m.event(EV_PAD, pad, 100)
+        m.event(EV_PAD_UP, pad, 0)
+        m.ui(1)
+        seen.append(m.popup() == want)
+        m.tap(KEY_EXIT)
+        m.ui(300)
+    check(all(seen), f'in UNDO a tap leaves it for a bounce: an empty pad (A-3) TO PAD onto it, the pad itself REPLACE '
+                     f'({seen})')
+    m.gesture(0)
     m.ui(1)
-    seen.append(m.popup())
-    m.tap(KEY_VALUE)
-    m.ui(1)
-    seen.append(m.popup())
-    check(seen == ['UNDO BOUNCE?\nORIG ON A-2', 'UNDO BOUNCE?\nORIG ON A-2', 'BOUNCE A-1>A-3\nNO TAIL',
-                   'REPLACE A-1\nNO TAIL', 'UNDO BOUNCE?\nORIG ON A-2'],
-          f'in UNDO VALUE alone changes nothing; VALUE pressed: a new bounce of it (A-3 free), REPLACE, UNDO ({seen})')
     m.log = []
-    m.tap(KEY_REC)
+    m.tap(KEY_RESAMPLE)
     for _ in range(40):
         m.ui(1)
     posts = [x[1] for x in m.log if x[0] == 'post']
@@ -2310,8 +2361,8 @@ def looper_checks(img, man):
 
 # ---- events through the UI task's real dispatcher ----
 def dispatcher_checks(img, man):
-    """The gesture, VALUE pressed, SHIFT + VALUE, REC and EXIT reach the module through the UI task's own
-    dispatcher (0x8003b530) and page 0xe's registry handler (0x80053cb8), as on the unit."""
+    """The gesture, pad taps, VALUE, SHIFT + VALUE, RESAMPLE, REC and EXIT reach the module through the UI task's
+    own dispatcher (0x8003b530) and page 0xe's registry handler (0x80053cb8), as on the unit."""
     m = boot(img, man)
     m.real_ui()
     m.load_pad(0, 4800)
@@ -2323,24 +2374,25 @@ def dispatcher_checks(img, man):
     m.ui(1)
     check(held and m.u('state') == U_SETUP and m.popup() == 'BOUNCE A-1>A-2\nNO TAIL',
           f'the gesture through the stock dispatcher: the setup popup ({m.popup()!r})')
-    m.dispatch(EV_KEY, KEY_VALUE)
-    m.dispatch(EV_KEY_UP, KEY_VALUE)
+    m.dispatch(EV_PAD, 0, 100)
+    m.dispatch(EV_PAD_UP, 0, 0)
     m.ui(1)
     check(m.u('target') == T_REPLACE and m.popup() == 'REPLACE A-1\nNO TAIL',
-          f'VALUE pressed (key 0x31, as the stock SG page takes it) through the stock dispatcher: REPLACE '
-          f'({m.popup()!r})')
+          f'the source pad tapped through the stock dispatcher: REPLACE ({m.popup()!r})')
+    m.dispatch(EV_PAD, 5, 100)
+    m.dispatch(EV_PAD_UP, 5, 0)
+    m.ui(1)
+    check(m.u('target') == T_PAD and m.popup() == 'BOUNCE A-1>A-6\nNO TAIL', 'an empty pad tapped: TO PAD onto A-6')
     m.dispatch(EV_KEY, KEY_VALUE)
     m.dispatch(EV_KEY_UP, KEY_VALUE)
-    m.ui(1)
-    check(m.u('target') == T_PAD and m.popup() == 'BOUNCE A-1>A-2\nNO TAIL', 'VALUE pressed again: TO PAD')
     m.dispatch(EV_KEY, KEY_SHIFT)
-    m.dispatch(EV_ENCODER, 0, 1)
+    m.dispatch(EV_ENCODER, 0, -1)
     m.dispatch(EV_KEY_UP, KEY_SHIFT)
     m.ui(1)
-    check(m.u('target') == T_REPLACE, 'SHIFT + VALUE right through the stock dispatcher: REPLACE')
+    check(m.u('target') == T_PAD and m.u('dst') == 5, 'VALUE pressed and SHIFT + VALUE no longer pick the target')
     m.dispatch(EV_ENCODER, 0, 1)
     m.ui(1)
-    check(m.u('target') == T_REPLACE and m.u('mode') == TAIL and m.popup() == 'REPLACE A-1\nTAIL',
+    check(m.u('target') == T_PAD and m.u('mode') == TAIL and m.popup() == 'BOUNCE A-1>A-6\nTAIL',
           f'VALUE turned: the mode; the target stays ({m.popup()!r})')
     m.dispatch(EV_KEY, KEY_EXIT)
     m.dispatch(EV_KEY_UP, KEY_EXIT)
@@ -2359,12 +2411,12 @@ def dispatcher_checks(img, man):
     m.dispatch(EV_PAD_UP, 0, 0)
     m.dispatch(EV_KEY_UP, KEY_RESAMPLE)
     m.ui(1)
-    m.dispatch(EV_KEY, KEY_VALUE)
-    m.dispatch(EV_KEY_UP, KEY_VALUE)
+    m.dispatch(EV_PAD, 0, 100)                  # the source again: REPLACE
+    m.dispatch(EV_PAD_UP, 0, 0)
     m.ui(1)
     setup_text = m.popup()
-    m.dispatch(EV_KEY, KEY_REC)
-    m.dispatch(EV_KEY_UP, KEY_REC)
+    m.dispatch(EV_KEY, KEY_RESAMPLE)            # RESAMPLE starts it
+    m.dispatch(EV_KEY_UP, KEY_RESAMPLE)
     texts = set()
     for _ in range(4000):
         m.period()
@@ -2717,8 +2769,8 @@ def audit_allowed(addr, pads):
 
 
 def audit_run(img, man, target=T_PAD, exit_in=None):
-    """A bounce of C-1 on the real global objects, every key through the UI task's dispatcher: the gesture, VALUE
-    pressed for REPLACE, REC; audio periods until the run is over (EXIT after exit_in = (state, n): n periods in
+    """A bounce of C-1 on the real global objects, every key through the UI task's dispatcher: the gesture, the
+    source tapped again for REPLACE, RESAMPLE; audio periods until the run is over (EXIT after exit_in = (state, n): n periods in
     that state), then 3 s more of the UI. Before it: bank C, BUS 1 and BUS 2 with an effect on, END Snap on. The RESAMPLE page's
     tick runs every 16 ms through its vtable entries (RealMachine.ui); each entry is logged with the recorder's
     state and the refresh flag."""
@@ -2736,12 +2788,12 @@ def audit_run(img, man, target=T_PAD, exit_in=None):
     m.dispatch(EV_KEY_UP, KEY_RESAMPLE)
     m.ui(1)
     if target == T_REPLACE:
-        m.dispatch(EV_KEY, KEY_VALUE)
-        m.dispatch(EV_KEY_UP, KEY_VALUE)
+        m.dispatch(EV_PAD, 0, 100)
+        m.dispatch(EV_PAD_UP, 0, 0)
         m.ui(1)
     picked = m.u('target')
-    m.dispatch(EV_KEY, KEY_REC)
-    m.dispatch(EV_KEY_UP, KEY_REC)
+    m.dispatch(EV_KEY, KEY_RESAMPLE)
+    m.dispatch(EV_KEY_UP, KEY_RESAMPLE)
     exited, n = False, 0
     target1 = m.r32(TARGET_VALUES + 4)
     for _ in range(6000):

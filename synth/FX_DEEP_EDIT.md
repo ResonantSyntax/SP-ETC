@@ -10,7 +10,77 @@ firmware's own state is never changed and nothing is saved: values live in RAM, 
 until power-off. Outside the page the build behaves as v9.46, except that an edited value goes to
 the chip again whenever the firmware selects that effect on that bus.
 
-## Using it
+## Test 2 (fx-deep-edit-test2): on the FX screen
+
+From the user's test of combined-test3: the FX screen should stay up after an FX button, as it does with REMAIN +
+FX, and the extra settings should be more screens of the FX screen, reached with VALUE. Test 1's TOP page (EXIT +
+VALUE, VALUE turns) is gone; sections below that describe it are test 1's.
+
+### Using it
+
+- **An FX button** opens the FX screen as REMAIN + FX does in stock: it stays until EXIT, REMAIN, or that FX button
+  again (the effect goes off). Another FX button shows that one.
+- **VALUE press** steps the screens: screen 1 (CTRL 1-3), screen 2 (CTRL 4-6, where the effect has them), then the
+  effect's **extra screens**, then screen 1 again. Effects without extra settings keep stock's screens.
+- **An extra screen** is a popup with three of the effect's extra settings on CTRL 1-3:
+
+  ```
+  TAPE ECHO 3/5
+  C1 SYNC 0
+  C2 BASS 15
+  C3 TREBLE 15
+  ```
+
+  Turning CTRL k sets its setting across the firmware's range (knob at 0: the minimum, at the top: the maximum);
+  each change is one DT1, as in test 1. A knob without a setting there does nothing.
+- On an extra screen, pads play as usual; any button but VALUE and SHIFT leaves it (the popup goes) and does what
+  it always does.
+- Values are still per bus and effect, in RAM, and sent again after every FxType for that bus.
+
+### How stock's FX screen works (5.52, read in the code and run in Unicorn)
+
+- An FX button (keys 0x2b-0x2f, MFX 0x30) lights its button (system 0x276[bus]) and pushes the FX screen onto TOP's
+  view stack (TOP + 0x3dc): constructor `0x80147ba0`, vtable `0x802269c0`, a 2000 ms timer at +0x1b10.
+- Its show method (`0x80146e78`) keeps **whether REMAIN (key 0x24) is held** in +0x1b3f (`0x80146f66`), and sets
+  `0x80592320` then.
+- Its update (`0x80146598`, every 50 ms) counts the timer down and asks to close (`0x800bb180(screen, 1)`) when it
+  runs out, unless MFX is held. With +0x1b3f set, the timer is re-armed while the bus has an effect, and screen 2
+  shows while +0x1b40 is set and the effect has CTRL 4-6; without it, screen 2 shows while VALUE is held. It asks to
+  close when its FX button goes off.
+- VALUE pressed: the generic key handler (`0x800cba46`) calls `0x801479a0`, which toggles +0x1b40 when +0x1b3f is
+  set. REMAIN pressed closes it (`0x801479b8`); EXIT destroys it.
+
+### Patches
+
+| Site | Stock | Now |
+| --- | --- | --- |
+| `0x80146f66` | `bl 0x800d9f20` (is REMAIN held?) | `movs r0, #1; nop`: every FX screen is REMAIN's |
+| `0x801479a0` | the VALUE toggle's first ten bytes | jump to `fde_value`: screen 1, 2, the extra screens, 1 |
+| `0x8022ce64` | TOP vtable +8, DOOM OS's filter | `fde_filter`: CTRL 1-3 on an extra screen, leaving it |
+| `0x800d8118` | the DT1 builder's first ten bytes | `fde_dt1`, as test 1 (sending again after an FxType) |
+
+Six more guards (27): the FX screen's constructor, show method, update and VALUE toggle, the generic handler's VALUE
+call, TOP's knob handler.
+
+### Checked in the emulator
+
+`test_fx_deep_edit.py` (69 checks) on fx-deep-edit-test2:
+- the FX screen: an FX button alone opens it as REMAIN + FX (on v9.46 only with REMAIN held); it stays through 5 s of
+  updates where v9.46's asks to close after 2 s; that FX button again, or no effect on the bus, closes it;
+- VALUE: Tape Echo goes to screen 2, its three extra screens, then screen 1; Isolator to its one extra screen and
+  back; Crusher toggles stock's flag as v9.46 does with REMAIN; nothing sent;
+- extra screens: CTRL 1-3 set their settings (one frame a change, none if the value stays), a knob without a setting
+  does nothing, pads play, another button leaves, then the knobs are stock's; all 142 settings reach their min and
+  max; BUS 2-4; none on the input FX;
+- sending again after an FxType, as in test 1; four quick EXITs are STOP; every key alone, the FX buttons included,
+  and the other scripts go on as on v9.46.
+
+### Not known
+
+- How the popup looks with four lines on the unit (test 1 showed two).
+- EXIT on the FX screen: stock destroys it (the emulator stops there, waiting on another task).
+
+## Using it (test 1)
 
 On the TOP page, **hold EXIT and press VALUE**. The stock popup (`0x800d3ff0`) shows the bus the
 CTRL knobs drive, its effect and the first of that effect's extra settings:

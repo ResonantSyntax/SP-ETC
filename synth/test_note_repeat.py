@@ -3,7 +3,7 @@
 usage: python synth/test_note_repeat.py OUT_DIR [SECTIONS]      (unicorn, keystone, capstone on PYTHONPATH)
 
 SECTIONS: a comma list of static, names, timing, value, triplet, roll, ring, subpad, hold, gate, release, dj,
-recorder, passthrough.
+recorder, passthrough, chroma.
 
 Reads OUT_DIR/manifest.json for the parent APP1. Static checks first: only the header's scatter pointer, the five
 entry jumps and the appended tail differ from the parent; the guards and the recognised call sites hold on the
@@ -57,7 +57,12 @@ Checks:
   real tap of the pad does;
 - every other key and pad path as on the parent: each key alone, with SHIFT, with EXIT and while ROLL is held,
   VALUE turns and presses, pads, SUB PAD, knobs, HOLD (pads held and let go by it), SHIFT + HOLD, SHIFT + ROLL,
-  EXIT + ROLL; the same pad events, popups, chip bytes, DOOM OS calls, held keys and page.
+  EXIT + ROLL; the same pad events, popups, chip bytes, DOOM OS calls, held keys and page;
+- chromatic mode (test3, the chromatic page 0x18): every pad rolls at 1/16 of the sample's pad's tempo from
+  power-on, whatever the pad under the finger holds (LOOP without GATE, set to ignore ROLL, Roll 1/64), its Roll
+  and byte 0x70 untouched and no stock roll asked for; VALUE steps the one chromatic division for every
+  chromatic pad at once and it is kept for the next roll; ROLL + VALUE press shows it and toggles no follow
+  flag; with nothing repeating ROLL + VALUE steps it; latched with VALUE held, a turn is not taken.
 """
 import hashlib
 import json
@@ -96,6 +101,8 @@ CLOCK, CLOCK_CYCLES, CYCCNT = 0x8059226C, 0x80592264, 0xE0001004
 EV_KEY, EV_KEY_UP, EV_ENCODER, EV_KNOB, EV_PAD, EV_PAD_UP = 5, 6, 7, 9, 0x10, 0x11
 KEY_ROLL, KEY_EXIT, KEY_SHIFT, KEY_VALUE, KEY_HOLD = 0x21, 0x22, 0x2A, 0x31, 0x11
 P_GATE, P_LOOP, P_ROLL = 0x6A, 0x6B, 0x7B
+P_CHROMATIC, P_SOURCE, PROJECT_SET = 0xBF, 0xC1, 0x800DED18
+CHROMA_PAGE, CHROMA_REGISTRY = 0x18, 0x80062A10       # the chromatic page and its registry handler
 BEATS = {1: Fraction(2), 2: Fraction(1), 3: Fraction(1, 2), 4: Fraction(1, 4), 5: Fraction(1, 8), 6: Fraction(1, 16),
          7: Fraction(3, 2), 8: Fraction(3, 4), 9: Fraction(3, 8), 10: Fraction(3, 16),
          11: Fraction(4, 3), 12: Fraction(2, 3), 13: Fraction(1, 3), 14: Fraction(1, 6), 15: Fraction(1, 12),
@@ -1417,6 +1424,121 @@ def subpad_checks(img, man):
           f'latched: SUB PAD held repeats the last pad at SUB PAD\'s velocity, and stops when let go ({got})')
 
 
+class ChromaMachine(Machine):
+    """Chromatic mode on its page: the pads play A-04's sample (project 0xC1 = 3), whose pad follows 90 BPM; every
+    other pad's tempo is 120 BPM."""
+    SOURCE, SOURCE_TEMPO = 3, 9000
+
+    def __init__(self, img, sym):
+        super().__init__(img, sym, tempo=12000)
+        self.uc.mem_write(EVENT, struct.pack('<6h', 1, 0, 0, 0, 0, 0))
+        self.call(CHROMA_REGISTRY, EVENT, count=20_000_000)
+        self.uc.mem_write(PAGE_ID, struct.pack('<H', CHROMA_PAGE))
+        self.uc.mem_write(PAGE_LIVE, struct.pack('<H', CHROMA_PAGE))
+        for param, value in ((P_CHROMATIC, 1), (P_SOURCE, self.SOURCE)):
+            self.call(PROJECT_SET, PROJECT, param, value, 0xFFFFFFFF, count=20_000_000)
+        self.clear()
+
+    def _tempo(self, uc, a, size, _):
+        self._ret(self.SOURCE_TEMPO if uc.reg_read(ar.UC_ARM_REG_R0) == self.SOURCE else self.tempo)
+
+    def chroma_ons(self, pad, since):
+        """The millisecond of each note-on of a chromatic pad (pad events of type 0xC)."""
+        return [t for t, p, k, v, _ in self.events if k == 0xC and p == pad and v and t >= since]
+
+    def chroma_div(self):
+        return self.r8(self.sym['nr'] + 31)
+
+    def roll_popups(self):
+        return [t for _, t in self.popups if t in ['Roll ' + n for n in ALL_NAMES]]
+
+
+def chroma_checks(img, man):
+    def roll(m, pads, ms):
+        m.press(KEY_ROLL)
+        m.run(2)
+        t0 = m.ms
+        for i in pads:
+            m.pad(i, 80)
+        m.run(ms)
+        for i in pads:
+            m.pad_up(i)
+        m.let_go(KEY_ROLL)
+        m.run(5)
+        return t0
+
+    m = ChromaMachine(img, man['entries'])
+    bad = []
+    for i in range(16):
+        t0 = roll(m, [i], 700)
+        got = m.chroma_ons(i, t0 + 1)
+        if got != expected_ticks(4, ChromaMachine.SOURCE_TEMPO, 4, t0) or m.kept(i) != (0, 0, 0):
+            bad.append((i, [t - t0 for t in got], m.kept(i)))
+    check(not bad and not m.rolls and m.chroma_div() == 0,
+          f'chromatic mode: every pad, ROLL + pad repeats at 1/16 of the sample\'s pad\'s tempo (90 BPM: 167, 334, '
+          f'500, 667 ms) from power-on; the pad\'s own Roll (Off) and byte 0x70 stay as they were ({bad[:2]})')
+    m = ChromaMachine(img, man['entries'])
+    m.set(P_ROLL, 6, 9)                                 # first: the setter keeps a LOOP pad's Roll
+    m.set(P_LOOP, 1, 9)
+    m.set(P_GATE, 0, 9)
+    m.uc.mem_write(EXT + 9 * 0x80 + FOLLOW_BYTE, b'\x01')
+    t0 = roll(m, [9], 700)
+    got = m.chroma_ons(9, t0 + 1)
+    check(got == expected_ticks(4, ChromaMachine.SOURCE_TEMPO, 4, t0) and not m.rolls and m.kept(9) == (6, 0, 1) and
+          m.get(P_LOOP, 9) == 1,
+          f'pad 10 holding a LOOP sample without GATE, set to ignore ROLL, its Roll at 1/64: in chromatic mode it '
+          f'still rolls at 1/16, by re-hits, no stock roll asked for; its settings untouched ({[t - t0 for t in got]}, '
+          f'{m.rolls}, {m.kept(9)})')
+    # VALUE: one division for every chromatic pad, at once, kept for the next roll; the pads' Roll untouched
+    m = ChromaMachine(img, man['entries'])
+    m.press(KEY_ROLL)
+    m.run(2)
+    for i in (2, 9):
+        m.pad(i, 80)
+    m.run(200)
+    m.turn(1)
+    t1 = m.ms
+    m.run(500)
+    gaps = {i: [b - a for a, b in zip(m.chroma_ons(i, t1 + 1), m.chroma_ons(i, t1 + 1)[1:])] for i in (2, 9)}
+    for i in (2, 9):
+        m.pad_up(i)
+    m.let_go(KEY_ROLL)
+    m.run(5)
+    p = frames_period(10, ChromaMachine.SOURCE_TEMPO) / 48       # 3/64 (3/16 beat) at 90 BPM: 125 ms
+    steady = all(g and all(abs(x - p) <= 1 for x in g) for g in gaps.values())
+    t0 = roll(m, [5], 700)
+    later = m.chroma_ons(5, t0 + 1)
+    check(steady and m.roll_popups() == ['Roll 3/64'] and m.chroma_div() == 10 and
+          later == expected_ticks(10, ChromaMachine.SOURCE_TEMPO, 5, t0) and
+          all(m.kept(i) == (0, 0, 0) for i in range(16)),
+          f'VALUE while two chromatic pads roll: both go to the next division (3/64) at once, popup "Roll 3/64"; the '
+          f'next roll starts there; no pad\'s Roll or byte 0x70 changes ({gaps}, {m.roll_popups()}, {later[:3]})')
+    m.clear()
+    m.press(KEY_ROLL)
+    m.tap(KEY_VALUE)
+    m.turn(-1)
+    m.let_go(KEY_ROLL)
+    check(m.roll_popups() == ['Roll 3/64', 'Roll 1/16'] and m.chroma_div() == 4 and
+          all(m.kept(i) == (0, 0, 0) for i in range(160)) and not m.posts,
+          f'ROLL + VALUE press shows the chromatic division and toggles no follow flag; with nothing repeating, ROLL + '
+          f'VALUE steps it ({m.roll_popups()}, {m.posts})')
+    m.clear()
+    m.tap(KEY_ROLL)                                     # latch
+    m.pad(4, 80)
+    m.run(100)
+    m.press(KEY_VALUE)
+    m.turn(1)
+    held = (m.chroma_div(), m.roll_popups())
+    m.let_go(KEY_VALUE)
+    m.turn(1)
+    m.pad_up(4)
+    m.tap(KEY_ROLL)                                     # unlatch
+    m.run(5)
+    check(held == (4, []) and m.chroma_div() == 10 and m.roll_popups()[-1] == 'Roll 3/64',
+          f'latched with a chromatic pad repeating: a VALUE turn with VALUE held is not taken (the page\'s push-turn), '
+          f'without it steps the division ({held}, {m.roll_popups()})')
+
+
 def main():
     out = Path(sys.argv[1])
     man = json.loads((out / 'manifest.json').read_text(encoding='utf-8'))
@@ -1430,7 +1552,8 @@ def main():
                            ('subpad', subpad_checks, (img, man)), ('hold', hold_checks, (img, parent, man)),
                            ('gate', gate_checks, (img, parent, man)), ('release', release_checks, (img, parent, man)),
                            ('dj', dj_checks, (img, parent, man)), ('recorder', recorder_checks, (img, man)),
-                           ('passthrough', passthrough_checks, (img, parent, man))):
+                           ('passthrough', passthrough_checks, (img, parent, man)),
+                           ('chroma', chroma_checks, (img, man))):
         if only is None or name in only:
             fn(*args)
     print(json.dumps(dict(cases=cases[0])))

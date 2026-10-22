@@ -2,11 +2,13 @@
  * (TO PAD) or in its place (REPLACE, through the stock pad exchange), with UNDO.
  *
  * Gesture (RESAMPLE page, recorder idle): hold RESAMPLE and tap a pad that holds a sample. A setup
- * popup names the target and the mode. The scratch pad is the first empty pad after the source in its
- * bank, then the other banks A..J (protected banks are skipped). VALUE picks NO TAIL / TAIL;
- * pressing VALUE, or SHIFT + VALUE, picks TO PAD / REPLACE (and UNDO, offered first on a pad this
- * session replaced); REC starts, EXIT backs out. The mode and TO PAD / REPLACE are kept in RAM for
- * the next setup as soon as they are picked.
+ * popup names the target and the mode. The home pad is the first empty pad after the source in its
+ * bank, then the other banks A..J (protected banks are skipped): TO PAD's destination until a pad is
+ * tapped, REPLACE's place for the original. VALUE picks NO TAIL / TAIL. Tapping a pad picks the target
+ * (test8): the source itself is REPLACE, an empty pad TO PAD onto it, a pad with a sample is refused
+ * (PAD NOT EMPTY). UNDO is offered first on a pad this session replaced; a tap leaves it for a bounce.
+ * RESAMPLE (or REC) starts, EXIT backs out. The mode and TO PAD / REPLACE are kept in RAM for the next
+ * setup as soon as they are picked.
  *
  * The run (UI task, from the popup tick, bnc_ui):
  *   1. pin REC length (settings 0x24) to FREE and END Snap (0x59) off, set the destination as the stock
@@ -245,6 +247,7 @@ typedef s32 (*fn4_t)(u32, u32, u32, u32);
 #define REFRESH_MS 250
 #define POPUP_MS 1000
 #define DONE_MS 2500
+#define NOTE_MS 1000            /* a refused tap's popup, then the setup again */
 #define FENCE 15                /* recorder target pad written after an exchange (14 if 15 is there already) */
 #define UNDOS 8
 /* the recorder's error word after it ended a take on its own */
@@ -257,7 +260,7 @@ enum { T_PAD, T_REPLACE, T_UNDO, TARGETS };
 enum { A_IDLE, A_SILENCE, A_ARMED, A_RUN, A_DONE };
 enum { U_IDLE, U_SETUP, U_STANDBY, U_SILENCE, U_RECSTART, U_VOICE, U_RUN, U_FINAL, U_CANCEL, U_SWAP, U_STOCKSTOP };
 enum { M_NONE, M_DONE, M_NO_EMPTY, M_PATTERN, M_LOOPER, M_RINGING, M_FAILED, M_CANCELLED, M_REPLACED, M_UNDONE,
-       M_SWAP_FAILED, M_STORAGE, M_CUT, M_INPUT, M_PROTECTED, M_NO_UNDO };
+       M_SWAP_FAILED, M_STORAGE, M_CUT, M_INPUT, M_PROTECTED, M_NO_UNDO, M_NOT_EMPTY, M_TAP_PROTECTED };
 
 struct aud {
     u32 tx_blocks, rx_blocks;   /* blocks since boot */
@@ -331,6 +334,11 @@ struct ui {
     s32 r_win;                  /* the last run: where its window started, frames after T0 (L, or the departure) */
     u32 r_cached;               /* ... and whether its L came from this boot's calibration */
     struct undo undo[UNDOS];
+    /* test8 */
+    u32 home;                   /* the first empty pad: TO PAD's destination until a pad is tapped, and where
+                                   REPLACE parks the original; NONE if there is none */
+    u32 note, note_until;       /* a refused tap's popup (M_NOT_EMPTY ...), shown in the setup until then */
+    u32 tapped;                 /* the pad that tap was */
 };
 
 EXPORT volatile struct aud bnc_aud;
@@ -727,6 +735,8 @@ static const char *const MSG_TEXT[] = {
     [M_INPUT] = "INPUT TURNED ON\n\4",
     [M_PROTECTED] = "BANK PROTECTED\n\4",
     [M_NO_UNDO] = "CANNOT UNDO\nPADS CHANGED",
+    [M_NOT_EMPTY] = "PAD NOT EMPTY\n\5",
+    [M_TAP_PROTECTED] = "BANK PROTECTED\n\5",
 };
 
 static char *put_text(char *o, const char *s) {
@@ -735,6 +745,8 @@ static char *put_text(char *o, const char *s) {
             o = put_pad(o, U.src);
         else if (*s == 2)
             o = put_pad(o, U.dst);
+        else if (*s == 5)
+            o = put_pad(o, U.tapped);
         else if (*s == 3 && U.partial)
             o = put_pad(put(o, "PART ON "), U.dst);
         else if (*s == 3 || *s == 4)
@@ -751,6 +763,14 @@ static void final_text(u32 msg) {
 
 static void progress_text(void) {
     char *o = bnc_text;
+    if (U.state == U_SETUP && U.note != M_NONE) {
+        if (U.ms - U.note_until < 0x80000000u) {    /* its time is up */
+            U.note = M_NONE;
+        } else {
+            *put_text(o, U.note == M_NO_EMPTY ? "NO EMPTY PAD\nFOR THE ORIGINAL" : MSG_TEXT[U.note]) = 0;
+            return;
+        }
+    }
     if (U.target == T_UNDO) {
         *put_text(o, U.state == U_SETUP ? "UNDO BOUNCE?\nORIG ON \2" : "UNDO \1\nSWAPPING") = 0;
         return;
@@ -1374,29 +1394,36 @@ EXPORT void bnc_ui(u32 elapsed) {
     }
 }
 
-/* The targets in the order the popup offers them. */
-static const u8 TARGET_ORDER[TARGETS] = {T_UNDO, T_PAD, T_REPLACE};
+static void note(u32 msg, u32 pad) {
+    U.note = msg;
+    U.tapped = pad;
+    U.note_until = U.ms + NOTE_MS;
+}
 
-static void step_target(s32 dir, u32 wrap) {
-    u32 at = 0;
-    while (TARGET_ORDER[at] != U.target)
-        at++;
-    for (u32 n = 0; n < TARGETS; n++) {
-        if (dir > 0 ? at + 1 >= TARGETS : at == 0) {
-            if (!wrap)
-                return;
-            at = dir > 0 ? 0 : TARGETS - 1;
-        } else {
-            at = dir > 0 ? at + 1 : at - 1;
-        }
-        if (U.targets & (1u << TARGET_ORDER[at])) {
-            U.target = TARGET_ORDER[at];
-            if (U.target != T_UNDO)         /* kept from here on: EXIT or a refusal does not lose it */
-                U.last_target = U.target;
-            aim();
+/* A pad tapped in the setup picks the target: the source itself bounces in place (REPLACE, the original parked
+ * on the home pad), an empty pad takes the bounce (TO PAD); a pad with a sample, or one in a protected bank, is
+ * refused with a popup and the target stays. */
+static void pick(u32 pad) {
+    if (pad == U.src) {
+        if (U.home == NONE) {
+            note(M_NO_EMPTY, pad);
             return;
         }
+        U.target = T_REPLACE;
+        U.scratch = U.home;
+    } else if (occupied(pad)) {
+        note(M_NOT_EMPTY, pad);
+        return;
+    } else if (is_protected(pad)) {
+        note(M_TAP_PROTECTED, pad);
+        return;
+    } else {
+        U.target = T_PAD;
+        U.scratch = pad;
     }
+    U.note = M_NONE;
+    U.last_target = U.target;               /* kept from here on: EXIT or a refusal does not lose it */
+    aim();
 }
 
 /* Page 0xe's event filter (UI task), ahead of DOOM OS's. */
@@ -1422,7 +1449,8 @@ EXPORT s32 bnc_event(u32 page, const volatile s16 *ev) {
             } else {
                 U.msg = M_NONE;
                 study(src);
-                U.scratch = dst;
+                U.home = U.scratch = dst;
+                U.note = M_NONE;
                 U.undo_slot = undo;
                 U.targets = (dst != NONE ? (1u << T_PAD) | (1u << T_REPLACE) : 0) | (undo != NONE ? 1u << T_UNDO : 0);
                 U.target = undo != NONE ? T_UNDO : U.last_target < T_UNDO ? U.last_target : T_PAD;
@@ -1432,29 +1460,30 @@ EXPORT s32 bnc_event(u32 page, const volatile s16 *ev) {
         }
         return 1;
     }
-    /* set up or running: VALUE, REC and EXIT; every other key, knob and pad is swallowed */
+    /* set up or running: VALUE, the pads (set up), RESAMPLE or REC, and EXIT; every other key, knob and pad is
+     * swallowed */
     if (type == EV_KEY) {
         if (a1 == KEY_EXIT) {
             if (U.state == U_SETUP)
                 finish(M_CANCELLED);
             else if (U.state < U_FINAL)
                 abandon(M_CANCELLED);
-        } else if (a1 == KEY_REC && U.state == U_SETUP) {
+        } else if ((a1 == KEY_RESAMPLE || a1 == KEY_REC) && U.state == U_SETUP) {
             if (U.target == T_UNDO)
                 start_undo();
             else
                 start_run();
-        } else if (a1 == KEY_VALUE && U.state == U_SETUP) {
-            step_target(1, 1);
-            U.refresh = 1;
         }
+        return 1;
+    }
+    if (type == EV_PAD && U.state == U_SETUP && (u32)a1 < 16) {
+        pick((u32)project_get(0, NONE) * 16 + (u32)a1);
+        U.refresh = 1;
         return 1;
     }
     if (type == EV_ENCODER) {
         if (U.state == U_SETUP && a1 == 0 && a2) {
-            if (key_held(KEY_SHIFT)) {
-                step_target(a2 > 0 ? 1 : -1, 0);
-            } else if (U.target != T_UNDO) {
+            if (U.target != T_UNDO) {
                 u32 m = U.mode;
                 for (;;) {
                     if (a2 > 0 ? m + 1 >= MODES : m == 0)

@@ -1,36 +1,40 @@
-"""Checks for the FX deep edit page (build_fx_deep_edit.py).
+"""Checks for FX deep edit test 2 (build_fx_deep_edit.py): the FX screen as REMAIN + FX, VALUE through its screens
+and the effect's extra screens.
 
 usage: python synth/test_fx_deep_edit.py OUT_DIR [FXMAP]     (unicorn, keystone, capstone on PYTHONPATH)
 
-Reads OUT_DIR/manifest.json for the parent APP1 and DM-404's fxmap.json (or FXMAP). Static checks first:
-only the header's scatter pointer, the TOP vtable slot, the DT1 builder's first ten bytes and the appended
-tail differ from the parent, the guards hold on the parent, the settings are exactly the parameters stock
-never sends, every popup line fits. Then the parent and the new image are booted in Unicorn the way their
-scatter loader does it, with the boot's static constructors run (the RTOS under them stubbed: its pool by a
-bump allocator, object creation by an id), the TOP page object made by its registry handler as on page
-entry, and every byte to the chips' UARTs (LPUART1-8) logged. Real stock code runs: the UI task's dispatcher
-(0x8003b530), TOP's registry handler, page dispatcher, EXIT and knob handlers, DOOM OS ED5E's page filter,
-the system and settings getters and setters, the effect select, the chip reset, the DT1 builder 0x800d8118
-(through the new jump) and its packet send, the popup. Modelled: the card (every file open fails: DOOM OS
-looks for B:/DOOMOS.CFG on each key press), time between presses (the stock timer tick runs on TOP's 500 ms
-EXIT window). Not here: the screen (draw calls stubbed), the effects chip itself.
+Reads OUT_DIR/manifest.json for the parent APP1 and DM-404's fxmap.json (or FXMAP). Static checks first: only the
+header's scatter pointer, the TOP vtable slot, the DT1 builder's first ten bytes, the FX screen's REMAIN question,
+the FX screen's VALUE toggle and the appended tail differ from the parent, the guards hold on the parent, the
+settings are exactly the parameters stock never sends, every popup line fits. Then the parent and the new image are
+booted in Unicorn the way their scatter loader does it, with the boot's static constructors run (the RTOS under them
+stubbed: its pool by a bump allocator, object creation by an id), the TOP page object made by its registry handler
+as on page entry, and every byte to the chips' UARTs (LPUART1-8) logged. Real stock code runs: the UI task's
+dispatcher (0x8003b530), TOP's registry handler, page dispatcher, key and knob handlers, the generic key handler and
+its FX buttons, VALUE and REMAIN, the FX screen (constructor, show method, update, VALUE toggle), DOOM OS ED5E's page
+filter, the system and settings getters and setters, the effect select, the chip reset, the DT1 builder 0x800d8118
+(through the new jump) and its packet send, the popup. Modelled: the card (every file open fails), time (the FX
+screen's 50 ms update is called by the test; the stock timer tick runs on TOP's 500 ms EXIT window); the FX screen's
+close request 0x800bb180 is logged (the view stack's removal after it is not run). Not here: the screen (draw calls
+stubbed), the effects chip itself, EXIT while the FX screen is up (stock destroys it, then waits on another task).
 
 Checks:
-- the builder, entered through the jump, sends fxmap's address for every setting on every bus, and exactly
-  the parent's bytes for every parameter on every slot and for the whole boot chip reset;
-- the page through the dispatcher: the chord opens it on the bus the knobs drive and that bus's effect;
-  turning, pressing and leaving send nothing; each change of value sends exactly one frame (the setting's
-  address, the bus's slot, the value, the checksum) and nothing else; every setting of every effect stops
-  at the firmware's own min and max; values are kept per bus and per effect; the popup says what it should;
-  no effect, an effect without settings and the input FX say so;
-- re-sending: after the firmware sends a bus's FxType (the effect select through the stock effect choice,
-  the system setter, the bus swap), that bus's edited values for that effect follow it at once, and the
-  rest of the traffic is the parent's byte for byte; a knob turn, another bus's FxType, the chip reset
-  (FxType 0) and FxType for an effect without edits add nothing;
-- every other event reaches DOOM OS's filter exactly as on the parent while the page is closed (keys alone
-  and in pairs, EXIT and VALUE alone, VALUE before EXIT, knobs, the encoder, pads, four quick EXITs = STOP,
-  a chord whose VALUE release never came back); while it is open, pads and knobs go on as on the parent, and
-  EXIT or any other button closes the page and goes on as on the parent (four quick EXITs are still STOP).
+- the builder, entered through the jump, sends fxmap's address for every setting on every bus, and exactly the
+  parent's bytes for every parameter on every slot and for the whole boot chip reset;
+- the FX screen: an FX button alone opens it as REMAIN + FX (on the parent only with REMAIN held); it stays while
+  the bus has an effect and asks to close when that FX button turns the effect off or the bus has none; on the
+  parent it asks to close after 2 s;
+- VALUE through the screens: Tape Echo (screen 2, three extra screens), Isolator (one extra screen), Crusher (none:
+  stock's toggle, as on the parent with REMAIN); the popups; nothing sent;
+- on an extra screen CTRL 1-3 set its settings across their ranges, one frame per change; a knob without a setting
+  does nothing; pads go on as usual; another button leaves (the popup goes) and goes on as usual; afterwards the
+  knobs are stock's; every setting of every effect reaches its min and max; per bus; the input FX has none;
+- re-sending: after the firmware sends a bus's FxType (the effect select through the stock effect choice, the system
+  setter, the bus swap), that bus's edited values for that effect follow it at once, and the rest of the traffic is
+  the parent's byte for byte; a knob turn, another bus's FxType, the chip reset (FxType 0) and FxType for an effect
+  without edits add nothing;
+- with no extra screen up: four quick EXITs are STOP, every event (keys alone and in pairs, the FX buttons, VALUE,
+  knobs, the encoder, pads) goes on exactly as on the parent.
 """
 import hashlib
 import json
@@ -43,7 +47,8 @@ from unicorn import UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE, UC_MEM_WRITE
 from unicorn import arm_const as ar
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_fx_deep_edit import GUARDS, Runtime, scatter, decompress, branches_into, DT1, DT1_HEAD  # noqa: E402
+from build_fx_deep_edit import GUARDS, Runtime, scatter, decompress, branches_into, DT1, DT1_HEAD, REMAIN_ASK, \
+    REMAIN_HEAD, REMAIN_NEW, TOGGLE, TOGGLE_HEAD  # noqa: E402
 
 FLASH, COPY, DECOMPRESS, ZERO = 0x60080000, 0x600800E4, 0x60080088, 0x60080100
 HEAP = 0x32000000
@@ -287,8 +292,8 @@ class Machine:
 
     def state(self):
         b = bytes(self.uc.mem_read(self.sym['fde'], 16))
-        return dict(open=b[0], edit=b[1], bus=b[4], effect=b[5], cursor=b[6],
-                    sent=struct.unpack_from('<I', b, 8)[0], resent=struct.unpack_from('<I', b, 12)[0])
+        return dict(screen=b[0], bus=b[4], effect=b[5], sent=struct.unpack_from('<I', b, 8)[0],
+                    resent=struct.unpack_from('<I', b, 12)[0])
 
 
 class Settings:
@@ -329,12 +334,13 @@ def static_checks(out, man, img, parent, fxmap, st):
 
     def file_off(addr):
         return [load - FLASH + addr - dst for load, dst, n, fn in prow if fn == COPY and load and dst <= addr < dst + n][0]
-    vt, dt = file_off(VTABLE_SLOT), file_off(DT1)
+    vt, dt, ra, tg = file_off(VTABLE_SLOT), file_off(DT1), file_off(REMAIN_ASK), file_off(TOGGLE)
     diff = [i for i in range(len(parent)) if img[i] != parent[i]]
-    allowed = set(range(0x80, 0x88)) | set(range(vt, vt + 4)) | set(range(dt, dt + 10))
+    allowed = set(range(0x80, 0x88)) | set(range(vt, vt + 4)) | set(range(dt, dt + 10)) | set(range(ra, ra + 4)) | \
+        set(range(tg, tg + 10))
     check(set(diff) <= allowed and img[:len(parent)] != parent,
-          f'only the scatter pointer, the TOP vtable slot and the DT1 builder\'s first ten bytes change inside the '
-          f'parent ({len(diff)} bytes)')
+          f'only the scatter pointer, the TOP vtable slot, the DT1 builder\'s first ten bytes, the FX screen\'s REMAIN '
+          f'question and its VALUE toggle change inside the parent ({len(diff)} bytes)')
     e = man['entries']
     check(parent[vt:vt + 4] == struct.pack('<I', DOOM_FILTER | 1) and img[vt:vt + 4] == struct.pack('<I', e['fde_filter']),
           'TOP vtable +8: DOOM OS\'s filter on the parent, fde_filter here')
@@ -343,7 +349,16 @@ def static_checks(out, man, img, parent, fxmap, st):
                        0xF2C0 | (hi >> 12) | ((hi >> 11) & 1) << 10, ((hi >> 8) & 7) << 12 | 12 << 8 | hi & 0xFF, 0x4760)
     check(parent[dt:dt + 10] == DT1_HEAD and img[dt:dt + 10] == want,
           'DT1 builder entry: push.w / sub sp / movw sb on the parent, movw ip / movt ip / bx ip to fde_dt1 here')
+    check(parent[ra:ra + 4] == REMAIN_HEAD and img[ra:ra + 4] == REMAIN_NEW,
+          'the FX screen\'s show method: bl 0x800d9f20 (REMAIN held?) on the parent, movs r0, #1; nop here')
+    lo, hi = e['fde_value'] & 0xFFFF, e['fde_value'] >> 16
+    want = struct.pack('<4HH', 0xF240 | (lo >> 12) | ((lo >> 11) & 1) << 10, ((lo >> 8) & 7) << 12 | 12 << 8 | lo & 0xFF,
+                       0xF2C0 | (hi >> 12) | ((hi >> 11) & 1) << 10, ((hi >> 8) & 7) << 12 | 12 << 8 | hi & 0xFF, 0x4760)
+    check(parent[tg:tg + 10] == TOGGLE_HEAD and img[tg:tg + 10] == want,
+          'the FX screen\'s VALUE toggle: movw / ldrb / cmp / it on the parent, movw ip / movt ip / bx ip to fde_value '
+          'here')
     rt, nrt = Runtime(parent), Runtime(img)
+    check(not branches_into(rt, TOGGLE + 1, TOGGLE + 10), 'nothing branches into the toggle\'s first ten bytes')
     check(all(sha(rt.read(s, e2 - s)) == d for s, e2, d, w in GUARDS), f'{len(GUARDS)} guards hold on the parent')
     check(not branches_into(rt, DT1 + 1, DT1 + 10), 'nothing branches into the builder\'s first ten bytes')
     stock = nrt.read(e['fde_dt1_stock'] & ~1, 20)
@@ -370,9 +385,9 @@ def static_checks(out, man, img, parent, fxmap, st):
           'the manifest lists the same settings with the firmware\'s ranges and defaults')
     check(all(0 <= p['min'] <= p['default'] <= p['max'] <= 255 for fx in st.by_fx for p in st.by_fx[fx]),
           'every setting\'s range is inside 0..255 and holds its default')
-    lines = [f'BUS4 {labels[fx]}' for fx in range(1, 49)] + \
-            [f'{p["name"]} [{p["max"]}]' for fx in st.by_fx for p in st.by_fx[fx]] + \
-            ['NO EXTRA SETTINGS', 'BUS 1-4 ONLY', 'INPUT FX', 'FX EDIT', 'NO EFFECT']
+    lines = [f'{labels[fx]} {n}/{n}' for fx in range(1, 49)
+             for n in [2 + any(x != -1 for x in rt.words(RECORDS + 24 * fx + 12, 3)) + (len(st.by_fx[fx]) + 2) // 3]] + \
+            [f'C3 {p["name"]} {p["max"]}' for fx in st.by_fx for p in st.by_fx[fx]]
     check(all(len(x) <= 17 and x.isascii() for x in lines), 'every popup line is plain and at most 17 characters')
 
 
@@ -415,257 +430,266 @@ def builder_checks(img, parent, man, fxmap, st):
                                 f'({bad[:4]})')
 
 
-def page_checks(img, parent, man, st):
-    m = Machine(img, man['entries'])
-    check(m.r32(m.r32(m.page) + 8) == man['entries']['fde_filter'] and m.r32(m.page) == 0x8022CE5C,
-          'the TOP page object made on page entry has vtable 0x8022ce5c, whose +8 is fde_filter')
-    m.set_bus(1, TAPE_ECHO)
-    te = st.by_fx[TAPE_ECHO]
-    k_dist = [i for i, s in enumerate(te) if s['name'] == 'TAPE DIST'][0]
-    dist = te[k_dist]
-    m.clear()
-    m.chord()
-    check(not m.uart and m.popups == [(st.text(1, TAPE_ECHO), PAGE_MS)] and m.state()['open'] and
-          [d[1][:2] for d in m.doom] == [(EV_KEY, KEY_EXIT), (EV_KEY_UP, KEY_EXIT)] and
-          not [f for f in m.fallback if f[1] == KEY_VALUE],
-          f'the chord opens the page on BUS 1 Tape Echo, first setting at its default, nothing sent; VALUE\'s press '
-          f'and release are the page\'s, EXIT\'s go on to DOOM OS ({m.popups})')
-    texts = []
-    for k in range(1, len(te)):
-        m.clear()
-        m.turn(1)
-        texts.append((m.popups, not m.uart and not m.doom))
-    check(texts == [([(st.text(1, TAPE_ECHO, k), PAGE_MS)], True) for k in range(1, len(te))],
-          f'turning VALUE right steps through all {len(te)} Tape Echo settings at their defaults, nothing sent')
-    m.clear()
-    m.turn(3)
-    m.turn(1)
-    check(m.popups == [(st.text(1, TAPE_ECHO, len(te) - 1), PAGE_MS)] * 2 and not m.uart,
-          'past the last setting the cursor stays on it')
-    m.clear()
-    m.turn(-100)
-    check(m.popups == [(st.text(1, TAPE_ECHO, 0), PAGE_MS)] and not m.uart and m.state()['cursor'] == 0,
-          'a big left turn goes back to the first setting')
-    m.turn(k_dist)
-    m.clear()
-    m.press()
-    check(m.popups == [(st.text(1, TAPE_ECHO, k_dist, edit=True), PAGE_MS)] and not m.uart and m.state()['edit'],
-          f'VALUE pressed on TAPE DIST: edit, "{st.text(1, TAPE_ECHO, k_dist, edit=True)}", nothing sent')
-    seq, d = [], dist['default']
-    for delta in (-1, -1, -10, -1, 3, 20, 1, -2):
-        m.clear()
-        m.turn(delta)
-        v = max(dist['min'], min(dist['max'], d + delta))
-        got, other, ok = m.frames()
-        want = [fx_frame(TAPE_ECHO, 1, dist['aa'], v)] if v != d else []
-        seq.append(ok and not other and got == want and m.popups == [(st.text(1, TAPE_ECHO, k_dist, v, True), PAGE_MS)])
-        d = v
-    check(all(seq), f'editing TAPE DIST: each change is exactly one frame (03 00 29 {dist["aa"]:02x}, the value, the '
-                    f'checksum) and nothing else; it stops at the firmware\'s {dist["min"]} and {dist["max"]} and a '
-                    f'turn past them sends nothing ({seq})')
-    m.clear()
-    m.press()
-    check(m.popups == [(st.text(1, TAPE_ECHO, k_dist, d), PAGE_MS)] and not m.uart and not m.state()['edit'],
-          'VALUE pressed again: editing stops, nothing sent')
-    m.clear()
-    m.dispatch(EV_KEY, KEY_EXIT)
-    m.dispatch(EV_KEY_UP, KEY_EXIT)
-    check(not m.uart and m.popups == [(st.text(1, TAPE_ECHO, k_dist, d), GONE_MS)] and not m.state()['open'] and
-          [x[1][:2] for x in m.doom] == [(EV_KEY, KEY_EXIT), (EV_KEY_UP, KEY_EXIT)],
-          'EXIT closes the page (the popup goes at the next tick) and goes on to DOOM OS as usual; nothing sent')
-    m.clear()
-    m.pause(600)
-    m.turn(1)
-    check(m.doom == [(m.page, (EV_ENCODER, 0, 1))] and not m.popups, 'closed: VALUE turns go on to DOOM OS again')
-    m.clear()
-    m.chord()
-    m.turn(k_dist)
-    check(m.popups[-1] == (st.text(1, TAPE_ECHO, k_dist, d), PAGE_MS) and not m.uart,
-          'opened again: it starts at the first setting, and TAPE DIST still shows the edited value')
-    m.press(KEY_EXIT)
+FXVIEW_VT, VIEW_REMAIN, VIEW_SCREEN2, CLOSE_REQ = 0x802269C0, 0x1B3F, 0x1B40, 0x800BB180
+VIEW_UPDATE, REMAIN_GLOBAL, KEY_REMAIN, KEY_FX1, KEY_HOLD = 0x80146599, 0x80592320, 0x24, 0x2B, 0x11
+ISOLATOR = 3
+SCREEN_MS = 600000
 
-    # per bus, per effect; other buses send to their own slot
-    m.knob_bus(2)
-    m.set_bus(2, TAPE_ECHO)
-    m.clear()
-    m.chord()
-    m.turn(k_dist)
-    check(m.popups[-1] == (st.text(2, TAPE_ECHO, k_dist), PAGE_MS), 'BUS 2 Tape Echo shows TAPE DIST at its default: '
-                                                                    'values are per bus')
-    m.press()
-    m.clear()
-    m.turn(-2)
-    got, other, ok = m.frames()
-    check(ok and got == [fx_frame(TAPE_ECHO, 2, dist['aa'], dist['default'] - 2)] and not other,
-          'an edit on BUS 2 goes to slot 2 (03 00 2a ..)')
-    m.press(KEY_EXIT)
-    for bus in (3, 4):
-        m.knob_bus(bus)
-        m.bus_effect(bus, REVERB)
-        m.clear()
-        m.chord()
-        m.press()
-        m.turn(-3)
-        rv = st.by_fx[REVERB][0]
-        got, other, ok = m.frames()
-        check(ok and got == [fx_frame(REVERB, bus, rv['aa'], rv['default'] - 3)] and not other and
-              m.popups[-1] == (st.text(bus, REVERB, 0, rv['default'] - 3, True), PAGE_MS),
-              f'BUS {bus} Reverb: DENSITY goes to slot {bus}')
-        m.press(KEY_EXIT)
-    m.knob_bus(1)
-    m.bus_effect(1, REVERB)
-    m.clear()
-    m.chord()
-    check(m.popups[-1] == (st.text(1, REVERB), PAGE_MS), 'BUS 1 Reverb shows DENSITY at its default: values are per '
-                                                         'effect too')
-    m.press(KEY_EXIT)
-    for label, setup, text in (
-            ('no effect on the bus', lambda mm: mm.bus_effect(1, 0), 'BUS1\nNO EFFECT'),
-            ('an effect without settings', lambda mm: mm.bus_effect(1, CRUSHER), 'BUS1 CRUSHER\nNO EXTRA SETTINGS'),
-            ('the knobs on the input FX', lambda mm: mm.knob_bus(0), 'INPUT FX\nBUS 1-4 ONLY')):
-        setup(m)
-        m.clear()
-        m.chord()
-        m.turn(2)
-        m.press()
-        m.turn(-1)
-        check(not m.uart and m.popups == [(text, PAGE_MS)] * 4, f'{label}: "{text}", turning and pressing send nothing')
-        m.press(KEY_EXIT)
-    # the effect changes while the page is open: the next action starts over on it
-    m.knob_bus(1)
+
+def has_screen2(rt, fx):
+    return fx and any(x != -1 for x in rt.words(RECORDS + 24 * fx + 12, 3))
+
+
+def screen_text(rt, st, bus, fx, screen, values=None):
+    """An extra screen's popup, worked out from the parent's tables and fxmap."""
+    s = st.by_fx[fx]
+    two = has_screen2(rt, fx)
+    n = (len(s) + 2) // 3
+    lines = [f'{st.effect_names[fx]} {1 + two + screen}/{1 + two + n}']
+    for k, x in enumerate(s[(screen - 1) * 3:screen * 3]):
+        v = (values or {}).get(x['name'], x['default'])
+        lines.append(f'C{k + 1} {x["name"]} {v}')
+    return '\n'.join(lines)
+
+
+def knob_value(s, raw):
+    return s['min'] + ((s['max'] - s['min']) * raw + 63) // 127
+
+
+class Screen:
+    """The FX screen (vtable 0x802269c0) on TOP's view stack, its close requests (0x800bb180) logged."""
+
+    def __init__(self, m):
+        self.m = m
+        m.closes = []
+        m.uc.hook_add(UC_HOOK_CODE, lambda uc, a, s, _: m.closes.append(uc.reg_read(ar.UC_ARM_REG_R0)), None,
+                      begin=CLOSE_REQ, end=CLOSE_REQ)
+
+    def view(self):
+        m = self.m
+        for o in range(0x3DC, 0x3F0, 4):
+            x = m.r32(m.page + o)
+            if 0x30000000 <= x < 0x34000000 and m.r32(x) == FXVIEW_VT:
+                return x
+        return None
+
+    def flag(self, off):
+        return self.m.uc.mem_read(self.view() + off, 1)[0]
+
+    def open(self, key=KEY_FX1, remain=False):
+        m = self.m
+        if remain:
+            m.dispatch(EV_KEY, KEY_REMAIN)
+        m.dispatch(EV_KEY, key)
+        m.dispatch(EV_KEY_UP, key)
+        if remain:
+            m.dispatch(EV_KEY_UP, KEY_REMAIN)
+        return self.view()
+
+    def run(self, ms):
+        """The screen's update every 50 ms (the view base's tick 0x80073b58 calls it so)."""
+        v = self.view()
+        for _ in range(ms // 50):
+            self.m.call(VIEW_UPDATE, v, count=20_000_000)
+        return [x for x in self.m.closes if x == v]
+
+    def value(self):
+        self.m.dispatch(EV_KEY, KEY_VALUE)
+        self.m.dispatch(EV_KEY_UP, KEY_VALUE)
+
+
+def fx_machine(image, man, bus=1, fx=TAPE_ECHO):
+    m = Machine(image, man['entries'] if man else None)
+    m.set_bus(bus, fx)
+    sc = Screen(m)
+    return m, sc
+
+
+def screen_checks(img, parent, man, st):
+    rt = Runtime(parent)
+    m, sc = fx_machine(img, man)
+    p, sp = fx_machine(parent, None)
+    for mm, ss in ((m, sc), (p, sp)):
+        ss.open()
+        mm.bus_effect(1, TAPE_ECHO)
+    check(sc.flag(VIEW_REMAIN) == 1 and m.uc.mem_read(REMAIN_GLOBAL, 1)[0] == 1 and sp.flag(VIEW_REMAIN) == 0,
+          'an FX button alone opens the FX screen as REMAIN + FX does (+0x1b3f set, 0x80592320 = 1); on the parent '
+          'only with REMAIN held')
+    check(not sc.run(5000) and sp.run(2500),
+          'the screen stays (5 s of its 50 ms updates, no close request) while the bus has an effect; on the parent '
+          'it asks to close after 2 s')
+    m.dispatch(EV_KEY, KEY_FX1)
+    m.dispatch(EV_KEY_UP, KEY_FX1)
+    check(m.call(SYS_GET, SYSPRM, 0x276, 1) == 0 and sc.run(50),
+          'the same FX button again: the effect goes off and the screen asks to close at its next update')
+    m, sc = fx_machine(img, man)
+    sc.open()
+    m.bus_effect(1, 0)
+    check(sc.run(50), 'no effect on the bus: the screen asks to close, as stock\'s REMAIN screen does')
+    p, sp = fx_machine(parent, None)
+    sp.open(remain=True)
+    p.bus_effect(1, TAPE_ECHO)
+    check(sp.flag(VIEW_REMAIN) == 1 and not sp.run(5000), 'on the parent, REMAIN + FX gives the same screen')
+
+    # VALUE: screen 1, 2, the extra screens, screen 1
+    m, sc = fx_machine(img, man)
+    sc.open()
     m.bus_effect(1, TAPE_ECHO)
-    m.clear()
-    m.chord()
-    m.turn(2)
-    m.press()
-    m.bus_effect(1, EQUALIZER)
-    m.clear()
-    m.turn(1)
-    check(not m.uart and m.popups == [(st.text(1, EQUALIZER), PAGE_MS)] and not m.state()['edit'],
-          'the bus\'s effect changed while open: the next turn shows the new effect\'s first setting, not editing, '
-          'nothing sent')
-    m.press(KEY_EXIT)
-
-
-def open_pair(img, parent, man):
-    """The parent and the image with BUS 1 Tape Echo, the page open on the image; the parent got what DOOM OS
-    got on the image (EXIT pressed and let go: the chord's VALUE was the page's)."""
-    p, m = Machine(parent), Machine(img, man['entries'])
-    for mm in (p, m):
-        mm.set_bus(1, TAPE_ECHO)
-    m.chord()
-    p.dispatch(EV_KEY, KEY_EXIT)
-    p.dispatch(EV_KEY_UP, KEY_EXIT)
-    p.pause(600)
-    return p, m
-
-
-def snapshot(mm, r):
-    return (r, mm.frames(), [(q, v) for q, v in mm.uart if q != 3], [x for x in mm.popups if x[1] != GONE_MS],
-            mm.doom, mm.fallback, bytes(mm.uc.mem_read(KEYS, 16)), mm.r16(PAGE_ID))
-
-
-def open_passthrough_checks(img, parent, man, st):
-    """While the page is open: pads and knobs go on as on the parent and the page stays open; any other button
-    closes it and goes on as on the parent."""
-    p, m = open_pair(img, parent, man)
+    te = st.by_fx[TAPE_ECHO]
+    seq = []
+    for k in range(5):
+        m.clear()
+        sc.value()
+        seq.append((sc.flag(VIEW_SCREEN2), m.state()['screen'], m.popups, not m.uart))
+    want = [(1, 0, [], True)] + \
+        [(1, k, [(screen_text(rt, st, 1, TAPE_ECHO, k), SCREEN_MS)], True) for k in (1, 2, 3)] + \
+        [(0, 0, [(screen_text(rt, st, 1, TAPE_ECHO, 3), GONE_MS)], True)]
+    check(len(te) == 7 and seq == want,
+          f'Tape Echo (CTRL 4-6, 7 extra settings): VALUE goes to screen 2, then the extra screens 3/5, 4/5, 5/5 in '
+          f'the popup ("{screen_text(rt, st, 1, TAPE_ECHO, 1)}"), then screen 1 again (the popup gone); nothing '
+          f'sent ({seq[1][2]})')
+    m, sc = fx_machine(img, man, fx=ISOLATOR)
+    sc.open()
+    m.bus_effect(1, ISOLATOR)
+    seq = []
+    for k in range(3):
+        m.clear()
+        sc.value()
+        seq.append((sc.flag(VIEW_SCREEN2), m.state()['screen'], m.popups))
+    check(not has_screen2(rt, ISOLATOR) and seq == [(0, 1, [(screen_text(rt, st, 1, ISOLATOR, 1), SCREEN_MS)]),
+                                                    (0, 0, [(screen_text(rt, st, 1, ISOLATOR, 1), GONE_MS)]),
+                                                    (0, 1, [(screen_text(rt, st, 1, ISOLATOR, 1), SCREEN_MS)])],
+          f'Isolator (no screen 2, one extra setting): VALUE goes to "{screen_text(rt, st, 1, ISOLATOR, 1)}" and back')
     out = []
-    for mm in (p, m):
-        mm.clear()
-        r = [mm.dispatch(EV_PAD, 3, 100), mm.dispatch(EV_PAD_UP, 3, 0), mm.dispatch(EV_KNOB, 1, 40),
-             mm.dispatch(EV_KNOB, 1, 100), mm.dispatch(EV_KNOB, 3, 127)]
-        out.append(snapshot(mm, r))
-    check(out[0] == out[1] and out[0][1][0] and m.state()['open'],
-          f'open: pads and knobs go on exactly as on the parent (the same {len(out[0][1][0])} frame(s), '
-          f'{len(out[0][1][1])} MIDI packets, {len(out[0][2])} bytes to other chips) and the page stays open')
-    m.clear()
-    m.turn(0)
-    check(m.popups == [(st.text(1, TAPE_ECHO), PAGE_MS)], 'still open after them')
-    p, m = open_pair(img, parent, man)
-    out = []
-    for mm in (p, m):
-        mm.clear()
-        for _ in range(4):
-            mm.dispatch(EV_KEY, KEY_EXIT)
-            mm.dispatch(EV_KEY_UP, KEY_EXIT)
-        out.append(snapshot(mm, None))
-    check(out[0] == out[1] and ('STOP', 1000) in out[0][3] and not m.state()['open'],
-          'open: four quick EXITs close the page and are stock\'s STOP, byte for byte as on the parent')
-    bad = []
-    for k in [KEY_EXIT, KEY_SHIFT] + [k for k in KEYS_ALONE if k not in (KEY_EXIT, KEY_SHIFT)]:
-        p, m = open_pair(img, parent, man)
-        out = []
-        for mm in (p, m):
+    for image, man_ in ((parent, None), (img, man)):
+        mm, ss = fx_machine(image, man_, fx=CRUSHER)
+        ss.open(remain=image is parent)
+        mm.bus_effect(1, CRUSHER)
+        flags = []
+        for k in range(3):
             mm.clear()
-            try:
-                r = [mm.dispatch(EV_KEY, k), mm.dispatch(EV_KEY_UP, k)]
-            except Exception as e:                      # stock paths the harness can't run end the same way
-                r = f'{type(e).__name__}'
-            out.append(snapshot(mm, r))
-        if out[0] != out[1] or m.state()['open'] or (st.text(1, TAPE_ECHO), GONE_MS) not in m.popups:
-            bad.append(hex(k))
-    check(not bad, f'open: EXIT and each of the {len(KEYS_ALONE) - 1} other buttons close the page (its popup goes) '
-                   f'and go on exactly as on the parent ({bad})')
+            ss.value()
+            flags.append((ss.flag(VIEW_SCREEN2), mm.popups))
+        out.append(flags)
+    check(out[0] == out[1] == [(1, []), (0, []), (1, [])],
+          'Crusher (no screen 2, no extra settings): VALUE toggles stock\'s screen flag, as on the parent with REMAIN')
+
+    # the knobs on an extra screen
+    m, sc = fx_machine(img, man)
+    sc.open()
+    m.bus_effect(1, TAPE_ECHO)
+    sc.value()
+    sc.value()                                          # the first extra screen: SYNC, BASS, TREBLE
+    vals, seq = {}, []
+    for k, raw in ((1, 127), (1, 0), (2, 64), (3, 127), (2, 41)):
+        s = te[k - 1]
+        v = knob_value(s, raw)
+        old = vals.get(s['name'], s['default'])
+        m.clear()
+        m.dispatch(EV_KNOB, k, raw)
+        vals[s['name']] = v
+        got, other, ok = m.frames()
+        seq.append(ok and not other and got == ([fx_frame(TAPE_ECHO, 1, s['aa'], v)] if v != old else []) and
+                   m.popups == [(screen_text(rt, st, 1, TAPE_ECHO, 1, vals), SCREEN_MS)] and not m.doom)
+    check(all(seq), f'on it CTRL 1-3 set SYNC, BASS and TREBLE across their ranges: one frame for each change (03 00 '
+                    f'29 aa, the value), none when the value stays, the popup follows; stock\'s knob path not '
+                    f'reached ({seq})')
+    sc.value()
+    sc.value()                                          # the third extra screen: TAPE DIST alone
+    dist = te[6]
+    m.clear()
+    m.dispatch(EV_KNOB, 2, 99)
+    m.dispatch(EV_KNOB, 3, 5)
+    none = not m.uart and not m.doom
+    m.clear()
+    m.dispatch(EV_KNOB, 1, 16)
+    got, other, ok = m.frames()
+    v = knob_value(dist, 16)
+    check(none and ok and got == [fx_frame(TAPE_ECHO, 1, dist['aa'], v)] and
+          m.popups == [(screen_text(rt, st, 1, TAPE_ECHO, 3, {**vals, 'TAPE DIST': v}), SCREEN_MS)],
+          f'5/5 has TAPE DIST on CTRL 1 alone: CTRL 2 and 3 do nothing there; CTRL 1 at 16 sends {v}')
+    # leaving with another button; pads on it
+    m.clear()
+    r = [m.dispatch(EV_PAD, 3, 100), m.dispatch(EV_PAD_UP, 3, 0)]
+    pads = (m.state()['screen'] == 3, [x[1][:2] for x in m.doom])
+    m.clear()
+    m.dispatch(EV_KEY, KEY_HOLD)
+    m.dispatch(EV_KEY_UP, KEY_HOLD)
+    check(pads == (True, [(EV_PAD, 3), (EV_PAD_UP, 3)]) and m.state()['screen'] == 0 and
+          m.popups[0][1] == GONE_MS and [x[1][:2] for x in m.doom] == [(EV_KEY, KEY_HOLD), (EV_KEY_UP, KEY_HOLD)],
+          'pads on an extra screen go on as usual and it stays; another button leaves it (the popup goes) and goes on '
+          'to DOOM OS as usual')
+    m.clear()
+    m.dispatch(EV_KNOB, 1, 100)
+    got, other, ok = m.frames()
+    check(ok and got and fx_frame(TAPE_ECHO, 1, te[0]['aa'], knob_value(te[0], 100)) not in got,
+          'after leaving, CTRL 1 is stock\'s again (it sends the effect\'s own CTRL 1 parameter)')
+    # per bus
+    for bus in (2, 3, 4):
+        m, sc = fx_machine(img, man, bus=bus, fx=REVERB)
+        sc.open()
+        m.bus_effect(bus, REVERB)
+        sc.value()
+        sc.value()                                      # Reverb has CTRL 4-6: screen 2, then DENSITY
+        rv = st.by_fx[REVERB][0]
+        m.clear()
+        m.dispatch(EV_KNOB, 1, 0)
+        got, other, ok = m.frames()
+        check(ok and got == [fx_frame(REVERB, bus, rv['aa'], rv['min'])] and
+              m.popups[-1] == (screen_text(rt, st, bus, REVERB, 1, {'DENSITY': rv['min']}), SCREEN_MS),
+              f'BUS {bus} Reverb: DENSITY goes to slot {bus}')
+    m, sc = fx_machine(img, man)
+    m.knob_bus(0)
+    sc.open()
+    seq = []
+    for k in range(2):
+        sc.value()
+        seq.append(m.state()['screen'])
+    check(seq == [0, 0], 'the knobs on the input FX: no extra screens')
 
 
 def range_checks(img, man, st):
-    """Every setting of every effect, on BUS 3: down past the firmware's min and up past its max."""
-    m = Machine(img, man['entries'])
-    m.knob_bus(3)
+    """Every setting of every effect, on BUS 3: CTRL at 0 and at 127 send the firmware's min and max."""
     bad, n = [], 0
     for fx in range(1, 49):
         if not st.by_fx[fx]:
             continue
+        m, sc = fx_machine(img, man, bus=3, fx=fx)
+        sc.open()
         m.bus_effect(3, fx)
-        m.chord()
+        while m.state()['screen'] == 0:
+            sc.value()
         for k, s in enumerate(st.by_fx[fx]):
-            if k:
-                m.turn(1)
-            m.press()
-            m.clear()
-            m.turn(-300)
-            m.turn(-1)
-            low = m.frames()
-            m.clear()
-            m.turn(300)
-            m.turn(1)
-            high, shown = m.frames(), m.popups[-1]
-            m.press()
+            if k and not k % 3:
+                sc.value()
+            out = []
+            for raw, v in ((0, s['min']), (127, s['max'])):
+                m.clear()
+                m.dispatch(EV_KNOB, k % 3 + 1, raw)
+                out.append(m.frames() == ([fx_frame(fx, 3, s['aa'], v)], [], True) or
+                           (v == s['default'] and raw == 0 and m.frames() == ([], [], True)))
             n += 1
-            want_low = [fx_frame(fx, 3, s['aa'], s['min'])] if s['min'] != s['default'] else []
-            if low != (want_low, [], True) or high != ([fx_frame(fx, 3, s['aa'], s['max'])], [], True) or \
-                    shown != (st.text(3, fx, k, s['max'], True), PAGE_MS):
-                bad.append((fx, s['name'], low, high, shown))
-        m.press(KEY_EXIT)
-    check(not bad and n == 142, f'all {n} settings stop at the firmware\'s min and max, one frame each way '
-                                f'({bad[:4]})')
-
-
-def edit(m, bus, fx, name, delta):
-    """Open the page on bus/fx, edit setting name by delta, close it; returns the value now held."""
-    m.knob_bus(bus)
-    m.chord()
-    k = [i for i, s in enumerate(m.st.by_fx[fx]) if s['name'] == name][0]
-    m.turn(k)
-    m.press()
-    m.turn(delta)
-    m.press()
-    m.press(KEY_EXIT)
-    return m.st.by_fx[fx][k]['default'] + delta
+            if not all(out):
+                bad.append((fx, s['name'], out))
+    check(not bad and n == 142, f'all {n} settings: CTRL at 0 sends the firmware\'s min, at 127 its max, one frame '
+                                f'each ({bad[:4]})')
 
 
 def resend_checks(img, parent, man, st):
     m, p = Machine(img, man['entries']), Machine(parent)
-    m.st = st
     for mm in (m, p):
         mm.set_bus(1, TAPE_ECHO)
         mm.set_bus(2, TAPE_ECHO, knobs=False)
-    te = {s['name']: s for s in st.by_fx[TAPE_ECHO]}
-    v_dist = edit(m, 1, TAPE_ECHO, 'TAPE DIST', -2)
-    v_bass = edit(m, 1, TAPE_ECHO, 'BASS', -5)
-    v_two = edit(m, 2, TAPE_ECHO, 'TREBLE', 4)
-    ours1 = [fx_frame(TAPE_ECHO, 1, te['BASS']['aa'], v_bass), fx_frame(TAPE_ECHO, 1, te['TAPE DIST']['aa'], v_dist)]
-    ours2 = [fx_frame(TAPE_ECHO, 2, te['TREBLE']['aa'], v_two)]
+    e = man['entries']
+    te = {s['name']: (i, s) for i, s in enumerate(st.by_fx[TAPE_ECHO])}
+    first = m.r32(e['fde_first'] + TAPE_ECHO) & 0xFF
+    edits = {(1, 'TAPE DIST'): 2, (1, 'BASS'): 10, (2, 'TREBLE'): 19}
+    for (bus, name), v in edits.items():               # held as the extra screens leave them
+        i = first + te[name][0]
+        m.uc.mem_write(e['fde_values'] + (bus - 1) * 142 + i, bytes([v]))
+        m.uc.mem_write(e['fde_edited'] + (bus - 1) * 142 + i, bytes([1]))
+    ours1 = [fx_frame(TAPE_ECHO, 1, te['BASS'][1]['aa'], 10), fx_frame(TAPE_ECHO, 1, te['TAPE DIST'][1]['aa'], 2)]
+    ours2 = [fx_frame(TAPE_ECHO, 2, te['TREBLE'][1]['aa'], 19)]
 
     def both(action, label, insert):
         """action on parent and image; the image must send the parent's frames with `insert` (FxType frame ->
@@ -705,20 +729,17 @@ def resend_checks(img, parent, man, st):
          {fxtype_frame(1, TAPE_ECHO): ours1})
     both(lambda mm: mm.call(DT1, 0x80B62F09, 0x7E, 0, TAPE_ECHO), 'FxType0 (the input FX) = Tape Echo: not a bus',
          {})
-    # the stock reload of the system object and the chip (as at boot), then the effect chosen again
     both(lambda mm: (mm.call(SYS_INIT, SYSPRM), mm.call(CHIP_RESET, 0x80591794, count=50_000_000)),
          'system init and the chip reset (every effect\'s CTRL 1-3 again, FxType 0 everywhere)', {})
     for mm in (m, p):
         mm.w32(FXTYPE_SENT + 4, 0xFFFFFFFF)            # the select's cache as boot leaves it
     both(lambda mm: mm.set_bus(1, TAPE_ECHO), 'after it, BUS 1 Tape Echo chosen again', {fxtype_frame(1, TAPE_ECHO): ours1})
     st_ = m.state()
-    check(st_['sent'] == 3 and st_['resent'] == 2 + 2 + 1 + 2 + 2, f'the module counted 3 edits and 9 values sent '
-                                                                   f'again ({st_})')
+    check(st_['resent'] == 2 + 2 + 1 + 2 + 2, f'the module counted 9 values sent again ({st_})')
 
 
-def stop_and_stale_checks(img, parent, man):
-    """Closed page: four quick EXITs are STOP as on the parent; a chord whose VALUE release never came back: the
-    next plain VALUE press and release go on as on the parent."""
+def stop_checks(img, parent, man):
+    """Four quick EXITs (no FX screen up) are STOP as on the parent."""
     out = []
     for image in (parent, img):
         m = Machine(image, man['entries'])
@@ -726,22 +747,8 @@ def stop_and_stale_checks(img, parent, man):
             m.dispatch(EV_KEY, KEY_EXIT)
             m.dispatch(EV_KEY_UP, KEY_EXIT)
         out.append((m.frames(), m.popups))
-    check(out[0] == out[1] and out[0][1] == [('STOP', 1000)], 'page closed: four quick EXITs are stock\'s STOP, byte '
-                                                               'for byte as on the parent')
-    out = []
-    for image in (parent, img):
-        m = Machine(image, man['entries'])
-        m.dispatch(EV_KEY, KEY_EXIT)
-        m.dispatch(EV_KEY, KEY_VALUE)                   # the chord; its release is lost
-        m.dispatch(EV_KEY_UP, KEY_EXIT)
-        m.press(KEY_EXIT)                               # here: closes the page the chord opened
-        held = m.uc.mem_read(KEYS + (KEY_VALUE >> 3), 1)[0]
-        m.uc.mem_write(KEYS + (KEY_VALUE >> 3), bytes([held & ~(1 << (KEY_VALUE & 7))]))   # let go elsewhere
-        m.pause(600)
-        out.append(run_script(m, [(EV_KEY, KEY_VALUE), (EV_KEY_UP, KEY_VALUE)]))
-    check(out[0] == out[1] and all(r[3] for r in out[1]),
-          'a chord whose VALUE release never came back: the next plain VALUE press and release go on to DOOM OS as '
-          'on the parent')
+    check(out[0] == out[1] and out[0][1] == [('STOP', 1000)], 'four quick EXITs are stock\'s STOP, byte for byte as '
+                                                               'on the parent')
 
 
 SCRIPTS = (
@@ -753,6 +760,7 @@ SCRIPTS = (
     ('EXIT held, SHIFT', [(EV_KEY, KEY_EXIT), (EV_KEY, KEY_SHIFT), (EV_KEY_UP, KEY_SHIFT), (EV_KEY_UP, KEY_EXIT)]),
     ('SHIFT held, VALUE', [(EV_KEY, KEY_SHIFT), (EV_KEY, KEY_VALUE), (EV_KEY_UP, KEY_VALUE),
                            (EV_KEY_UP, KEY_SHIFT)]),
+    ('EXIT held, VALUE', [(EV_KEY, KEY_EXIT), (EV_KEY, KEY_VALUE), (EV_KEY_UP, KEY_VALUE), (EV_KEY_UP, KEY_EXIT)]),
     ('EXIT held, VALUE turned', [(EV_KEY, KEY_EXIT), (EV_ENCODER, 0, 1), (EV_ENCODER, 0, -1), (EV_KEY_UP, KEY_EXIT)]),
     ('VALUE turned', [(EV_ENCODER, 0, 1), (EV_ENCODER, 0, -3)]),
     ('knobs', [(EV_KNOB, 1, 40), (EV_KNOB, 2, 90), (EV_KNOB, 3, 127), (EV_KNOB, 3, 3)]),
@@ -777,7 +785,8 @@ def run_script(m, script):
 
 
 def passthrough_checks(img, parent, man):
-    """Every event but the chord, page closed, with edited values held: exactly as the parent."""
+    """No extra screen up, with edited values held: every event as on the parent (an FX button's screen is REMAIN's
+    now: its flags aside, the same bytes, popups and calls)."""
     e = man['entries']
     for label, script in SCRIPTS:
         a, b = Machine(parent), Machine(img, e)
@@ -786,7 +795,7 @@ def passthrough_checks(img, parent, man):
         for bus in range(4):                            # an edited value held for every bus's Reverb and Tape Echo
             for fx in (REVERB, TAPE_ECHO):
                 i = b.r32(e['fde_first'] + fx) & 0xFF
-                b.uc.mem_write(e['fde_value'] + bus * 142 + i, bytes([3]))
+                b.uc.mem_write(e['fde_values'] + bus * 142 + i, bytes([3]))
                 b.uc.mem_write(e['fde_edited'] + bus * 142 + i, bytes([1]))
         x, y = run_script(a, script), run_script(b, script)
         check(x == y and all(r[3] for r in y), f'{label}: as on the parent, every event through DOOM OS\'s filter '
@@ -796,7 +805,8 @@ def passthrough_checks(img, parent, man):
         script = [(EV_KEY, k), (EV_KEY_UP, k)]
         if run_script(Machine(parent), script) != run_script(Machine(img, man['entries']), script):
             bad.append(hex(k))
-    check(not bad, f'each of {len(KEYS_ALONE)} keys pressed and released alone: as on the parent ({bad})')
+    check(not bad, f'each of {len(KEYS_ALONE)} keys pressed and released alone: as on the parent, the FX buttons '
+                   f'included ({bad})')
     m = Machine(img, man['entries'])
     m.set_bus(1, REVERB)
     m.clear()
@@ -820,11 +830,10 @@ def main():
     st = Settings(Runtime(parent), fxmap)
     static_checks(out, man, img, parent, fxmap, st)
     builder_checks(img, parent, man, fxmap, st)
-    page_checks(img, parent, man, st)
-    open_passthrough_checks(img, parent, man, st)
+    screen_checks(img, parent, man, st)
     range_checks(img, man, st)
     resend_checks(img, parent, man, st)
-    stop_and_stale_checks(img, parent, man)
+    stop_checks(img, parent, man)
     passthrough_checks(img, parent, man)
     print(json.dumps(dict(cases=cases[0])))
     print('ALL PASS' if not fails else f'{len(fails)} FAILED')

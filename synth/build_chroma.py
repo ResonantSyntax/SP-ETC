@@ -1,6 +1,7 @@
 """Chromatic mode scales and range (hardware test build): in chromatic mode VALUE press steps through the
 Sound Generator's 34 scales, the pads walk the scale (the Sound Generator's fold), and the pads reach from
-3 octaves down to +18 semitones (stock: -12 to +15). CHROMA.md has the design.
+-12 to +27 semitones (stock: -12 to +15; test1 -36 to +18). On the chromatic page VALUE held and turned moves
+the scale, with SHIFT held the key (test2). CHROMA.md has the design.
 
 A stage on the published Sound Generator + Kits v9.46 APP1. Thirteen changes in 5.52 space, each checked byte
 for byte against what it replaces:
@@ -8,7 +9,7 @@ for byte against what it replaces:
   chroma_set_shift / _scale / _root: stock's compare and store, then the five chromatic pad tables again;
 - code: the project range method's SHIFT case (0x800d39e4) -> chroma_shift_range_case;
 - code: the range method's case for 0x73 / 0x9b (0x800d38c8) -> chroma_note_range_case: the window in which
-  the chromatic page plays a pad, the pad lights light it and the display shows its note becomes -36..+18
+  the chromatic page plays a pad, the pad lights light it and the display shows its note becomes -12..+27
   (stock -12..12); every other caller (pattern step entry) keeps -12..12;
 - code: the fork's SCALE range and label jumps (0x800d39fc, 0x800c5ca4; build_scales.py) -> chroma's bridges,
   which in chromatic mode answer 0-33 and the names and otherwise go on to the scale module's bridges;
@@ -18,7 +19,9 @@ for byte against what it replaces:
 - code: the pattern recorder's pad-note case (0x800bd644) -> chroma_record (chromatic notes outside the
   pattern's 5 bits are not recorded);
 - data: the scale mask lists of the pad lights (0x801ab4bc) and the chromatic key handler (0x801ab3b0) ->
-  chroma_masks (the same masks, a period before each).
+  chroma_masks (the same masks, a period before each);
+- data: the chromatic page's key press and release (its vtable 0x802213f4, +0xd8 and +0xdc) -> chroma_key /
+  chroma_key_up (VALUE's push-turn; then stock's handlers).
 At run time the module rewrites the five copies of the chromatic pad table (0x80028f64, 0x80050ee0,
 0x801aa0a0, 0x801aa0e0, 0x801aa120); with Chrom and a stock shift they keep stock's values.
 Nothing branches into the displaced bytes but their entries (every BL, B, B<cond>, CB(N)Z, B.W, literal and
@@ -46,7 +49,7 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'chroma-test1'
+REVISION = 'chroma-test2'
 SLOT = 0x2000                       # reserved: [base, base + SLOT)
 GAP = (0x83FC9000, 0x83FF0000)      # above the fork's rows (end 0x83FC8450), below the end of cacheable SDRAM
 # Every other fork module's reserved RAM (branch, start, end).
@@ -65,12 +68,19 @@ KNOWN_SLOTS = [
 EXPORTS = ('chroma_update', 'chroma_shift_range', 'chroma_scale_range', 'chroma_name', 'chroma_next_scale',
            'chroma_set_shift', 'chroma_set_scale', 'chroma_set_root', 'chroma_shift_range_case', 'chroma_note_range_case',
            'chroma_scale_range_case', 'chroma_name_case', 'chroma_next_scale_stub', 'chroma_record', 'chroma_masks',
-           'chroma_updates')
-LO, HI = -36, 18
+           'chroma_updates', 'chroma_note_range', 'chroma_key', 'chroma_key_up', 'chroma_value', 'chroma_text')
+DATA = ('chroma_masks', 'chroma_updates', 'chroma_value', 'chroma_text')
+LO, HI = -12, 27
 STOCK_T = (4, 5, 6, 7, 0, 1, 2, 3, -4, -3, -2, -1, -8, -7, -6, -5)
 TABLES = (0x80028F64, 0x80050EE0, 0x801AA0A0, 0x801AA0E0, 0x801AA120)
 MASK_LISTS = ((0x801AB4BC, 'the pad lights'), (0x801AB3B0, 'the chromatic key handler'))
 SCALE_BRIDGES = (0x83FA1001, 0x83FA1081)   # the scale module's label and range bridges (build_scales.py)
+# The chromatic page's vtable (0x802213f4, made by its registry handler 0x80062a10): (slot, stock entry, module
+# entry, what the slot is)
+VTABLE = [
+    (0x802214CC, 0x801120D9, 'chroma_key', '+0xd8 key press (0x801120d8)'),
+    (0x802214D0, 0x80111AD1, 'chroma_key_up', '+0xdc key release (0x80111ad0)'),
+]
 
 # (address, displaced bytes, what they are, kind, entry): kind 'jump' = movw ip / movt ip / bx ip, 'call' =
 # movw ip / movt ip / blx ip, 'bytes' = the replacement given as entry
@@ -167,6 +177,32 @@ GUARDS = [
      'the SCALE label code: where a label ends'),
     (0x83FA1000, 0x83FA1090, '5fd499ec26de4a3fccd0c9ed3725c88d5f7819b21412931a3eb5b85f9ab70d1f',
      'the fork scale module: its SCALE label and range bridges'),
+    # test2: VALUE's push-turn on the chromatic page
+    (0x801120D8, 0x80112174, '7cfa5c403c48e880eb725af88ce63a50894acd835464dcb0387331eef5cadb12',
+     'the chromatic page key press: entry, 0x800c3e08 first, the switch on key - 0x10 (VALUE 0x31, turns 0x3f, 0x40)'),
+    (0x80112394, 0x801123B0, 'f99e4cbee4b869d906d84715060a4d773c77c1648230e0d16adf370c7d02baa4',
+     'its VALUE case: nothing while 0x800ce420, the base class while 0x800c3f18, else the next scale (0x80112460)'),
+    (0x801123B0, 0x801123F8, '2cae8103dca2ce2ad9b7d2ad87bba4401efa6f1cfc78286d26a2b66bfed3af63',
+     'its turn cases (0x3f, 0x40): SHIFT one pad, else on to ROLL (the root) or four pads'),
+    (0x801124A4, 0x80112524, 'acde059fb06053ef96ef77a59a10960ab7bdd9d037adb697ff6a9eeefda6f391',
+     'its turn cases: ROLL + a scale moves the root (0xF2) one'),
+    (0x801125B4, 0x8011262C, 'ad40a215e68270147bd04df3989ebf5d257ed31d947e5a3807f805cbbe6fdf48',
+     'its turn cases: four pads; its end after a change (0x801125dc: the 16 parts drawn again, 0x800cc298, '
+     'return 1, frame push {r4-r7, lr}; sub sp, #4; r4 = the page)'),
+    (0x80111AD0, 0x80111B38, 'e66ac00d4ff55c5a3ce086a2957c6e1af9b64c0dc6ddef17d1a4ce7ba2191f35',
+     'the chromatic page key release: VALUE (0x31) returns 1'),
+    (0x801120B8, 0x801120D8, '6037274b962e8e373430de888867e1e36e88a5eee06982d7eacde6ec7aa2dc2a',
+     'the page encoder (vtable +0xe0): a VALUE turn is key 0x3f or 0x40 through vtable +0x18, one per event'),
+    (0x802214D4, 0x802214D8, 'c0d7c7d55a3b871c6bf35346d79d060c46da31450fbe6258325cdf1416c9dc22',
+     'the chromatic page vtable +0xe0: the encoder 0x801120b9'),
+    (0x800CE420, 0x800CE478, '4f15482478e1c72e4527cd6b21aa9e33f2577f1c9e7ef92b4f83a1e4e767bc17',
+     'busy (0x800ce420): something over the page'),
+    (0x800C3F18, 0x800C3F2A, '1ae9e80311d9124f80f6316767a360baf8a6e2920c30f6e3d03cfa2306038533',
+     'UI held (0x800c3f18): [0x80592598 + 8]'),
+    (0x800D3FF0, 0x800D4060, 'f376902897436ad648477d37af39f6faad37739487ab9a2930467f101b43978d',
+     'popup(text, ms) and the popup time 0x800d4028'),
+    (0x800C5168, 0x800C5190, '25cc29b050804afa14d0bef50ba68ac7361069a38b5c60bb9291889064b8d323',
+     'the label formatter (object, out, id, value, -1 on the stack)'),
 ]
 
 MD = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB)
@@ -322,7 +358,7 @@ def compile_module(folder: Path, zig: Path, link_base: int, limit: int, tables_h
     folder.mkdir(parents=True, exist_ok=True)
     if subprocess.check_output([str(zig), 'version'], text=True).strip() != '0.13.0':
         raise ValueError('needs Zig 0.13.0')
-    keep = ' '.join(f'KEEP(*(.text.{n}))' for n in EXPORTS if not n.startswith(('chroma_masks', 'chroma_updates')))
+    keep = ' '.join(f'KEEP(*(.text.{n}))' for n in EXPORTS if n not in DATA)
     (folder / 'chroma.ld').write_text(f'''ENTRY(chroma_update)
 SECTIONS {{
  . = {link_base:#x};
@@ -384,6 +420,9 @@ def check_parent(rt, img, rows):
             want = bytes(1 if n in rows[k + 1]['notes'] else 0 for n in range(12))
             if rt.read(p, 12) != want:
                 raise ValueError(f'{what}\'s mask for scale {k + 1} ({p:#x}) is not scales.json\'s {rows[k + 1]["label"]}')
+    for at, stock, _, what in VTABLE:
+        if rt.word(at) != stock:
+            raise ValueError(f'{at:#x}: expected the chromatic page\'s {what}, {stock:#x}')
     names = b''.join(r['label'].encode('ascii').ljust(9, b'\0') for r in rows)
     masks = struct.pack('<34H', *[mask(r) for r in rows])
     if img.count(names) != 1 or img.count(masks) != 1:
@@ -410,7 +449,7 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
     if len(module) > SLOT:
         raise ValueError(f'module is {len(module)} bytes, the slot {SLOT}')
     for name in EXPORTS:
-        thumb = name not in ('chroma_masks', 'chroma_updates')
+        thumb = name not in DATA
         if (symbols[name] & 1) != thumb:
             raise ValueError(f'{name}: unexpected symbol {symbols[name]:#x}')
 
@@ -439,6 +478,12 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
         patches.append(dict(address=at, size=24, original_hex=old.hex(), replacement_hex=new.hex(),
                             what=f'{what}\'s scale mask list (scales 1-6) -> chroma_masks[k] + 12 (the same masks, '
                                  f'a period before each)'))
+    for at, stock, entry, what in VTABLE:
+        off = file_offset(img, at, 4)
+        new = struct.pack('<I', symbols[entry])
+        img[off:off + 4] = new
+        patches.append(dict(address=at, size=4, original_hex=struct.pack('<I', stock).hex(), replacement_hex=new.hex(),
+                            what=f'the chromatic page\'s vtable {what} -> {entry}'))
     file_at = (len(img) + 15) & ~15
     img += bytes(file_at - len(img)) + module
     table = (len(img) + 15) & ~15
@@ -460,8 +505,9 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
     manifest = dict(
         revision=REVISION, status='hardware-unverified', published=False,
         description='chromatic mode: VALUE press steps through the Sound Generator\'s 34 scales, the pads walk the '
-                    'scale (the Sound Generator\'s fold); the pads reach 3 octaves down (to -36) and up to +18; '
-                    'Chrom with a stock shift is stock',
+                    'scale (the Sound Generator\'s fold); the pads reach from -12 to +27 (test2: stock\'s bottom, an '
+                    'octave above stock\'s top); on the chromatic page VALUE held and turned moves the scale, with '
+                    'SHIFT the key; Chrom with a stock shift is stock',
         parent_app1=str(inp), parent_sha256=sha(inp.read_bytes()),
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
         if parent_manifest.exists() else None,
@@ -473,10 +519,13 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
         guards=[dict(start=s, end=e, sha256=d, establishes=w) for s, e, d, w in GUARDS],
         tables=[f'{t:#x}' for t in TABLES], notes=dict(lo=LO, hi=HI, stock_t=list(STOCK_T)),
         scales=[r['label'] for r in table_rows],
-        ui=dict(scale='VALUE press in chromatic mode: the next of the 34 scales (stock 0-6); the screen names it',
-                root='ROLL + VALUE turn, as stock', shift='VALUE turn: 4 pads, SHIFT + VALUE turn: 1 pad (with a '
-                'scale a pad is a scale note), within a range that keeps every pad in -36..+18',
-                record='chromatic notes outside -13..+18 play but are not recorded into patterns',
+        ui=dict(scale='VALUE press in chromatic mode: the next of the 34 scales (stock 0-6), at the release (test2); '
+                      'VALUE held and turned: the scale one a turn, round; popup "Scale Dorian"',
+                root='SHIFT and VALUE held, VALUE turned: the key one a turn, round C..B; popup "Key F#" (stock: '
+                     'ROLL + VALUE turn, which note repeat takes for the roll speed)',
+                shift='VALUE turn: 4 pads, SHIFT + VALUE turn: 1 pad (with a '
+                'scale a pad is a scale note), within a range that keeps every pad in -12..+27',
+                record='chromatic notes above +18 play but are not recorded into patterns (the pattern keeps -13..+18)',
                 lights='every pad that plays lights (stock lights only -12..+12)'),
         tool='synth/build_chroma.py')
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8', newline='\n')

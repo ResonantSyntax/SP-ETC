@@ -47,7 +47,7 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'pad-env-test5-stage1'
+REVISION = 'pad-env-test6-stage1'
 SLOT = 0x4000                       # reserved: [base, base + SLOT)
 GAP = (0x83FC9000, 0x83FF0000)      # above the fork's rows (end 0x83FC8450), below the end of cacheable SDRAM
 # Every other fork module's reserved RAM (branch, start, end).
@@ -64,7 +64,8 @@ KNOWN_SLOTS = [
 ]
 EXPORTS = ('env_recompute', 'env_recompute_stock', 'env_dispatch', 'env_fwd', 'env_fwd_stock', 'env_fwd_apply',
            'env_rev', 'env_rev_stock', 'env_rev_apply', 'env_shaped', 'env_release', 'env_release_r6',
-           'env_ui_knob', 'env_ui_poll', 'env_ui_leave', 'env_ui_draw', 'env_ui_pad', 'env_ui_key', 'env_voices',
+           'env_ui_knob', 'env_ui_poll', 'env_ui_leave', 'env_ui_draw', 'env_ui_pad', 'env_ui_key', 'env_ui_turn',
+           'env_voices',
            'env_stages',
            'env_more_pages', 'env_targets', 'env_touched', 'env_ui', 'env_text', 'env_fine_frames',
            'env_fine_stock', 'env_stock_fine', 'env_curve', 'env_retrig', 'env_retrig_c', 'env_fade_voice',
@@ -98,6 +99,7 @@ VTABLE_SLOTS = [(0x04, 0x800F6239, 'env_ui_leave', 'deleting destructor (the pag
                 (0xD0, 0x800F5751, 'env_ui_poll', 'tick: stock bx lr; the base class calls it with 50 (ms)'),
                 (0xD8, 0x800F5AD9, 'env_ui_key', 'key press: DEL 0x1a consumed with nothing done, COPY / REMAIN -> '
                  'apply modes 1 / 2, EXIT, VALUE; the rest to 0x800c9788'),
+                (0xE0, 0x800F5AD1, 'env_ui_turn', 'encoder (which, delta): stock returns 0'),
                 (0xE4, 0x800F5D11, 'env_ui_knob', 'knob: CTRL 1-3 -> Attack, Hold, Release')]
 VTABLE_KEEP = [(0x08, 0x6031C8F9, 'DOOM OS ED5E\'s event filter'),
                (0x14C, 0x80133B31, 'current pad')]
@@ -132,8 +134,11 @@ GUARDS = [
      'slot start: allocator, then Init (voice, index, pad, ...)'),
     (0x800F5710, 0x800F6300, '6dfd9270b015989a30be46aba62a1f6c61e0289da6cca53f7b261b9f1bbdbd14',
      'ENVELOPE page methods: knob 0x800f5d10 (FX-knob check, setter, apply 0x800f5df0 with mode 0x80591b54, redraw), '
-     'tick 0x800f5750 (empty), key press 0x800f5ad8 (DEL 0x1a: return 1, nothing else), deleting destructor '
+     'tick 0x800f5750 (empty), key press 0x800f5ad8 (DEL 0x1a: return 1, nothing else; VALUE 0x31: the base class '
+     '0x800c9788 while 0x800c3f18, else nothing; VALUE turned 0x3f / 0x40: the base class), deleting destructor '
      '0x800f6238'),
+    (0x800C3F18, 0x800C3F2A, '1ae9e80311d9124f80f6316767a360baf8a6e2920c30f6e3d03cfa2306038533',
+     'non-zero while [0x80592598 + 8] is set: when the ENVELOPE page\'s VALUE press is the base class\'s'),
     (0x800608D0, 0x800609C0, '9f28c52279fdca61df4135974d916133c4b37da3ec2bfb3c9cec746a3be74d49',
      'ENVELOPE page registry handler: a new object per entry; leaving sends the event, then vtable +4'),
     (0x800735B0, 0x800735E0, 'fb5fa2d3a81b637ed3c6967cb740fca12a90fb41612a6c810d39978a0467505b',
@@ -396,7 +401,7 @@ SECTIONS {{
  .text : {{ KEEP(*(.text.env_recompute)) KEEP(*(.text.env_release)) KEEP(*(.text.env_fwd))
             KEEP(*(.text.env_rev)) KEEP(*(.text.env_ui_knob)) KEEP(*(.text.env_ui_poll))
             KEEP(*(.text.env_ui_leave)) KEEP(*(.text.env_ui_draw)) KEEP(*(.text.env_ui_pad))
-            KEEP(*(.text.env_ui_key))
+            KEEP(*(.text.env_ui_key)) KEEP(*(.text.env_ui_turn))
             KEEP(*(.text.env_retrig)) KEEP(*(.text.env_targets)) KEEP(*(.text.env_touched))
             *(.text*) }}
  .rodata : ALIGN(16) {{ KEEP(*(.rodata.env_*)) *(.rodata*) }}
@@ -572,16 +577,16 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
                     s='3x^2 - 2x^3', rising='attack: level = curve(x)',
                     falling='decay, release: level = lo + (hi - lo) * curve(1 - x)'),
         ui=dict(page='ENVELOPE (0x10), SHIFT + PITCH/SPEED',
-                pages=['1 A-H-R (stock; FINE: attack/release fine index)',
-                       '2 SHAPE: attack curve, TIME STOCK/FINE, release curve',
+                pages=['1 AMP (stock; VALUE press: TIME STOCK/FINE; FINE: attack/release fine index)',
+                       '2 SHAPE: attack curve, release curve',
                        '3 DECAY: decay, sustain, decay curve',
                        '4 MODE: LOOP every/first pass, RETRIG cut/fade time, REVERSE mirror/time'],
-                next_page='tap SHIFT (press and release within 1 s; no other key pressed or let go, no knob turned, '
-                          'no pad change in between)',
+                next_page='turn VALUE (next or previous page, round), or tap SHIFT (press and release within 1 s; no '
+                          'other key pressed or let go, no knob or VALUE turned, no pad change in between)',
                 screen='rows 0-7 the CTRL 1-3 labels (also in the static layer [page + 0xc00]), 8-16 their values, '
                        '17-32 the graph (x 0-127 = START-END, y 32 silent .. 17 full), 48-63 between the S and E '
-                       'marks "A-1 SHAPE 2/4" on pages 2-4; page 1 with a stock pad is stock\'s screen; drawn with '
-                       'stock\'s own calls on the page\'s context',
+                       'marks "A-1 SHAPE 2/4", on page 1 "A-1 AMP 1/4" or "A-1 AMP FINE 1/4"; page 1 with a stock '
+                       'pad is stock\'s screen but that line; drawn with stock\'s own calls on the page\'s context',
                 more_pages='env_more_pages[4]: pointers to struct env_page {name, label[3], value(), turn(), '
                            'graph()} for later stages, after MODE; env_targets(pad, out[160]) gives the pads a turn '
                            'reaches, env_touched() sets Edited and starts the save timer',

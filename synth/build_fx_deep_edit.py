@@ -1,25 +1,32 @@
-"""FX deep edit (hardware test build): a settings page for the bus effects' parameters stock never sends.
+"""FX deep edit (hardware test build): extra screens on the FX screen for the bus effects' parameters stock
+never sends.
 
-A stage on the published Sound Generator + Kits v9.46 APP1 (FX_DEEP_EDIT.md). On TOP, hold EXIT and press
-VALUE: the page shows, in the stock popup, the effect on the bus the CTRL knobs drive and its settings that
-stock 5.52 never sends to the effects chip (BMC). Turn VALUE to choose one, press VALUE to edit, turn to
-change it, press again to stop; EXIT leaves. Each change is one DT1 through the stock builder 0x800d8118,
-inside the firmware's own min/max for the ID. Values live in RAM per bus and effect, and go to the chip
-again whenever the firmware selects that effect on that bus (an FxType write).
+A stage on the published Sound Generator + Kits v9.46 APP1 (FX_DEEP_EDIT.md). Test 2: an FX button opens the
+FX screen the way REMAIN + FX does in stock (it stays until EXIT, REMAIN or that FX button again), and VALUE
+press steps screen 1, screen 2 (where the effect has CTRL 4-6), then the effect's extra screens, three of its
+settings that stock 5.52 never sends to the effects chip (BMC) a screen on CTRL 1-3, shown in the stock popup,
+then screen 1 again. Each change is one DT1 through the stock builder 0x800d8118, inside the firmware's own
+min/max for the ID. Values live in RAM per bus and effect, and go to the chip again whenever the firmware
+selects that effect on that bus (an FxType write). (Test 1's TOP page, EXIT + VALUE, is gone.)
 
 The settings of an effect are the parameters that are not in its six-ID knob record (0x802e5b40) and that
 DM-404's fxmap.json (MIT, bases from a boot capture) gives no boot value. IDs come from the firmware's name
 table (0x80245ee4) joined with fxmap; the builder insists the firmware's name for every ID is fxmap's name at
 that address, and that every range is the firmware's own (0x801ad1fc/0x801ac830, inside 0..255).
 
-Two changes in 5.52 space:
+Four changes in 5.52 space:
 - data: TOP's page vtable 0x8022ce5c, slot +0x08 (0x8022ce64), DOOM OS ED5E's page filter 0x6031c8f9 ->
   fde_filter, which hands every event the page doesn't take on to that filter;
 - code: the DT1 builder's first ten bytes (0x800d8118: push.w, sub sp, movw sb) -> movw ip / movt ip / bx ip
   to fde_dt1. Its four instructions send anything but an FxType for BUS 1-4 straight to fde_dt1_stock (those
   three instructions, then on at 0x800d8122) with the caller's stack and return address, so the builder runs
   exactly as stock; an FxType for BUS 1-4 goes to fde_dt1_fxtype, which sends it and then that bus's edited
-  values for the effect. Nothing branches into the ten bytes but the entry.
+  values for the effect. Nothing branches into the ten bytes but the entry;
+- code: the FX screen's show method asks whether REMAIN (0x24) is held (0x80146f66: bl 0x800d9f20) -> movs r0, #1;
+  nop: the screen stays as with REMAIN + FX, and VALUE toggles its screens;
+- code: the FX screen's VALUE toggle (0x801479a0, ten bytes: movw r1, #0x1b3f; ldrb r2, [r0, r1]; cmp r2, #0;
+  it eq) -> movw ip / movt ip / bx ip to fde_value (the screens, then the extra screens). Its one caller is the
+  generic key handler (0x800cba46); nothing branches into the bytes but the entry.
 Stock code the module calls, reads or relies on is checked byte for byte (GUARDS). The module (Zig 0.13.0,
 -Os) goes in a new boot copy row in a 16 KB slot at 0x83FE2000, below the FX probe (0x83FE6000), bounce
 stage 3 (0x83FE8000), the CPU meter, the bounce probe and the start fix; the builder checks that no row
@@ -45,20 +52,22 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'fx-deep-edit-test1'
+REVISION = 'fx-deep-edit-test2'
 SLOT = 0x4000                       # reserved: [base, base + SLOT)
 SLOT_CEILING = 0x83FE6000           # the FX probe's slot starts here
-EXPORTS = ('fde_filter', 'fde_dt1', 'fde_dt1_stock', 'fde_dt1_fxtype', 'fde', 'fde_value', 'fde_edited',
-           'fde_text', 'fde_effect_names', 'fde_first', 'fde_count', 'fde_ids', 'fde_names')
+EXPORTS = ('fde_filter', 'fde_dt1', 'fde_dt1_stock', 'fde_dt1_fxtype', 'fde_value', 'fde', 'fde_values',
+           'fde_edited', 'fde_text', 'fde_effect_names', 'fde_first', 'fde_count', 'fde_ids', 'fde_names')
 VTABLE_SLOT, DOOM_FILTER = 0x8022CE64, 0x6031C8F9     # TOP page vtable 0x8022ce5c, +8
 DT1, DT1_BODY = 0x800D8118, 0x800D8122                # the builder; where its body goes on after 10 bytes
 DT1_HEAD = bytes.fromhex('2de9f04f83b04ef2c819')      # push.w {r4-r11, lr}; sub sp, #12; movw sb, #0xe1c8
+REMAIN_ASK, REMAIN_HEAD, REMAIN_NEW = 0x80146F66, bytes.fromhex('92f7dbff'), bytes.fromhex('012000bf')
+TOGGLE, TOGGLE_HEAD = 0x801479A0, bytes.fromhex('41f63f31425c002a08bf')   # movw r1, #0x1b3f; ldrb; cmp; it eq
 PARAMS, EFFECTS = 627, 49
 NAMES, RECORDS, DEFAULTS, MAXIMA, MINIMA = 0x80245EE4, 0x802E5B40, 0x801ABE64, 0x801AC830, 0x801AD1FC
 EFFECT_NAMES = 0x8020B3D8           # by effect number, 0 Bypass
-TEXT_LINE = 17                      # popup: two lines of about 18 characters
-NAME_LEN = 9                        # a setting's name; "M D LEVEL [255]" is 15
-EFFECT_LEN = 12                     # "BUS1 COMPRESSOR 2" is 17
+TEXT_LINE = 17                      # popup: lines of about 18 characters
+NAME_LEN = 9                        # a setting's name; "C3 M D LEVEL 255" is 16
+EFFECT_LEN = 12                     # "WRMSATURATOR 8/8" is 16
 
 # Stock 5.52 code and data the module calls, reads or relies on, unchanged in DOOM OS ED5E and the
 # fork up to v9.46: (start, end, SHA-256 of the runtime bytes, what it establishes).
@@ -114,6 +123,20 @@ GUARDS = [
      'parameter names by ID'),
     (0x8020B3D8, 0x8020B49C, '56261328da29b6e4674efa0dff96044c30839471a2c84790092652c04c6d77cd',
      'effect names by effect number (0 Bypass)'),
+    # test2: the FX screen (its constructor 0x80147ba0, vtable 0x802269c0)
+    (0x80147BA0, 0x80147CB4, 'c3ea681f79754525b0f4be57b4f5c139194807ce47cbbb8740b5d9f7bf529249',
+     'the FX screen\'s constructor: vtable 0x802269c0, a 2000 ms timer at +0x1b10, the lit FX button at +0x1b28'),
+    (0x80146E78, 0x80146FA2, 'cf449ad207f5603eb2cdb709ac64c820e8dc3d6b70e613c1835edd571c054641',
+     'the FX screen\'s show method: +0x1b3f = REMAIN (0x24) held (0x80146f66), and then 0x80592320 = 1'),
+    (0x80146598, 0x80146898, 'c1663cd75d50fa8ff43309fafe4176e50860188e33264345805b3cb789aec031',
+     'the FX screen\'s update (every 50 ms): with +0x1b3f set, screen 2 when +0x1b40 is and the effect has CTRL '
+     '4-6, and the timer is re-armed while the bus has an effect; it closes when its FX button goes off'),
+    (0x801479A0, 0x801479B8, '497e921eab0fd241bcf9ccc2641abb8bc8d2501cdcd4426a6ca542aca6499251',
+     'the FX screen\'s VALUE toggle: +0x1b40 ^= 1 when +0x1b3f is set'),
+    (0x800CBA44, 0x800CBA4C, '24272b06222e9725f38e6ef83ce1b8b360a167ab2a56344b31a9539ed146fdd8',
+     'the generic key handler\'s VALUE on the FX screen: mov r0, r1 (the screen); bl 0x801479a0'),
+    (0x80183C48, 0x80183C9C, '3de29a45ebc4155e97be64b625fff9fd3ce52a7bb0eb0b4073e9b2629dce42e6',
+     'TOP\'s knob handler (vtable +0xe4): CTRL k (event 9, k, position) to the bus effect path 0x800cc030'),
 ]
 MD = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB | capstone.CS_MODE_MCLASS)
 
@@ -303,7 +326,7 @@ def compile_module(folder: Path, zig: Path, link_base: int, limit: int, tables_h
     (folder / 'fx_deep_edit.ld').write_text(f'''ENTRY(fde_filter)
 SECTIONS {{
  . = {link_base:#x};
- .text : {{ KEEP(*(.text.fde_filter)) KEEP(*(.text.fde_dt1)) *(.text*) }}
+ .text : {{ KEEP(*(.text.fde_filter)) KEEP(*(.text.fde_dt1)) KEEP(*(.text.fde_value)) *(.text*) }}
  .rodata : ALIGN(16) {{ *(.rodata*) }}
  .data : ALIGN(16) {{ *(.data*) }}
  .bss : ALIGN(16) {{ *(.bss*) *(COMMON) }}
@@ -350,6 +373,12 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
     inside = branches_into(rt, DT1 + 1, DT1 + len(DT1_HEAD)) + refs_into(bytes(img), DT1 + 1, DT1 + len(DT1_HEAD))
     if inside:
         raise ValueError(f'something reaches into the builder\'s first ten bytes: {inside[:4]}')
+    if rt.read(REMAIN_ASK, 4) != REMAIN_HEAD or rt.read(TOGGLE, len(TOGGLE_HEAD)) != TOGGLE_HEAD:
+        raise ValueError('expected the FX screen\'s REMAIN question and VALUE toggle')
+    inside = branches_into(rt, TOGGLE + 1, TOGGLE + len(TOGGLE_HEAD)) + \
+        [h for h in refs_into(bytes(img), TOGGLE + 1, TOGGLE + len(TOGGLE_HEAD))]
+    if inside:
+        raise ValueError(f'something reaches into the VALUE toggle\'s first ten bytes: {inside[:4]}')
     for load, dst, n, fn in rows:
         if max(dst, base) < min(dst + n, base + SLOT):
             raise ValueError(f'row {dst:#x}+{n:#x} overlaps the slot {base:#x}..{base + SLOT:#x}')
@@ -364,7 +393,7 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
     module, symbols, source_sha, tables_sha = compile_module(folder, zig, base, base + SLOT, tables_h)
     if len(module) > SLOT:
         raise ValueError(f'module ({len(module)} bytes) exceeds the slot')
-    for name in ('fde_filter', 'fde_dt1', 'fde_dt1_stock', 'fde_dt1_fxtype'):
+    for name in ('fde_filter', 'fde_dt1', 'fde_dt1_stock', 'fde_dt1_fxtype', 'fde_value'):
         if not symbols[name] & 1:
             raise ValueError(f'{name} is not a Thumb function symbol')
     stock = module[(symbols['fde_dt1_stock'] & ~1) - base:][:len(DT1_HEAD) + 10]
@@ -391,6 +420,17 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
                         what='DT1 builder entry: push.w / sub sp / movw sb -> movw ip / movt ip / bx ip to fde_dt1 '
                              '(fde_dt1_stock runs the three and goes on at 0x800d8122)',
                         listing=listing(jump, DT1)))
+    off = file_offset(img, REMAIN_ASK, 4)
+    img[off:off + 4] = REMAIN_NEW
+    patches.append(dict(address=REMAIN_ASK, size=4, original_hex=REMAIN_HEAD.hex(), replacement_hex=REMAIN_NEW.hex(),
+                        what='the FX screen\'s show method: bl 0x800d9f20 (REMAIN held?) -> movs r0, #1; nop: it '
+                             'shows as with REMAIN + FX', listing=listing(REMAIN_NEW, REMAIN_ASK)))
+    off = file_offset(img, TOGGLE, len(TOGGLE_HEAD))
+    toggle = movw_movt_bx(12, symbols['fde_value'])
+    img[off:off + len(TOGGLE_HEAD)] = toggle
+    patches.append(dict(address=TOGGLE, size=len(TOGGLE_HEAD), original_hex=TOGGLE_HEAD.hex(),
+                        replacement_hex=toggle.hex(), what='the FX screen\'s VALUE toggle: movw / ldrb / cmp / it -> '
+                        'movw ip / movt ip / bx ip to fde_value', listing=listing(toggle, TOGGLE)))
     file_at = (len(img) + 15) & ~15
     img += bytes(file_at - len(img)) + module
     table = (len(img) + 15) & ~15
@@ -399,8 +439,9 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
         img += struct.pack('<4I', *row)
     struct.pack_into('<2I', img, 0x80, table - 0x80, len(img) - 0x80)
     after = Runtime(img)
-    if after.read(base, len(module)) != module or after.read(DT1, len(jump)) != jump:
-        raise ValueError('the new image does not reproduce the module and the jump')
+    if after.read(base, len(module)) != module or after.read(DT1, len(jump)) != jump or \
+            after.read(REMAIN_ASK, 4) != REMAIN_NEW or after.read(TOGGLE, len(toggle)) != toggle:
+        raise ValueError('the new image does not reproduce the module and the patches')
 
     out.mkdir(parents=True, exist_ok=True)
     (out / 'SP404MKII_APP1.bin').write_bytes(img)
@@ -411,9 +452,10 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
                for fx in range(1, EFFECTS)]
     manifest = dict(
         revision=REVISION, status='hardware-unverified', published=False,
-        description='bus effect settings page: on TOP, hold EXIT and press VALUE to edit, for the bus the CTRL knobs '
-                    'drive, the parameters of its effect that stock never sends to the effects chip (BMC); values '
-                    'live in RAM per bus and effect and are sent again after every FxType write for that bus',
+        description='the FX screen stays as with REMAIN + FX, and VALUE steps its screens: 1, 2 (CTRL 4-6), then '
+                    'extra screens with three each of the effect\'s parameters stock never sends to the effects chip '
+                    '(BMC) on CTRL 1-3, for the bus the CTRL knobs drive; values live in RAM per bus and effect and '
+                    'are sent again after every FxType write for that bus',
         parent_app1=str(inp), parent_sha256=sha(inp.read_bytes()),
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
         if parent_manifest.exists() else None,
@@ -425,18 +467,18 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
         guards=[dict(start=s, end=e, sha256=d, establishes=w) for s, e, d, w in GUARDS],
         fxmap=dict(path=str(fxmap_path), sha256=sha(fxmap_bytes),
                    note='DM-404 core/fx/fxmap.json (MIT): bases from a boot capture, knob ranges from a sweep'),
-        chord='TOP page: hold EXIT (0x22), press VALUE (0x31); its release is taken too. Stock reads EXIT as held '
-              'only for EXIT + pad and SHIFT + ROLL; DOOM OS ED5E\'s TOP combos use REMAIN; the kits use SHIFT',
-        page=dict(bus='settings 0x3a (0 input FX, 1-4 BUS 1-4), what TOP\'s knob path 0x800cc030 uses',
-                  effect='system 0x27c[bus] (0 none), what the knob path checks',
-                  turn='VALUE turned (event 7, the count as sent): the next or previous setting, or, editing, the '
-                       'value, clamped to the firmware\'s min/max for the ID; a change is one DT1 (ID, slot = bus)',
-                  press='VALUE pressed: edit on or off',
-                  close='EXIT, or any other button, closes it and then goes on as usual (four quick EXITs are '
-                        'still STOP); pads and knobs go on as usual while it is open',
-                  popup_ms=10000, texts=['BUS1 TAPE ECHO\nTAPE DIST 4', 'BUS1 TAPE ECHO\nTAPE DIST [4]',
-                                         'BUS1\nNO EFFECT', 'BUS1 CRUSHER\nNO EXTRA SETTINGS',
-                                         'INPUT FX\nBUS 1-4 ONLY']),
+        screens=dict(fx_button='an FX button shows the FX screen as REMAIN + FX does (+0x1b3f set): it stays while '
+                                'the bus has an effect, until EXIT, REMAIN or that FX button again',
+                     value='VALUE press: screen 1, screen 2 where the effect has CTRL 4-6 (stock\'s +0x1b40), the '
+                           'extra screens, screen 1 again',
+                     bus='settings 0x3a (0 input FX, 1-4 BUS 1-4), what TOP\'s knob path 0x800cc030 uses; extra '
+                         'screens on BUS 1-4 only',
+                     effect='system 0x27c[bus] (0 none), what the knob path checks',
+                     knobs='on an extra screen CTRL k (event 9, k, 0..127) sets its setting across the firmware\'s '
+                           'min/max (min + ((max - min) x position + 63) / 127); a change is one DT1 (ID, slot = bus)',
+                     leave='on an extra screen any button but VALUE and SHIFT leaves it (the popup goes) and goes on '
+                           'as usual; pads go on as usual',
+                     popup='"TAPE ECHO 3/5\nC1 SYNC 0\nC2 BASS 15\nC3 TREBLE 15" for 600 s, gone at once on leaving'),
         resend='after the firmware sends FxType 0x7f..0x82 (BUS 1-4) = fx, the edited values of that bus for fx go '
                'out again, in table order; nothing else adds a frame',
         settings_total=sum(len(s) for s in settings), effects=effects,

@@ -1,5 +1,10 @@
 # Chromatic mode: the 34 scales, folded, and a wider range
 
+**Test 2 (chroma-test2)** changes three things; the section "Test 2" below has the details:
+- the range is **-12..+27**: stock's bottom, and an octave above stock's top (test 1 went to -36..+18);
+- on the chromatic page, **VALUE held and turned** moves the scale, one a turn; with SHIFT held too, the key;
+- a VALUE tap steps the next scale **at its release**, and a popup names every scale or key change.
+
 A hardware test build on top of the published Sound Generator + Kits v9.46 (APP1 `7b5fbcb4…684a`). In
 chromatic mode:
 
@@ -97,6 +102,65 @@ logged, not run.
   (not traced). Turning VALUE or pressing it sets them in any case.
 - Pattern step entry still takes only -12..12 (stock), the realtime recorder -13..+18.
 - DOOM OS's own pages (piano roll) with chromatic notes outside stock's range.
+
+## Test 2 (chroma-test2)
+
+From the user's test of combined-test3: go higher, not lower; change scales faster; and a way to change the key,
+since note repeat took ROLL + VALUE (stock's key change) for the roll speed.
+
+### Range
+
+- LO..HI is -12..+27. With Chrom, VALUE turns move the shift from 4 (the bottom pad at -12) to -20 (the top pad at
+  +27); stock's is -8..4.
+- Notes above +18 play, light and show, but patterns don't record them (the pattern keeps a note in 5 bits,
+  -13..+18; `chroma_record`, as in test 1).
+- With a scale, the shift counts scale notes in the same range. A sparse scale fills it: 16 pentatonic pads
+  span about 3.2 octaves, so they cover -12..+27 nearly whole and VALUE turns move them little or not at all.
+- No note goes below -13 now, so the signed note-off read (`0x80050e78`) and the masks' extra period change
+  nothing; they stay, reading the same.
+- `chroma_note_range_case` is C now (`chroma_note_range`: the same callers, LO..HI; the rest stock's -12..12).
+
+### VALUE's push-turn
+
+The chromatic page's vtable (`0x802213f4`, made by `0x80062a10`) takes two more words: key press (+0xd8,
+`0x801120d8`) -> `chroma_key`, key release (+0xdc, `0x80111ad0`) -> `chroma_key_up`. A VALUE turn reaches the key
+press as key 0x3f or 0x40 (the encoder slot +0xe0, `0x801120b8`, one key per event).
+
+| Gesture (chromatic mode, chromatic page) | Stock / test 1 | Test 2 |
+|---|---|---|
+| VALUE tap | the next scale at the press | the next scale at the release; popup `Scale Maj` |
+| VALUE held + turn | (the press already stepped) | the scale one a turn, round (33 -> 0); nothing at the release |
+| SHIFT + VALUE held + turn | (the press already stepped) | the key one a turn, round (B -> C); popup `Key F#` |
+| turn, SHIFT + turn | the pads 4, 1 | stock's |
+| ROLL + turn | the key (stock); note repeat's roll speed in the combined build | the same |
+
+- VALUE's press waits only when stock's press would step the scale: not while something is over the page
+  (`0x800ce420`), nor while the press goes to the base class (`0x800c3f18`). Then it is stock's.
+- A change goes through the project setter (the tables follow), asks for the pad lights (`0x802496f0` |= 2) and
+  ends the way the key handler does (`0x801125dc`: the page's 16 parts drawn again).
+- The popup is `Scale ` or `Key ` and the value's own label (the label formatter `0x800c5168`: stock's names,
+  the scales' in chromatic mode).
+- Page 0x11's VALUE press (`0x80083992`) still steps at once.
+- 12 more guards (40): the key handler's entry, VALUE and turn cases and end, the key release, the encoder slot
+  and its vtable word, `0x800ce420`, `0x800c3f18`, the popup, the label formatter's entry.
+
+### Checked in the emulator
+
+`test_chroma.py` on chroma-test2: the sections take the new range, and a new section `push` (6 checks):
+- a tap steps at the release;
+- held and turned, the scale goes 1, 2, 3, 2, 1, 0, 33, 32 and the release adds nothing;
+- with SHIFT, the key goes B, Bb, B, C, C#; VALUE first and SHIFT after works too;
+- the popups and the pads follow;
+- without VALUE held, Chrom turns are the parent's, and ROLL + turn changes the key with a scale;
+- VALUE as the base class's, and outside chromatic mode: as the parent.
+
+All pass.
+
+### Not known
+
+- How +19..+27 sounds: the resampler reads the sample faster than 3x there (stage 2's study saw its source run
+  short from about 3x).
+- Whether turning VALUE while it is pushed is comfortable on the unit's knob.
 
 ## Build
 
