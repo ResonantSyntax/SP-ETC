@@ -24,6 +24,12 @@
  *                       down, or EXIT + ROLL; ROLL let go, tapped or unlatched and other pads leave it alone.
  *                       Its pad blinks (in the pad's bank, outside DOOM OS) and HOLD is lit. HOLD with
  *                       nothing rolling, and SHIFT + HOLD, are stock's
+ *   chromatic mode      (test3) the pads play notes of one sample, so a chromatic roll takes nothing from the
+ *                       pad under the finger: every chromatic pad repeats at one chromatic division (1/16
+ *                       from power-on; VALUE steps it, ROLL + VALUE press shows it), at the tempo the
+ *                       sample's pad follows, always by re-hitting. The pad's Roll, LOOP, GATE and follow
+ *                       flag are not read or written. With ROLL latched and VALUE held, a turn is the
+ *                       page's (its scale or key)
  *
  * Each repeat is a note-off then a note-on at the press's velocity, at the last repeat + one division
  * (288000000 x beats / BPMx100 frames, the remainder carried) on the audio clock, sent at the first UI
@@ -101,6 +107,10 @@ typedef unsigned char u8;
 #define PHYS 17
 #define NONE 0xFF
 #define DJ_MODE 0xC2                /* project: DJ Mixer Mode */
+#define P_CHROMATIC 0xBF            /* project: chromatic mode (the stock pad note then sends notes, type 0xC) */
+#define P_SOURCE 0xC1               /* project: the pad whose sample chromatic mode plays */
+#define SG_PAGE 0x1E                /* the Sound Generator's page: its pads are its own */
+#define CHROMA_DIV 4                /* chromatic rolls start at 1/16 */
 #define P_CUR_BANK 0
 #define P_CUR_PAD 1
 #define P_GATE 0x6A
@@ -135,7 +145,8 @@ struct nr_repeat {
     u8 seen;         /* the pad's Roll as last read or written: a change from elsewhere (SHIFT + ROLL) is taken */
     u8 phys;         /* the pad (0..15) or SUB PAD (16) whose press started it */
     u8 stick;        /* held by HOLD: goes on until stopped */
-    u8 spare[3];
+    u8 chroma;       /* a chromatic pad: the chromatic division, the sample's tempo, nothing of the pad's own */
+    u8 spare[2];
     u32 last;        /* the last hit (frames) */
     u32 next;        /* the next hit */
     u32 frac;        /* what a period leaves over, in 1/den frames */
@@ -159,6 +170,7 @@ struct nr_state {
     u32 latches;     /* latch toggles since boot */
     u16 blink;       /* the pad lights (0..15) blinking for held rolls */
     u8 hold_led;     /* HOLD lit for held rolls */
+    u8 chroma_div;   /* chromatic rolls' division, 0: CHROMA_DIV */
 };
 
 EXPORT volatile u8 nr_enabled;     /* not DJ mode; read from other tasks by the gates */
@@ -205,6 +217,15 @@ static void update_enabled(void) {
 
 static u32 follows(u32 pad) {
     return !(EXT(pad)[FOLLOW_BYTE] & 1);
+}
+
+/* Chromatic mode, as the stock pad note sees it (not on the Sound Generator's page, whose pads are its own). */
+static u32 chroma_mode(void) {
+    return *PAGE != SG_PAGE && PROJECT_GET(PROJECT, P_CHROMATIC, -1) != 0;
+}
+
+static u32 chroma_div(void) {
+    return nr.chroma_div ? nr.chroma_div : CHROMA_DIV;
 }
 
 /* What Roll holds for a division: itself, or a triplet's nearest stock division. */
@@ -267,9 +288,16 @@ static void say(const char *a, const char *b) {
     POPUP(nr_text, POPUP_TIME(0));
 }
 
-/* A period is NUM / DEN beats at the pad's tempo: key = DEN x BPMx100 << 3 | NUM. */
+/* A period is NUM / DEN beats at the pad's tempo (a chromatic pad: the sample's pad's): key = DEN x BPMx100 << 3
+ * | NUM. */
 static u32 period_key(const struct nr_repeat *r) {
-    s32 t = PAD_TEMPO(r->pad);
+    s32 pad = r->pad;
+    if (r->chroma) {
+        s32 source = PROJECT_GET(PROJECT, P_SOURCE, -1);
+        if ((u32)source < PADS)
+            pad = source;
+    }
+    s32 t = PAD_TEMPO(pad);
     if (t < 2000 || t > 30000)
         t = TEMPO_DEFAULT;
     return (div_den[r->div] * (u32)t) << 3 | div_num[r->div];
@@ -302,8 +330,9 @@ static u32 held(const struct nr_repeat *r) {
     return nr_phys_down[r->phys] && nr_phys_pad[r->phys] == r->pad;
 }
 
-/* A pad starts repeating: its first repeat a division after now, or at the next tick. */
-static void start(u32 pad, u32 vel, u32 phys, u32 hit_now) {
+/* A pad starts repeating: its first repeat a division after now, or at the next tick. A chromatic pad (chroma)
+ * at the chromatic division, by re-hits; any other at its own division, by re-hits or its stock roll. */
+static void start(u32 pad, u32 vel, u32 phys, u32 hit_now, u32 chroma) {
     struct nr_repeat *r = find(pad);
     if (r && r->kind == KIND_RING) {               /* its stock roll runs (or is asked for): keep it going */
         r->hold |= nr.held;
@@ -318,12 +347,19 @@ static void start(u32 pad, u32 vel, u32 phys, u32 hit_now) {
             return;
         nr.active++;
     }
-    u32 div = pad_div(pad);
-    if (!div) {
-        div = 2;                                   /* as stock's ROLL + pad: Off becomes 1/4 */
-        PAD_SET(SMPL, P_ROLL, (s32)div, (s32)pad);
+    u32 div;
+    if (chroma) {
+        div = chroma_div();
+        r->kind = KIND_HIT;
+    } else {
+        div = pad_div(pad);
+        if (!div) {
+            div = 2;                               /* as stock's ROLL + pad: Off becomes 1/4 */
+            PAD_SET(SMPL, P_ROLL, (s32)div, (s32)pad);
+        }
+        r->kind = PAD_GET(SMPL, P_LOOP, (s32)pad) && !PAD_GET(SMPL, P_GATE, (s32)pad) ? KIND_RING : KIND_HIT;
     }
-    r->kind = PAD_GET(SMPL, P_LOOP, (s32)pad) && !PAD_GET(SMPL, P_GATE, (s32)pad) ? KIND_RING : KIND_HIT;
+    r->chroma = (u8)chroma;
     r->pad = (u8)pad;
     r->vel = (u8)vel;
     r->div = (u8)div;
@@ -362,7 +398,7 @@ static void stop_all(void) {
 /* A pad held repeats while ROLL is held or latched; one let go, while ROLL is still held from its start; a held
  * roll until it is stopped. */
 static u32 alive(const struct nr_repeat *r) {
-    if (!nr_enabled || !follows(r->pad))
+    if (!nr_enabled || (!r->chroma && !follows(r->pad)))
         return 0;
     if (r->stick)
         return 1;
@@ -454,14 +490,19 @@ static u32 step_div(u32 div, s32 delta) {
     return nr_div_order[i < 0 ? 0 : i > 15 ? 15 : i];
 }
 
-/* VALUE turned: every repeating pad's division (or the current pad's) moves along the list at once. */
+/* VALUE turned: every repeating pad's division (or the current pad's) moves along the list at once. Chromatic
+ * pads share one division: it moves once for all of them, and in chromatic mode with nothing repeating. */
 static void step(s32 delta) {
-    u32 shown = 0, any = 0;
+    u32 shown = 0, any = 0, chroma = 0;
     nr.steps++;
     for (u32 i = 0; i < REPEATS; i++) {
         struct nr_repeat *r = &nr_rep[i];
         if (r->kind != KIND_HIT)
             continue;
+        if (r->chroma) {
+            chroma = 1;
+            continue;
+        }
         r->div = (u8)step_div(r->div, delta);
         r->seen = (u8)keep_div(r->pad, r->div);
         retime(r);
@@ -469,7 +510,17 @@ static void step(s32 delta) {
             shown = r->div;
         any = 1;
     }
-    if (!any) {
+    if (chroma || (!any && chroma_mode())) {
+        shown = step_div(chroma_div(), delta);
+        nr.chroma_div = (u8)shown;
+        for (u32 i = 0; i < REPEATS; i++) {
+            struct nr_repeat *r = &nr_rep[i];
+            if (r->kind == KIND_HIT && r->chroma) {
+                r->div = (u8)shown;
+                retime(r);
+            }
+        }
+    } else if (!any) {
         u32 pad = current_pad();
         if (pad >= PADS)
             return;
@@ -494,12 +545,13 @@ static void follow_toggle(void) {
 
 /* ROLL went down: pads already held start at once (and then this press is no tap). */
 static void roll_down(void) {
+    u32 chroma = chroma_mode();
     nr.held = 1;
     nr.tap = 1;
     for (u32 i = 0; i < PHYS; i++) {
         u32 pad = nr_phys_pad[i];
-        if (nr_phys_down[i] && pad < PADS && follows(pad) && !find(pad)) {
-            start(pad, nr_phys_vel[i], i, 1);
+        if (nr_phys_down[i] && pad < PADS && (chroma || follows(pad)) && !find(pad)) {
+            start(pad, nr_phys_vel[i], i, 1, chroma);
             nr.tap = 0;
         }
     }
@@ -553,7 +605,10 @@ EXPORT s32 nr_event_c(const s16 *ev) {
         nr.ate_value = 0;
         if (what == KEY_VALUE && nr.held) {
             nr.ate_value = 1;
-            follow_toggle();
+            if (chroma_mode())
+                say("Roll ", nr_div_names[chroma_div()]);     /* chromatic pads all follow ROLL */
+            else
+                follow_toggle();
             return 1;
         }
         if (what == KEY_HOLD && !key_down(KEY_SHIFT))
@@ -594,6 +649,8 @@ EXPORT s32 nr_event_c(const s16 *ev) {
             hits |= nr_rep[i].kind == KIND_HIT;
         if (!nr.latched || !hits)
             return 0;
+        if (key_down(KEY_VALUE) && chroma_mode())
+            return 0;                              /* VALUE held: the chromatic page's push-turn (scale, key) */
     }
     step(ev[2]);
     return 1;
@@ -620,8 +677,9 @@ EXPORT void nr_pad_c(s32 pad, s32 vel, s32 mode, u32 caller) {
     nr_phys_pad[i] = (u8)pad;
     nr_phys_vel[i] = (u8)(vel > 127 ? 127 : vel);
     update_enabled();
-    if (nr_enabled && (nr.held || nr.latched) && follows((u32)pad))
-        start((u32)pad, nr_phys_vel[i], i, 0);
+    u32 chroma = chroma_mode();
+    if (nr_enabled && (nr.held || nr.latched) && (chroma || follows((u32)pad)))
+        start((u32)pad, nr_phys_vel[i], i, 0, chroma);
 }
 
 /* The UI tick, every millisecond (0x8003c5f0(1)). */
@@ -646,7 +704,7 @@ EXPORT void nr_tick_c(s32 ms) {
             stop(r);
             continue;
         }
-        s32 div = PAD_GET(SMPL, P_ROLL, r->pad);
+        s32 div = r->chroma ? r->seen : PAD_GET(SMPL, P_ROLL, r->pad);
         if (div != r->seen) {                      /* SHIFT + ROLL changed it: that division, no triplet */
             r->seen = (u8)div;
             if ((u32)(div - 1) <= 9) {

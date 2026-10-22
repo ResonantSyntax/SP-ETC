@@ -356,6 +356,47 @@ rule, the bits not written, the bits not dropped when Roll changes, the save whi
 
 - How the fast triplets sound with the unit's real UI tick and SMPL TASK load (1/64T, 1/32T at fast tempos).
 
+## 8. Test 3: chromatic mode (note-repeat-test3)
+
+From the user's test of combined-test3: in chromatic mode the roll ran too fast, and pad 10 never rolled.
+
+### 8.1 Why (run in Unicorn on combined-test3)
+
+A chromatic press reaches the module like any other pad: the chromatic page (0x18) hands it on to the page pad
+handler (`0x80111dd2`), which plays it through the stock pad note. So the roll took everything from the pad under
+the finger: its Roll, its tempo, LOOP, GATE and the follow flag.
+- **Speed:** a pad whose Roll VALUE had set to 1/64 in drum mode rolled 33 times a second.
+- **Pad 10:** a pad holding a LOOP sample without GATE asks for the stock ring roll. That waits for the pad to
+  sound, but in chromatic mode the voice plays the sample's pad (project 0xC1). So nothing came. A pad set to
+  ignore ROLL rolled nothing either.
+
+### 8.2 What it does
+
+- A press the stock pad note plays in chromatic mode (project 0xBF on, not the Sound Generator's page) starts a
+  **chromatic roll**: always re-hits, at the tempo the sample's pad follows (`0x80047dd0`, the pad 0xC1 names).
+- **One chromatic division** for every chromatic pad: 1/16 from power-on (kept in the module, not saved).
+- The pad's Roll, LOOP, GATE and follow flag are not read or written; SHIFT + ROLL's change of a pad's Roll doesn't
+  reach chromatic rolls.
+- **VALUE** (ROLL held, or latched with pads repeating) steps the chromatic division for all of them at once, and
+  with nothing repeating in chromatic mode ROLL + VALUE steps it. Popup `Roll 1/16`.
+- **ROLL + VALUE press** in chromatic mode shows the division and toggles no follow flag (the current pad isn't
+  the one playing).
+- Latched with a chromatic pad repeating, a VALUE turn **with VALUE held** goes on to the page: the chromatic
+  page's push-turn (scale, key; chroma-test2). Drum mode keeps test2's ways.
+
+### 8.3 Checked in the emulator
+
+Section `chroma` (5 checks, on the chromatic page, the sample on A-04 at 90 BPM, the other pads at 120): every
+pad rolls at 1/16 of 90 BPM, its Roll and byte 0x70 untouched; pad 10 with a LOOP sample without GATE, set to
+ignore ROLL, Roll 1/64, rolls the same, no stock roll asked for; VALUE moves two rolling pads to 3/64 at once and
+the next roll starts there; ROLL + VALUE press shows it, toggles nothing, saves nothing; latched, VALUE held + turn
+is not taken. All 102 checks pass (test2's 97 unchanged). On combined-test3, pad 10's three cases fail as the user
+heard (the second hit only, no roll; 33 hits a second at 1/64).
+
+### 8.4 Not known
+
+- A LOOP sample without GATE as the chromatic sample: re-hits may stop and start it.
+
 ## Build
 
 ```sh
