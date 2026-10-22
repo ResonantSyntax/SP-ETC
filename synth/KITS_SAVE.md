@@ -5,6 +5,9 @@ stock 5.52 + DOOM OS 0.6.1 ED5E + the fork). In v9.46 every drum-mode edit lives
 (README: "Kit edits reset at power-on"); a user lost a customised kit that way. This build saves the edits per
 project in a small file beside the project's `PADCONF.BIN`, so each project keeps its own kits.
 
+**Test 2** (section 7) saves the Sound Generator's own settings too, and gives drum mode and melodic mode
+each their own arp; sections 1-6 describe test 1.
+
 Addresses are 5.52 runtime addresses. **Verified** means read in the code (Ghidra decompilation and capstone)
 and, where marked, run in Unicorn; **inferred** means it follows from the code but wasn't run; **unknown**
 needs the unit.
@@ -193,7 +196,65 @@ the SG page's destructor and update being called as read in the code, project co
 with the file present, an SD-card project, USB storage mode, and how the file behaves with Roland's app or
 librarian.
 
-## 7. Reproduce
+## 7. Test 2 (kits-save-test2): the Sound Generator, and an arp for each mode
+
+From the user's test of combined-test3: turning the arp on in drum mode turned it on in melodic mode too (one arp
+serves both in v9.46), and the Sound Generator's settings reset at power-on.
+
+### 7.1 Each mode its own arp
+
+ARP, RATE, A.OCT and HOLD are the kits module's variables, one set. The module keeps the set of the mode not on
+now (`ks_arp_other`; `ks_arp_drum` says which mode the arp's own variables hold). At each screen update, before
+the kits' own, a kit mode change puts the arp's settings away for the mode left and brings back the other mode's.
+An ARP or HOLD change on the way lets go of the arp's held notes with dispatch off, as the VALUE menu does it. The
+update comes every 50 ms while the page is open; the arp only plays there.
+
+### 7.2 The Sound Generator's settings
+
+| Saved | Where it lives | Range |
+| --- | --- | --- |
+| NOTE | keyboard state `0x80591c48` + 0x10 | 0..11 (project parameter 0xf2) |
+| OCT | + 0x4 | -3..4 |
+| OFST | + 0x8 | -4..11 |
+| TYPE, FREQ, LEVEL (CTRL 1-3) | settings 0x7b, 0x7c, 0x7d | 0..31, -36..48, 0..127 |
+| Pad Length, DUTY, BALANCE (SHIFT + CTRL 1-3) | settings 0x7e, 0x7f, 0x80 | -8..20, 0..100 (0..0 on TYPEs 0-9), -51..51 |
+| TUNE | settings 0x81 | 4160..4640 (416.0..464.0 Hz) |
+
+The settings go back through the stock setter (`0x800dd0c0`), TYPE first: it clamps to the range (DUTY's follows
+TYPE) and gives the four voices the value too, as a knob does. NOTE, OCT and OFST are stored as the VALUE menu
+stores them. A project without a file gets the power-on values, which the boot's load keeps before anything is
+applied (`ks_power_on`): NOTE C, OCT 0, OFST 0, TYPE 0, FREQ 0, LEVEL 127, Pad Length 4, DUTY 0, BALANCE 0,
+TUNE 440.0.
+
+### 7.3 The file, version 2
+
+1712 bytes: the header as before with version 2 and payload size 1696; the pads; then a 32-byte tail:
+
+| Offset in the tail | Contents |
+| --- | --- |
+| 0..7 | as version 1: kit, M.CH, melodic mode's ARP, RATE, A.OCT, HOLD, ENV, SCALE |
+| 8..11 | drum mode's ARP, RATE, A.OCT, HOLD |
+| 12..15 | NOTE, OCT, OFST, 0 |
+| 16..29 | settings 0x7b..0x81, signed 16 bits each, little-endian |
+| 30..31 | 0 |
+
+A version 1 file (1688 bytes, from kits-save-test1 or the combined builds) still loads: its arp for both modes,
+the Sound Generator's power-on settings. It stays until something changes; then version 2 replaces it. Any field
+out of its range, a non-zero reserved byte, or a version and size that don't go together is a bad file, as
+before.
+
+### 7.4 Checked in the emulator
+
+`test_kits_save.py` (169 checks) passes on kits-save-test2: the sections above with the new layout, plus:
+- each mode's arp: melodic ARP UP, 1/8T, HOLD ON, then drum mode brings its own (OFF, 1/16) with the held
+  notes let go; drum ARP DOWN; back to melodic, its own again; both saved and restored at power-on; on v9.46 one
+  arp serves both (the user's report);
+- the Sound Generator: every setting saved, and restored at power-on with the SG singleton and its voices exactly
+  as the knobs and the menu leave them on v9.46; a project without a file gets the power-on values; every field at
+  both ends loads, one past each end is a bad file; a version 1 file loads as above, writes nothing, and becomes
+  version 2 after a change.
+
+## 8. Reproduce
 
 ```sh
 python synth/build_kits_save.py out/kits-v946-final/SP404MKII_APP1.bin out/kits-save --zig /path/to/zig

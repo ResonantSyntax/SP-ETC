@@ -37,7 +37,7 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS, ZERO = 0x60080000, 0x600800E4, 0x60080088, 0x60080100
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'kits-save-test1'
+REVISION = 'kits-save-test2'
 SLOT = 0x2000                       # reserved: [base, base + SLOT)
 GAP = (0x83FC9000, 0x83FF0000)      # above the fork's rows (end 0x83FC8450), below the end of cacheable SDRAM
 # Every other fork module's reserved RAM (branch, start, end).
@@ -79,7 +79,8 @@ DEFAULTS = [(0x83FC58D1, 1, 'kit_last_mode'), (0x83FBFCBC, 1, 'kit_midi_channel'
 EXPECTED_DEFAULTS = [1, 15, 0, 4, 0, 0, 4, 0]
 EXPORTS = ('ks_save_entry', 'ks_load_entry', 'ks_save_c', 'ks_load_c', 'ks_sg_poll', 'ks_sg_leave', 'ks_path',
            'ks_seen', 'ks_file_ok', 'ks_buf', 'ks_busy', 'ks_pending', 'ks_pending_age', 'ks_quiet', 'ks_last_hash',
-           'ks_loads', 'ks_defaults', 'ks_writes', 'ks_errors', 'ks_posts', 'ks_skips', 'ks_refused')
+           'ks_loads', 'ks_defaults', 'ks_writes', 'ks_errors', 'ks_posts', 'ks_skips', 'ks_refused', 'ks_arp_other',
+           'ks_arp_drum', 'ks_power_on', 'ks_power_on_taken')
 ENTRIES = ('ks_save_entry', 'ks_load_entry', 'ks_sg_poll', 'ks_sg_leave')
 # (address, the bytes there in the parent, what they are, the entry symbol, where the module's copy goes on)
 SITES = [
@@ -152,6 +153,18 @@ GUARDS = [
      'the scales module (v9.6): 34 scales, 0..33 on the SG page'),
     (0x83FA2000, 0x83FC8450, '666e86b2e139224bb9dfc3f8f343088ccc059a8c2b5a6d3588fb38430ef5b16a',
      'the kits module of v9.46 as booted (code, data, zeroed bss): every address in KITS'),
+    # test2: the Sound Generator's own settings
+    (0x800D94D8, 0x800D9500, '6b743b722b0f3cd7d65a7221a09cbd73b81c6ae7d60eeafadaad2b5fa3defd02',
+     'the settings getter (settings, id, 0) and its switch'),
+    (0x800DD0C0, 0x800DD0FE, '3c8032e5d7667f63a2cd8e9025fbcfb0bbfdb35bbfd74c20ca4707bbe141e46b',
+     'the settings setter (settings, id, value, 0): clamped to the range (vtable +0x1c), then by id'),
+    (0x800DD0FE, 0x800DD258, 'cdf07b82ec6fb6befe1e3b3d033104d8357a2226415a8b8b0ce5cc9be7b8d8e4',
+     'the setter\'s switch table (ids 0x7b..0x82: the SG settings store, which gives the voices the value too)'),
+    (0x8015CBCC, 0x8015CCF4, '7b2904394d773686b94866053bf280327f3ac9962baa89340bf782fc70526829',
+     'SG VALUE menu: NOTE keyboard +0x10 within project parameter 0xf2\'s range, OCT +0x4 -3..4, OFST +0x8 -4..11, '
+     'ENV and TUNE settings 0x82, 0x81'),
+    (0x8015CE08, 0x8015CE9E, '2dd8c0925a24fc7c1fe22798cea4771c87285d494a45763b896026633a3a7616',
+     'SG knobs: CTRL 1-3 TYPE 0x7b, FREQ 0x7c, LEVEL 0x7d; with SHIFT Pad Length 0x7e, DUTY 0x7f, BALANCE 0x80'),
 ]
 MD = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB | capstone.CS_MODE_MCLASS)
 
@@ -261,6 +274,7 @@ def listing(code, at):
 def links_header(defaults):
     lines = [f'#define KS_{name.upper()} {value:#x}u' for name, value in KITS.items()]
     lines.append('#define KS_DEFAULT_TAIL {' + ', '.join(str(v & 0xFF) for v in defaults) + '}')
+    lines.append('#define KS_DEFAULT_ARP ' + ', '.join(str(v) for v in defaults[2:6]))      # ARP, RATE, A.OCT, HOLD
     return '/* written by build_kits_save.py: the kits module of v9.46 */\n' + '\n'.join(lines) + '\n'
 
 
@@ -419,7 +433,10 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
                     'Tone, Level, Sweep, Noise, Attack), the current kit, M.CH, ARP, RATE, A.OCT, HOLD, ENV and '
                     'SCALE in SG_KITS.BIN beside PADCONF.BIN; read when the project loads (boot included), written '
                     'about 2 s after the last change on the Sound Generator page, when it closes, and with the '
-                    'stock PADCONF save; a missing or bad file gives the power-on defaults',
+                    'stock PADCONF save; a missing or bad file gives the power-on defaults. Test2 (file version 2): '
+                    'the Sound Generator\'s NOTE, OCT, OFST, TYPE, FREQ, LEVEL, Pad Length, DUTY, BALANCE and TUNE '
+                    'saved too, and drum and melodic mode each keep their own ARP, RATE, A.OCT and HOLD; version 1 '
+                    'files still load',
         parent_app1=str(inp), parent_sha256=sha(inp.read_bytes()),
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
         if parent_manifest.exists() else None,

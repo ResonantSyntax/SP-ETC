@@ -35,8 +35,8 @@
  * a new voice's first chunk while the charge task may still be finishing that voice object's last note).
  *
  * The ENVELOPE screen gets four pages after stage 1's (env_more_pages[0..3]): PITCH (depth, attack, decay),
- * FILTER (type, cutoff, resonance), F-ENV (amount, attack, decay) and CURVES, whose middle place shows
- * stock's dropout counter (DROPS). A turn writes the pad's bytes and, with COPY or REMAIN held, its mute
+ * FILTER (type, cutoff, resonance), F-ENV (amount, attack, decay) and CURVES (pitch, filter). A turn writes
+ * the pad's bytes and, with COPY or REMAIN held, its mute
  * group's or bank's (stage 1's env_targets), then calls env_touched (stock's Edited flag, stage 1's save
  * timer).
  *
@@ -651,13 +651,11 @@ static void fenv_graph(u32 ctx, u32 pad, s32 start, s32 end) {
                   byte_of(pad, B_CURVES) >> 2 & 3, amt);
 }
 
-/* CTRL 2's place on the CURVES page: stock's dropout count since power-on (DROPS), which the stream consumer 0x168fe
- * adds 1 to for every 64-frame block it finds a voice's next chunk not filled yet (and plays nothing) */
-#define DROPS (*(const volatile u32 *)0x82E0B940u)
-
+/* CURVES: CTRL 1 the pitch envelope's, CTRL 3 the cutoff envelope's; CTRL 2 nothing (test 5 showed stock's
+ * dropout count there, which stayed 0 on the unit) */
 static void curves_value(u32 pad, u32 ctrl, char *out) {
     if (ctrl == 2)
-        *number(out, DROPS) = 0;
+        *out = 0;
     else
         *put(out, curve_names[byte_of(pad, B_CURVES) >> (ctrl == 1 ? 0 : 2) & 3]) = 0;
 }
@@ -671,5 +669,5 @@ EXPORT const struct env_page pf_pages[4] = {
     {"PITCH", {"C1:DEPTH", "C2:ATTACK", "C3:DECAY"}, pitch_value, pitch_turn, pitch_graph},
     {"FILTER", {"C1:TYPE", "C2:CUTOFF", "C3:RESO"}, filter_value, filter_turn, 0},
     {"F-ENV", {"C1:AMOUNT", "C2:ATTACK", "C3:DECAY"}, fenv_value, fenv_turn, fenv_graph},
-    {"CURVES", {"C1:PITCH", "DROPS", "C3:FILTER"}, curves_value, curves_turn, 0},
+    {"CURVES", {"C1:PITCH", "", "C3:FILTER"}, curves_value, curves_turn, 0},
 };

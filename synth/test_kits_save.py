@@ -36,7 +36,14 @@ Checks:
   close, nor the stock PADCONF save; the stock save of another project never writes our file; a failed open or a
   short write keeps the edits for the next save; a held lock skips a save and makes a load wait;
 - the stock paths: a stock command 0xd, the stock save and load, the page close and the screen update behave as
-  on the parent (the same files, CSmplPrm and calls).
+  on the parent (the same files, CSmplPrm and calls);
+- test2, each mode's arp: melodic and drum mode keep their own ARP, RATE, A.OCT and HOLD across kit mode changes
+  (the screen update swaps them, the arp's held notes go with an ARP or HOLD change), both saved and restored; on
+  the parent one arp serves both;
+- test2, the Sound Generator: NOTE, OCT, OFST and settings 0x7b..0x81 (TYPE, FREQ, LEVEL, Pad Length, DUTY, BALANCE,
+  TUNE) saved and restored through the stock setter (the voices get them as from the knobs); a project without a
+  file gets the power-on values; every field out of range is a bad file; a version 1 file (kits-save-test1) loads
+  with its arp for both modes and the power-on Sound Generator, nothing written until a change, then version 2.
 """
 import hashlib
 import json
@@ -70,9 +77,20 @@ KIT = dict(kit_pads=0x83FBFCC0, kit_pads_ready=0x83FC0340, kit_mode=0x83FC58E0, 
 KIT_INIT_PADS, KIT_UI_POLL, KIT_UI_KNOB, KIT_ITEM_STEP, ARP_ITEM_STEP = (0x83FA7F85, 0x83FA7484, 0x83FA73DD,
                                                                          0x83FA6F55, 0x83FA3E79)
 ENV, SCALE = 0x80249810, KB + 0xC
-MAGIC, PAYLOAD, FILE_SIZE, PADS = 0x544B4753, 1672, 1688, 13 * 16 * 8    # the file starts "SGKT"
+MAGIC, PAYLOAD, FILE_SIZE, PADS = 0x544B4753, 1696, 1712, 13 * 16 * 8    # the file starts "SGKT"
+PAYLOAD_V1, FILE_SIZE_V1 = 1672, 1688                                         # version 1 (kits-save-test1)
 QUIET = 40
-DEFAULT_TAIL = bytes([1, 15, 0, 4, 0, 0, 4, 0])
+SG_IDS = range(0x7B, 0x82)          # TYPE, FREQ, LEVEL, Pad Length, DUTY, BALANCE, TUNE
+SG_POWER_ON = [0, 0, 0, 0, 0, 127, 4, 0, 0, 4400]     # NOTE, OCT, OFST, then settings 0x7b..0x81
+SG_RANGES = [(0, 31), (-36, 48), (0, 127), (-8, 20), (0, 100), (-51, 51), (4160, 4640)]
+
+
+def sg_tail(sg):
+    """NOTE, OCT, OFST, 0, settings 0x7b..0x81 as signed 16 bits, 0, 0: the tail from offset 12 on."""
+    return bytes([sg[0] & 0xFF, sg[1] & 0xFF, sg[2] & 0xFF, 0]) + struct.pack('<7h', *sg[3:]) + bytes(2)
+
+
+DEFAULT_TAIL = bytes([1, 15, 0, 4, 0, 0, 4, 0, 0, 4, 0, 0]) + sg_tail(SG_POWER_ON)
 P = lambda n: f'B:/ROLAND/SP-404MKII/PROJECT_{n + 1:02d}/SG_KITS.BIN'          # noqa: E731
 PADCONF = lambda n: f'B:/ROLAND/SP-404MKII/PROJECT_{n + 1:02d}/PADCONF.BIN'    # noqa: E731
 fails = []
@@ -346,10 +364,36 @@ class Machine:
                 s32(self.r32(KIT['arp_mode'])), s32(self.r32(KIT['arp_rate'])), s32(self.r32(KIT['arp_oct'])),
                 s32(self.r32(KIT['arp_hold'])), s32(self.r32(ENV)), s32(self.r32(SCALE)))
 
+    def sg(self):
+        """NOTE, OCT, OFST (the keyboard state) and settings 0x7b..0x81, as RAM holds them."""
+        return ([s32(self.r32(KB + o)) for o in (0x10, 4, 8)] +
+                [s32(self.call(SETTINGS_GET, SETTINGS, i, 0)) for i in SG_IDS])
+
+    def arps(self):
+        """(melodic, drum): ARP, RATE, A.OCT, HOLD each, the arp's own variables and the module's other set."""
+        k = self.kits()
+        live = [k[4], k[5], k[6], k[7]]
+        other = [s32(self.r32(self.d('ks_arp_other') + 4 * i)) for i in range(4)]
+        return (other, live) if self.r8(self.d('ks_arp_drum')) else (live, other)
+
     def payload(self):
         k = self.kits()
         kit = k[1] or k[2]
-        return k[0] + bytes([kit, k[3], k[4] & 0xFF, k[5] & 0xFF, k[6] & 0xFF, k[7] & 0xFF, k[8] & 0xFF, k[9] & 0xFF])
+        mel, drum = self.arps()
+        return k[0] + bytes([kit, k[3]] + [v & 0xFF for v in mel] + [k[8] & 0xFF, k[9] & 0xFF] +
+                            [v & 0xFF for v in drum]) + sg_tail(self.sg())
+
+    def set_sg(self, sg):
+        """NOTE, OCT, OFST into the keyboard state as the VALUE menu stores them; the rest through the settings
+        setter, as the knobs and the menu set them."""
+        for o, v in zip((0x10, 4, 8), sg[:3]):
+            self.uc.mem_write(KB + o, struct.pack('<i', v))
+        for i, v in zip(SG_IDS, sg[3:]):
+            self.call(SETTINGS_SET, SETTINGS, i, v & 0xFFFFFFFF, 0)
+
+    def melodic(self):
+        """Melodic mode, as SHIFT + PATTERN EDIT leaves it."""
+        self.w8(KIT['kit_mode'], 0)
 
     # edits, through the kits' own code
     def kit_on(self, kit):
@@ -371,14 +415,21 @@ class Machine:
         self.call(SETTINGS_SET, SETTINGS, 0x82, v, 0)
 
 
-def file_bytes(payload, version=1, magic=MAGIC, header=16, size=PAYLOAD, crc=None):
+def file_bytes(payload, version=2, magic=MAGIC, header=16, size=PAYLOAD, crc=None):
     crc = zlib.crc32(payload) if crc is None else crc
     return struct.pack('<IBBBBII', magic, version & 0xFF, version >> 8, header & 0xFF, header >> 8, size, crc) + payload
 
 
+SG_EDIT = [5, -2, 7, 12, -7, 90, -3, 40, 20, 4321]
+
+
 def edit_a(m):
-    """A spread of edits: KPR77, pads with every control moved, sounds stepped, two kits, M.CH, the arp, ENV, SCALE."""
+    """A spread of edits: the Sound Generator and melodic mode's arp, then KPR77, pads with every control moved,
+    sounds stepped, two kits, M.CH, drum mode's arp, ENV, SCALE."""
+    m.set_sg(SG_EDIT)
+    m.step(6, 1); m.step(7, 1); m.step(9, 1)       # melodic: ARP UP, RATE 1/16T, HOLD ON
     m.kit_on(3)
+    m.poll(1)                                       # the screen update swaps in drum mode's arp
     for p, (t, d, o) in enumerate([(0, 127, 3), (127, 0, 90), (64, 64, 64), (10, 99, 120)]):
         m.pad(p)
         m.knob(1, t); m.knob(2, d); m.knob(3, o)
@@ -389,7 +440,7 @@ def edit_a(m):
     m.pad(9)
     m.knob(1, 3); m.step(13, -1); m.step(17, 17)
     m.step(21, -6)                                  # M.CH 16 -> 10
-    m.step(6, 2); m.step(7, -3); m.step(8, -2); m.step(9, 1)   # ARP DOWN, RATE 1/4T, A.OCT -2, HOLD ON
+    m.step(6, 2); m.step(7, -3); m.step(8, -2); m.step(9, 1)   # drum: ARP DOWN, RATE 1/4T, A.OCT -2, HOLD ON
     m.env(7)
     m.uc.mem_write(SCALE, struct.pack('<i', 21))
 
@@ -462,9 +513,12 @@ def boot_checks(img, parent, man, fac):
     p = Machine(parent)
     p.load()
     check(m.kits()[0] == fac, 'boot without a file: the factory pads (the parent\'s kit_init_pads)')
-    check(m.payload()[PADS:] == DEFAULT_TAIL and m.r8(KIT['kit_mode']) == 0,
-          f'boot without a file: TR808, M.CH 16, ARP OFF, 1/16, A.OCT 0, HOLD OFF, ENV 4, SCALE 0, melodic '
+    check(m.payload()[PADS:] == DEFAULT_TAIL and m.r8(KIT['kit_mode']) == 0 and m.sg() == SG_POWER_ON,
+          f'boot without a file: TR808, M.CH 16, ARP OFF, 1/16, A.OCT 0, HOLD OFF (both modes), ENV 4, SCALE 0, '
+          f'melodic; NOTE C, OCT 0, OFST 0, TYPE 0, FREQ 0, LEVEL 127, Pad Length 4, DUTY 0, BALANCE 0, TUNE 440.0 '
           f'({m.payload()[PADS:].hex()})')
+    check(list(m.mem(m.d('ks_power_on'), 20)) == list(sg_tail(SG_POWER_ON)) and m.r8(m.d('ks_power_on_taken')) == 1,
+          'the boot\'s load kept the Sound Generator\'s power-on settings')
     pk = p.kits()
     check(pk[1:] == (0, 1, 15, 0, 4, 0, 0, 4, 0), f'the parent powers on with the same values ({pk[1:]})')
     check(not m.writes() and [x[1] for x in m.fs if x[0] == 'open'] == [P(0), PADCONF(0)],
@@ -495,7 +549,8 @@ def roundtrip_checks(img, parent, man):
     m.smpl()
     f = m.files.get(P(0))
     check(f is not None and bytes(f) == file_bytes(want) and bytes(f[:4]) == b'SGKT' and len(f) == FILE_SIZE,
-          'SMPL TASK writes SG_KITS.BIN: "SGKT", version, sizes, CRC-32, then exactly the kits (1688 bytes)')
+          'SMPL TASK writes SG_KITS.BIN: "SGKT", version 2, sizes, CRC-32, then exactly the kits, both arps and the '
+          'Sound Generator (1712 bytes)')
     check([x for x in m.fs if x[0] == 'open'] == [('open', P(0), 0x601)] and PADCONF(0) not in m.files,
           f'the module\'s own command 0xd leaves PADCONF.BIN alone while CSmplPrm is not edited ({m.fs})')
     check(m.ks('ks_writes') == 1 and m.ks('ks_skips') == 1 and m.ks('ks_pending', 1) == 0, 'counted; nothing pending')
@@ -506,8 +561,9 @@ def roundtrip_checks(img, parent, man):
     # power off, on
     n = boot(img, man, m.files)
     k = n.kits()
-    check(n.payload() == want and k[1] == 0 and k[2] == want[PADS],
-          f'power on: every value back, kit mode melodic at boot as in v9.46, SHIFT + PATTERN EDIT\'s kit restored')
+    check(n.payload() == want and k[1] == 0 and k[2] == want[PADS] and n.sg() == SG_EDIT,
+          f'power on: every value back (the Sound Generator\'s too), kit mode melodic at boot as in v9.46, SHIFT + '
+          f'PATTERN EDIT\'s kit restored')
     check(not n.writes() and n.ks('ks_loads') == 1, 'power on: read once, nothing written')
     # leaving the page saves at once
     n.kit_on(n.r8(KIT['kit_last_mode']))
@@ -541,7 +597,9 @@ def bad_file_checks(img, man, fac):
     edit_a(good)
     pay = good.payload()
     cases_ = {'missing': None, 'empty': b'', 'short': file_bytes(pay)[:-1], 'long': file_bytes(pay) + b'\0',
-              'magic': file_bytes(pay, magic=MAGIC ^ 1), 'version 2': file_bytes(pay, version=2),
+              'magic': file_bytes(pay, magic=MAGIC ^ 1), 'version 3': file_bytes(pay, version=3),
+              'version 1 at version 2\'s size': file_bytes(pay, version=1),
+              'version 2 at version 1\'s size': file_bytes(pay[:PAYLOAD_V1], size=PAYLOAD_V1),
               'version 0x101': file_bytes(pay, version=0x101), 'header size': file_bytes(pay, header=20),
               'payload size': file_bytes(pay, size=PAYLOAD - 1), 'CRC': file_bytes(pay, crc=zlib.crc32(pay) ^ 0x80),
               'one payload bit': file_bytes(pay[:100] + bytes([pay[100] ^ 4]) + pay[101:], crc=zlib.crc32(pay))}
@@ -555,10 +613,19 @@ def bad_file_checks(img, man, fac):
         cases_[what] = file_bytes(bytes(b_))
     for off, v, what in [(0, 0, 'kit 0'), (0, 14, 'kit 14'), (1, 16, 'M.CH 17'), (2, 7, 'ARP 7'), (3, 7, 'RATE 7'),
                          (4, 4, 'A.OCT 4'), (4, 0xFC, 'A.OCT -4'), (5, 2, 'HOLD 2'), (6, 10, 'ENV 10'),
-                         (7, 34, 'SCALE 34')]:
+                         (7, 34, 'SCALE 34'), (8, 7, 'drum ARP 7'), (9, 7, 'drum RATE 7'), (10, 4, 'drum A.OCT 4'),
+                         (11, 2, 'drum HOLD 2'), (12, 12, 'NOTE 12'), (13, 5, 'OCT 5'), (13, 0xFC, 'OCT -4'),
+                         (14, 12, 'OFST 12'), (14, 0xFB, 'OFST -5'), (15, 1, 'byte 15'), (30, 1, 'byte 30'),
+                         (31, 1, 'byte 31')]:
         b_ = bytearray(pay)
         b_[PADS + off] = v
         cases_[what] = file_bytes(bytes(b_))
+    names = ['TYPE', 'FREQ', 'LEVEL', 'Pad Length', 'DUTY', 'BALANCE', 'TUNE']
+    for k, ((lo, hi), name) in enumerate(zip(SG_RANGES, names)):
+        for v in (lo - 1, hi + 1):
+            b_ = bytearray(pay)
+            struct.pack_into('<h', b_, PADS + 16 + 2 * k, v)
+            cases_[f'{name} {v}'] = file_bytes(bytes(b_))
     defaults = boot(img, man).payload()
     for what, data in cases_.items():
         files = {} if data is None else {P(0): data}
@@ -574,13 +641,14 @@ def bad_file_checks(img, man, fac):
     b_ = bytearray(pay)
     for i, row in enumerate([(255, 12, 100, 100, 127, 100, 100, 100), (0, 0xF4, 0, 0, 0, 0, 0, 0)]):
         b_[8 * i:8 * i + 8] = bytes(row)
-    b_[PADS:] = bytes([13, 15, 6, 6, 0xFD, 1, 9, 33])
+    b_[PADS:] = bytes([13, 15, 6, 6, 0xFD, 1, 9, 33, 0, 0, 3, 0]) + sg_tail([11, 4, 11, 31, 48, 127, 20, 100, 51, 4640])
     m = boot(img, man, {P(0): file_bytes(bytes(b_))})
     check(m.payload() == bytes(b_), 'a file at every extreme (OFF sound, TR727, M.CH 16, CHORD, 1/32, A.OCT -3, ENV 9, '
-                                    'SCALE 33) loads as it is')
-    b_[PADS:] = bytes([1, 0, 0, 0, 3, 0, 0, 0])
+                                    'SCALE 33; NOTE B, OCT +4, OFST 11, every knob at its top) loads as it is')
+    b_[PADS:] = bytes([1, 0, 0, 0, 3, 0, 0, 0, 6, 6, 0xFD, 1]) + sg_tail([0, -3, -4, 0, -36, 0, -8, 0, -51, 4160])
     m = boot(img, man, {P(0): file_bytes(bytes(b_))})
-    check(m.payload() == bytes(b_), 'and at the other ends (TR808, M.CH 1, OFF, 1/4, A.OCT +3, ENV OFF, Chrom)')
+    check(m.payload() == bytes(b_), 'and at the other ends (TR808, M.CH 1, OFF, 1/4, A.OCT +3, ENV OFF, Chrom; drum '
+                                    'mode\'s arp at its top; NOTE C, OCT -3, OFST -4, every knob at its bottom)')
     # the bad file goes once the kits change
     m = boot(img, man, {P(0): cases_['CRC']})
     m.kit_on(1)
@@ -774,6 +842,81 @@ def parent_checks(img, parent, man):
     note('stock paths as on the parent')
 
 
+def arp_checks(img, parent, man):
+    m = boot(img, man)
+    m.step(6, 1); m.step(7, -1); m.step(9, 1)                 # melodic: ARP UP, RATE 1/8T, HOLD ON
+    mel = m.arps()[0]
+    m.kit_on(1)
+    m.calls.clear()
+    m.poll(1)
+    swapped = [c[0] for c in m.calls if c[0] in ('dispatch_off', 'dispatch_on')]
+    check(m.arps() == (mel, [0, 4, 0, 0]) and m.kits()[4:8] == (0, 4, 0, 0) and mel == [1, 3, 0, 1] and
+          swapped == ['dispatch_off', 'dispatch_on'] and m.r32(KIT['held_count']) == 0,
+          f'melodic ARP UP, 1/8T, HOLD ON; then drum mode: the arp is drum mode\'s own (OFF, 1/16, HOLD OFF), the held '
+          f'notes gone with dispatch off as the VALUE menu does it, melodic mode\'s kept ({m.arps()})')
+    m.step(6, 2); m.step(7, 1)                                 # drum: ARP DOWN, RATE 1/16T
+    m.melodic()
+    m.poll(1)
+    check(m.arps() == ([1, 3, 0, 1], [2, 5, 0, 0]) and m.kits()[4:8] == (1, 3, 0, 1),
+          f'drum ARP DOWN, 1/16T; back to melodic mode: its own arp again, drum mode\'s kept ({m.arps()})')
+    m.poll(QUIET + 1)
+    m.smpl()
+    t = bytes(m.files[P(0)])[16 + PADS:]
+    check(list(t[2:6]) == [1, 3, 0, 1] and list(t[8:12]) == [2, 5, 0, 0], f'both saved ({t[:12].hex()})')
+    n = boot(img, man, m.files)
+    check(n.kits()[4:8] == (1, 3, 0, 1) and n.arps() == ([1, 3, 0, 1], [2, 5, 0, 0]),
+          'power on (melodic): melodic mode\'s arp on, drum mode\'s waiting')
+    n.kit_on(1)
+    n.poll(1)
+    check(n.kits()[4:8] == (2, 5, 0, 0), 'and drum mode brings its own')
+    p = boot(parent, None)
+    p.step(6, 1)
+    p.kit_on(1)
+    p.poll(1)
+    check(p.kits()[4] == 1, 'on the parent one arp serves both modes (the user\'s report)')
+    note('each mode\'s arp')
+
+
+def sg_checks(img, parent, man):
+    m = boot(img, man)
+    m.set_sg(SG_EDIT)
+    m.poll(QUIET + 1)
+    m.smpl()
+    f = bytes(m.files[P(0)])
+    check(f[16 + PADS + 12:] == sg_tail(SG_EDIT), f'the Sound Generator saved: NOTE F, OCT -2, OFST 7, TYPE 12, FREQ -7, '
+                                                   f'LEVEL 90, Pad Length -3, DUTY 40, BALANCE 20, TUNE 432.1 '
+                                                   f'({f[16 + PADS + 12:].hex()})')
+    n = boot(img, man, m.files)
+    ref = Machine(parent)
+    ref.set_sg(SG_EDIT)
+    check(n.sg() == SG_EDIT and n.mem(0x80249800, 0x1A0) == ref.mem(0x80249800, 0x1A0) and
+          n.mem(0x8353A300, 0x600) == ref.mem(0x8353A300, 0x600),
+          'power on: every value back, and the SG singleton and its voices exactly as the knobs and the menu leave them '
+          'on the parent')
+    m.load(1)
+    check(m.sg() == SG_POWER_ON, 'a project without a file: the Sound Generator\'s power-on settings')
+    m.load(0)
+    check(m.sg() == SG_EDIT, 'back: its own')
+    # a version 1 file (kits-save-test1)
+    pay = bytearray(f[16:16 + PADS] + bytes([4, 9, 3, 2, 0xFE, 1, 7, 21]))
+    v1 = file_bytes(bytes(pay), version=1, size=PAYLOAD_V1)
+    k = boot(img, man, {P(0): v1})
+    want = bytes(pay[:PADS]) + bytes([4, 9, 3, 2, 0xFE, 1, 7, 21, 3, 2, 0xFE, 1]) + sg_tail(SG_POWER_ON)
+    check(k.payload() == want and not k.writes() and k.ks('ks_loads') == 1,
+          'a version 1 file loads: its kits, kit, M.CH, ENV and SCALE, its arp for both modes, the Sound Generator\'s '
+          'power-on settings; nothing written')
+    k.poll(3 * QUIET)
+    k.leave()
+    k.smpl()
+    check(not k.writes(), 'no change: it stays version 1')
+    k.set_sg([2] + SG_EDIT[1:])
+    k.poll(QUIET + 1)
+    k.smpl()
+    g = bytes(k.files[P(0)])
+    check(len(g) == FILE_SIZE and g[4] == 2 and g == file_bytes(k.payload()), 'a change: version 2 replaces it')
+    note('the Sound Generator saved')
+
+
 def main():
     out = Path(sys.argv[1])
     man = json.loads((out / 'manifest.json').read_text(encoding='utf-8'))
@@ -791,6 +934,8 @@ def main():
     project_checks(img, man)
     moment_checks(img, man)
     parent_checks(img, parent, man)
+    arp_checks(img, parent, man)
+    sg_checks(img, parent, man)
     print(f'{cases[0] - len(fails)}/{cases[0]} checks pass' + (f'; FAILED: {len(fails)}' if fails else ''))
     sys.exit(1 if fails else 0)
 

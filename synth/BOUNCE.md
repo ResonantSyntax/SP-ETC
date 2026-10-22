@@ -12,6 +12,22 @@ RESAMPLE start fix v3 (the published v9.46 carries v2; see
 ran on the unit) on the same four sites, plus the pad-event dispatcher and, since bounce-3-test2, the
 RESAMPLE page's tick. Stage 1 is the bounce probe ([BOUNCE_PROBE.md](BOUNCE_PROBE.md)).
 
+**bounce-3-test8** changes the setup after the user's test of combined-test3:
+- **A pad tap picks the target.** With the setup popup up, tap the source pad itself for REPLACE
+  (in place), or an empty pad to bounce onto that pad (TO PAD). A pad with a sample shows
+  `PAD NOT EMPTY` and its name for a second, and the target stays; an empty pad in a protected
+  bank shows `BANK PROTECTED`. The popup starts on TO PAD onto the first empty pad, as before.
+  REPLACE still parks the original on the first empty pad (`NO EMPTY PAD` / `FOR THE ORIGINAL`
+  if there is none).
+- **RESAMPLE starts** the bounce (and UNDO), as REC does.
+- **VALUE press no longer picks the target**, nor SHIFT + VALUE; turning VALUE still picks NO TAIL
+  or TAIL. In the UNDO popup, a tap leaves UNDO for a bounce: the pad itself for REPLACE, an empty
+  pad for TO PAD.
+- **Unicorn** (540 cases, the run checks unchanged): taps through the stock dispatcher for REPLACE
+  and TO PAD, a pad with a sample and one in a protected bank refused, no pad for the original,
+  RESAMPLE starting a whole REPLACE on the real objects, VALUE pressed and SHIFT + VALUE picking
+  nothing, UNDO left by a tap.
+
 **bounce-3-test7** is the release candidate. It follows the rest of bounce-3-test6's run on the unit
 (2026-10-21) and the user's choices:
 - **No LOOP mode.** A LOOP bounce of a pad through a reverb clicked at its start when played once:
@@ -326,9 +342,11 @@ outside this repository.
    ```
 
    - Turn **VALUE** for the mode: NO TAIL or TAIL. Turning past either end stays on that end.
-   - Press **VALUE**, or turn VALUE with **SHIFT** held, for the target: TO PAD (`BOUNCE A-1>A-9`)
-     or REPLACE (`REPLACE A-1`).
-3. Press **REC** to start, or **EXIT** to back out (`BOUNCE CANCELLED` / `NOTHING CHANGED`).
+   - **Tap a pad** for the target (test8): the source pad itself for REPLACE (`REPLACE A-1`), an
+     empty pad to bounce onto it (`BOUNCE A-1>A-5`). A pad with a sample is refused
+     (`PAD NOT EMPTY`). The popup starts on the first empty pad.
+3. Press **RESAMPLE** (or REC) to start, or **EXIT** to back out (`BOUNCE CANCELLED` /
+   `NOTHING CHANGED`).
 4. The SP stops every sound, waits for silence (`WAIT SILENCE`, at most 10 s), then plays the
    pad and records. The popup counts (`NO TAIL 37%`, `TAIL 2.4s`).
 5. At the end:
@@ -355,11 +373,11 @@ UNDO BOUNCE?
 ORIG ON A-9
 ```
 
-- **REC** swaps the two pads back: `UNDONE A-1` / `BOUNCE ON A-9`. The original is back on its
+- **RESAMPLE** (or REC) swaps the two pads back: `UNDONE A-1` / `BOUNCE ON A-9`. The original is back on its
   pad, bit for bit, with every setting it had. The bounce stays on A-9, as after TO PAD, and the
   SP goes back to the main screen.
 - **EXIT** leaves both pads as they are.
-- Press **VALUE** (or SHIFT + VALUE) to bounce the pad again instead (TO PAD or REPLACE).
+- Tap a pad to bounce the pad again instead: the pad itself for REPLACE, an empty pad for TO PAD.
 
 UNDO goes back one REPLACE per pad. It is kept for the last eight REPLACEs, in RAM. It is offered
 only while both pads still hold the same samples: if either was deleted, replaced or recorded
@@ -377,8 +395,8 @@ Then set PAD LINK on the original again if it had one.
 
 ### The destination
 
-The scratch pad (TO PAD's destination, REPLACE's home for the original) is the first empty pad
-after the source in its bank, wrapping around inside the bank. If the bank is full, it is the
+The home pad (TO PAD's destination until a pad is tapped, REPLACE's home for the original) is the
+first empty pad after the source in its bank, wrapping around inside the bank. If the bank is full, it is the
 first empty pad of banks A to J. Protected banks are skipped. With no empty pad anywhere, the popup
 says `NO EMPTY PAD` (unless the pad offers UNDO).
 
