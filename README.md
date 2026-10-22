@@ -6,8 +6,8 @@ The patcher builds **Sound Generator + Kits v9.47** for the SP-404MKII:
 Sound Generator **v9.9.3** (four live voices, 17 new waveforms, nine
 volume/filter-envelope presets, 34 scale choices and an arpeggiator) plus
 thirteen synthesized machine kits. v9.47 also adds bounce in place, pad
-envelopes, note repeat, chromatic scales, saved kit edits, FX deep edit and fast
-boot. It is built on, and includes, **DOOM OS 0.6.1**
+envelopes, note repeat, chromatic scales, saved kit edits and Sound Generator
+settings, SUB PAD on the Sound Generator, FX deep edit and fast boot. It is built on, and includes, **DOOM OS 0.6.1**
 (build ED5E), Klangfeld Labs' pattern sequencer for the SP: hold REMAIN and
 press SUB PAD to open it ([DOOM OS quickstart](https://tracelistener.github.io/doom-os-etc./manual/)).
 Drop in the stock firmware and press Patch; there is nothing to choose. Firmware
@@ -16,37 +16,46 @@ reproduction and validation](synth/KITS.md).
 
 ## New in v9.47
 
-- **Bounce in place:** hold RESAMPLE, tap a pad that holds a sample, press REC.
-  The pad is recorded through its effects onto the first empty pad, or in its own
-  place:
+- **Bounce in place:** hold RESAMPLE and tap a pad that holds a sample, then:
+  - tap where it goes: the same pad to bounce in place, an empty pad to bounce
+    onto it (a pad with a sample says PAD NOT EMPTY);
   - turn VALUE for NO TAIL or TAIL;
-  - press VALUE for TO PAD or REPLACE;
-  - UNDO swaps a REPLACE back.
+  - press RESAMPLE to start. UNDO swaps an in-place bounce back.
 
   The bounce is named after the pad with ` B`. [BOUNCE.md](synth/BOUNCE.md)
-- **Pad envelopes:** SHIFT + PITCH/SPEED, then tap SHIFT through eight pages:
+- **Pad envelopes:** SHIFT + PITCH/SPEED, then turn VALUE (or tap SHIFT)
+  through eight pages:
   - pages 1-4: finer attack, hold and release, with curves, decay and sustain,
     and loop and re-hit modes;
   - pages 5-7: a pitch envelope, a resonant LP/BP/HP filter, and its own cutoff
     envelope;
   - page 8: the envelope curves.
 
-  Per pad, saved with the project; DEL resets a pad's envelopes.
+  Per pad, saved with the project; on page 1 VALUE press switches TIME between
+  STOCK and FINE; DEL resets a pad's envelopes.
   [PAD_ENV.md](synth/PAD_ENV.md)
 - **Note repeat:** hold ROLL and a pad and it repeats at the pad's Roll
   division. Turn VALUE while holding ROLL to change the division; triplets are
-  included. Tap ROLL to latch it, and HOLD keeps rolls going. SHIFT + ROLL and
-  DJ mode stay stock. [NOTE_REPEAT.md](synth/NOTE_REPEAT.md)
-- **Chromatic scales:** in chromatic mode, press VALUE to step through the
-  Sound Generator's 34 scales. The pads walk the scale and reach three octaves
-  down. [CHROMA.md](synth/CHROMA.md)
-- **Kit edits saved:** the drum kits, M.CH, the arpeggiator, ENV and SCALE are
-  saved with the project (`SG_KITS.BIN` beside `PADCONF.BIN`), about 2 s after
-  the last change, including MIDI CC changes. [KITS_SAVE.md](synth/KITS_SAVE.md)
-- **FX deep edit:** on the TOP screen, hold EXIT and press VALUE. You can edit
-  the settings the SP never sends to its effects chip, for the bus the CTRL
-  knobs drive (Tape Echo's TAPE DIST, Reverb's DENSITY and more). These live in
-  RAM only, the values are raw numbers, and some gains get loud.
+  included. Tap ROLL to latch it, and HOLD keeps rolls going. In chromatic mode
+  every pad rolls at one division, 1/16 to start. SHIFT + ROLL and DJ mode stay
+  stock. [NOTE_REPEAT.md](synth/NOTE_REPEAT.md)
+- **Chromatic scales:** in chromatic mode, hold VALUE and turn to choose from
+  the Sound Generator's 34 scales (a press steps to the next); hold SHIFT too for
+  the key. The pads walk the scale and reach an octave above stock's top (+27).
+  [CHROMA.md](synth/CHROMA.md)
+- **Saved with the project:** the drum kits, M.CH, the arpeggiator, ENV and
+  SCALE, and the Sound Generator's own settings (NOTE, OCT, OFST, TYPE, FREQ,
+  LEVEL, Pad Length, DUTY, BALANCE, TUNE), in `SG_KITS.BIN` beside
+  `PADCONF.BIN`, about 2 s after the last change, including MIDI CC changes.
+  Drum mode and melodic mode each have their own arpeggiator settings.
+  [KITS_SAVE.md](synth/KITS_SAVE.md)
+- **SUB PAD on the Sound Generator:** plays the last pad again, in melodic and
+  drum mode. [SG_SUBPAD.md](synth/SG_SUBPAD.md)
+- **FX deep edit:** an FX button's screen stays up until EXIT or that button
+  again. Press VALUE to go through its screens and on to extra screens with the
+  settings the SP never sends to its effects chip, three at a time on CTRL 1-3
+  (Tape Echo's TAPE DIST, Reverb's DENSITY and more). These live in RAM only,
+  the values are raw numbers, and some gains get loud.
   [FX_DEEP_EDIT.md](synth/FX_DEEP_EDIT.md)
 - **Fast boot:** once the project has loaded, the SP goes straight to the main
   screen. DOOM OS's boot animation is skipped, which saves about 4 s.
@@ -54,8 +63,7 @@ reproduction and validation](synth/KITS.md).
 - **RESAMPLE start fix v3:** a resampled take keeps its quiet lead-in, 8 frames
   before its first sound.
 
-In chromatic mode, ROLL + VALUE changes the roll division, not the key. How the
-build is put together, and its test status: [COMBINED.md](synth/COMBINED.md).
+How the build is put together, and its test status: [COMBINED.md](synth/COMBINED.md).
 
 ## Synthesized kits v9.46
 
@@ -250,12 +258,13 @@ To go back to the original firmware, just run the updater with the original Rola
 
 ## Status
 
-**v9.47** (2026-10-22) is combined-test3: every feature's latest test build in
+**v9.47** (2026-10-22) is combined-test4: every feature's latest test build in
 one APP1 (`build_combined.py`), plus fast boot (`build_fast_boot.py`). Its APP1
-SHA-256 is `40ba0ad2…09b8`. Each module is byte for byte its own test build's,
+SHA-256 is `adcb6f70…157f`. Each module is byte for byte its own test build's,
 and the branch rebuilds the APP1 exactly. In the emulator, every feature suite
-passes its behaviour checks on this image, as do the 25 kit suites and the
-patcher test. Bounce in place passed its two checks on the unit as
+passes its behaviour checks on this image, but one by design: in chromatic mode
+ROLL + VALUE is the roll speed now, not the key. The 25 kit suites and the
+patcher test pass. Bounce in place passed its two checks on the unit as
 bounce-3-test6. The other features, and this combined build, have no hardware
 report yet. [COMBINED.md](synth/COMBINED.md).
 

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tracelistener · SP-404MKII synth patcher</title>
-<meta name="description" content="Tracelistener's SP-404MKII Sound Generator mod: Sound Generator + Kits v9.47, with four voices, 17 added waves, envelopes, 34 scales, an arpeggiator and 13 synthesized drum kits, plus MIDI, kit bounce and looper support, bounce in place, pad envelopes, note repeat, chromatic scales, saved kit edits, FX deep edit and fast boot. Includes DOOM OS 0.6.1. Local browser patching; no firmware uploads.">
+<meta name="description" content="Tracelistener's SP-404MKII Sound Generator mod: Sound Generator + Kits v9.47, with four voices, 17 added waves, envelopes, 34 scales, an arpeggiator and 13 synthesized drum kits, plus MIDI, kit bounce and looper support, bounce in place, pad envelopes, note repeat, chromatic scales, saved kit edits and Sound Generator settings, FX deep edit and fast boot. Includes DOOM OS 0.6.1. Local browser patching; no firmware uploads.">
 <style>
 
 :root {
@@ -210,22 +210,23 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
         <details class="env-guide" open>
           <summary>What's new in v9.47</summary>
           <ul>
-            <li><strong>Bounce in place:</strong> hold RESAMPLE, tap a pad that holds a sample, press REC. The pad is recorded through its effects onto the first empty pad, or in its own place (turn VALUE for NO TAIL or TAIL, press VALUE for TO PAD or REPLACE; UNDO swaps a REPLACE back). The bounce is named after the pad with &ldquo; B&rdquo;.</li>
-            <li><strong>Pad envelopes:</strong> SHIFT + PITCH/SPEED, then tap SHIFT through eight pages:
+            <li><strong>Bounce in place:</strong> hold RESAMPLE and tap a pad that holds a sample. Tap where it goes: the same pad to bounce in place, an empty pad to bounce onto it (a pad with a sample says PAD NOT EMPTY). Turn VALUE for NO TAIL or TAIL, then press RESAMPLE. The pad is recorded through its effects; UNDO swaps an in-place bounce back. The bounce is named after the pad with &ldquo; B&rdquo;.</li>
+            <li><strong>Pad envelopes:</strong> SHIFT + PITCH/SPEED, then turn VALUE (or tap SHIFT) through eight pages:
               <ul>
                 <li>pages 1&ndash;4: finer attack, hold and release, with curves, decay and sustain, and loop and re-hit modes;</li>
                 <li>pages 5&ndash;7: a pitch envelope, a resonant LP/BP/HP filter, and its own cutoff envelope;</li>
                 <li>page 8: the envelope curves.</li>
               </ul>
-              Per pad, saved with the project. DEL resets a pad&rsquo;s envelopes.</li>
-            <li><strong>Note repeat:</strong> hold ROLL and a pad and it repeats at the pad&rsquo;s Roll division. Turn VALUE while holding ROLL to change the division; triplets are included. Tap ROLL to latch it. HOLD keeps rolls going. SHIFT + ROLL and DJ mode stay stock.</li>
-            <li><strong>Chromatic scales:</strong> in chromatic mode, press VALUE to step through the Sound Generator&rsquo;s 34 scales. The pads walk the scale and reach three octaves down.</li>
-            <li><strong>Kit edits saved:</strong> the drum kits, M.CH, the arpeggiator, ENV and SCALE are saved with the project, about 2 s after the last change. This includes changes made by MIDI CC.</li>
-            <li><strong>FX deep edit:</strong> on the TOP screen, hold EXIT and press VALUE. You can edit the settings the SP never sends to its effects chip, for the bus the CTRL knobs drive (Tape Echo&rsquo;s TAPE DIST, Reverb&rsquo;s DENSITY and more). These live in RAM only, the values are raw numbers, and some gains get loud.</li>
+              Per pad, saved with the project. On page 1, VALUE press switches TIME between STOCK and FINE. DEL resets a pad&rsquo;s envelopes.</li>
+            <li><strong>Note repeat:</strong> hold ROLL and a pad and it repeats at the pad&rsquo;s Roll division. Turn VALUE while holding ROLL to change the division; triplets are included. Tap ROLL to latch it. HOLD keeps rolls going. In chromatic mode every pad rolls at one division, 1/16 to start. SHIFT + ROLL and DJ mode stay stock.</li>
+            <li><strong>Chromatic scales:</strong> in chromatic mode, hold VALUE and turn to choose from the Sound Generator&rsquo;s 34 scales (a press steps to the next); hold SHIFT too for the key. The pads walk the scale and reach an octave above stock&rsquo;s top (+27).</li>
+            <li><strong>Saved with the project:</strong> the drum kits, M.CH, the arpeggiator, ENV and SCALE, and the Sound Generator&rsquo;s own settings (NOTE, OCT, OFST, TYPE, FREQ, LEVEL, Pad Length, DUTY, BALANCE, TUNE), about 2 s after the last change. This includes changes made by MIDI CC. Drum mode and melodic mode each have their own arpeggiator settings.</li>
+            <li><strong>SUB PAD on the Sound Generator:</strong> plays the last pad again, in melodic and drum mode.</li>
+            <li><strong>FX deep edit:</strong> an FX button&rsquo;s screen stays up until EXIT or that button again. Press VALUE to go through its screens and on to extra screens with the settings the SP never sends to its effects chip, three at a time on CTRL 1&ndash;3 (Tape Echo&rsquo;s TAPE DIST, Reverb&rsquo;s DENSITY and more). These live in RAM only, the values are raw numbers, and some gains get loud.</li>
             <li><strong>Fast boot:</strong> once the project has loaded, the SP goes straight to the main screen. DOOM OS&rsquo;s boot animation is skipped, which saves about 4 s.</li>
             <li><strong>RESAMPLE start fix v3:</strong> a resampled take keeps its quiet lead-in, 8 frames before its first sound.</li>
           </ul>
-          <p class="t">Each feature had its own test build. This combined build is checked in the emulator, and has no hardware report yet. In chromatic mode, ROLL + VALUE changes the roll division, not the key. Keep your known-good update at hand.</p>
+          <p class="t">Each feature had its own test build. This combined build is checked in the emulator, and has no hardware report yet. Keep your known-good update at hand.</p>
         </details>
         <details class="env-guide">
           <summary>What's new in Kits v9.46</summary>
@@ -319,7 +320,7 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
     <p class="note">Unofficial; not affiliated with Roland or Klangfeld Labs. Base attribution: DOOM OS 0.6.1 ED5E by Quintus Oostendorp / Klangfeld Labs, MIT License retained in the repository. FX deep edit's parameter table comes from DM-404's fxmap.json by Nicholas Petty and the dm-404 contributors, MIT License (THIRD-PARTY-NOTICES.md). This page cannot flash your SP automatically.</p>
   </footer>
 </div>
-<script src="kits-data.js?v=kits-v9-47-40ba0ad2"></script>
+<script src="kits-data.js?v=kits-v9-47-adcb6f70"></script>
 <script src="doomos-patcher.js?v=kits-v9-47-doom-os"></script>
 </body>
 </html>

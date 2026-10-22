@@ -1,15 +1,15 @@
-"""Generate the guarded browser overlay for Sound Generator + Kits v9.47 (combined-test3).
+"""Generate the guarded browser overlay for Sound Generator + Kits v9.47 (combined-test4).
 
-v9.47 is built in two steps. build_combined.py gives combined-test1: every feature branch's module, byte for
-byte its own test build's, on bounce-3-test7's parent (resample-startfix-3: the published v9.46's kit stage
-plus the RESAMPLE start fix v3). build_fast_boot.py then gives combined-test3. The overlay turns the DOOM OS
-base into combined-test3. Before writing kits-data.js, this script checks:
+v9.47 is built in two steps. build_combined.py gives the combined build: every feature branch's module, byte for
+byte its own test build's, on bounce-3-test8's parent (resample-startfix-3: the published v9.46's kit stage
+plus the RESAMPLE start fix v3). build_fast_boot.py then gives combined-test4. The overlay turns the DOOM OS
+base into combined-test4. Before writing kits-data.js, this script checks:
 - the candidate's hash and its two manifests;
 - the chain back to v9.46's kit stage;
 - every module's source against this tree.
 
 usage: python synth/publish_v9_47.py /path/to/stock/SP404MKII_APP1.bin \
-           --combined release/combined-test1 --candidate release/combined-test3
+           --combined dev_combined4/combined-test4-base --candidate release/combined-test4
 """
 import argparse
 import base64
@@ -18,22 +18,23 @@ from pathlib import Path
 
 import build
 
-RELEASE, REVISION, LABEL = 'v9.47', 'combined-test3', '5.52+kits-v9.47'
-EXPECTED_SHA, EXPECTED_SIZE = '40ba0ad2e19a79808f7dbe586f0d342c8fea4b291b27692f5cbecb6e62ab09b8', 3148576
-COMBINED_SHA = '10616541fbf459d6dca6d9133f05f7fd54327ac17f7021332275a7b529bdeb84'
+RELEASE, REVISION, LABEL = 'v9.47', 'combined-test4', '5.52+kits-v9.47'
+EXPECTED_SHA, EXPECTED_SIZE = 'adcb6f70ef1ebe19f8d7bc586df4f4fa53d494d0a9b5c23cbe7e57323988157f', 3151616
+COMBINED_SHA = '20e4d8e58e0417e6e424b86fc942885fc3e43cd4e28e69539f0a2883e4f50032'
 PARENT_SHA = '7d13c1e26d222cea7cada8b6b8ac986b432bf1b32508b5f39ac9c6c117ea61cc'      # resample-startfix-3
 KIT_STAGE_SHA = '88384c3c9760559e721c1a14973ef3a2ced6abf016572b0a73c5dfb0cef492ba'   # v9.46-test3, as in v9.46
-STEPS = ['bounce', 'fx-deep-edit', 'pad-env-1', 'pad-env-2', 'kits-save', 'note-repeat', 'chroma']
+STEPS = ['bounce', 'fx-deep-edit', 'pad-env-1', 'pad-env-2', 'kits-save', 'note-repeat', 'chroma', 'sg-subpad']
 KITS = ['TR808', 'DR110', 'KPR77', 'UDS', 'FM', 'TR909', 'TR606', 'SDS-V', 'MP-7', 'CR78', 'CR8K', 'TR707', 'TR727']
 FEATURES = ['bounce in place', 'pad envelopes', 'note repeat', 'chromatic scales', 'kit edits saved',
-            'FX deep edit', 'fast boot', 'RESAMPLE start fix v3']
+            'Sound Generator settings saved', 'an arpeggiator for each mode', 'FX deep edit', 'SUB PAD on the Sound '
+            'Generator', 'fast boot', 'RESAMPLE start fix v3']
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('stock', type=Path)
-    p.add_argument('--combined', type=Path, required=True, help='combined-test1: APP1, manifest.json, steps/')
-    p.add_argument('--candidate', type=Path, required=True, help='combined-test3: APP1 and manifest.json')
+    p.add_argument('--combined', type=Path, required=True, help='the combined build: APP1, manifest.json, steps/')
+    p.add_argument('--candidate', type=Path, required=True, help='combined-test4: APP1 and manifest.json')
     a = p.parse_args()
     stock = a.stock.read_bytes()
     build.require_hash(stock, build.v2.STOCK_SHA256, 'stock APP1')
@@ -47,7 +48,7 @@ def main():
             [x['address'] for x in fast['patches']] != [0x8013DCAA]):
         raise ValueError('unexpected fast boot stage metadata')
     combined = json.loads((a.combined / 'manifest.json').read_text(encoding='utf-8'))
-    build.require_hash((a.combined / 'SP404MKII_APP1.bin').read_bytes(), COMBINED_SHA, 'combined-test1 APP1')
+    build.require_hash((a.combined / 'SP404MKII_APP1.bin').read_bytes(), COMBINED_SHA, 'combined build APP1')
     if (combined['sha256'] != COMBINED_SHA or combined['parent_sha256'] != PARENT_SHA or
             combined['tool'] != 'synth/build_combined.py' or [s['feature'] for s in combined['steps']] != STEPS):
         raise ValueError('unexpected combined stage metadata')
