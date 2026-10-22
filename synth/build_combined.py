@@ -1,18 +1,21 @@
-"""combined-test1: the fork's latest feature test builds in one APP1.
+"""combined-test4: the fork's latest feature test builds in one APP1 (combined-test1's steps at the revisions
+that follow the user's test of combined-test3, plus SUB PAD on the Sound Generator page).
 
-Each feature's own builder runs in turn on the output of the one before, from bounce-3-test7's parent (the
+Each feature's own builder runs in turn on the output of the one before, from bounce-3-test8's parent (the
 published v9.46's kit stage plus the RESAMPLE start fix v3, resample-startfix-3):
 
-  1 bounce in place, stage 3   build_bounce.py            0x83FE8000   as in bounce-3-test7
-  2 FX deep edit               build_fx_deep_edit.py      0x83FE2000   fx-deep-edit-test1
-  3 pad envelopes, stage 1     build_pad_env.py           0x83FDE000   pad-env-test5's stage 1
-  4 pad envelopes, stage 2     build_pad_pitch_filter.py  0x83FD9000   pad-env-test5
-  5 kit edits saved            build_kits_save.py         0x83FD5000   kits-save-test1
-  6 note repeat                build_note_repeat.py       0x83FDC000   note-repeat-test2
-  7 chromatic scales           build_chroma.py            0x83FD7000   chroma-test1
+  1 bounce in place, stage 3   build_bounce.py            0x83FE8000   as in bounce-3-test8
+  2 FX deep edit               build_fx_deep_edit.py      0x83FE2000   fx-deep-edit-test2
+  3 pad envelopes, stage 1     build_pad_env.py           0x83FDE000   pad-env-test6's stage 1
+  4 pad envelopes, stage 2     build_pad_pitch_filter.py  0x83FD9000   pad-env-test6
+  5 kit edits saved            build_kits_save.py         0x83FD5000   kits-save-test2
+  6 note repeat                build_note_repeat.py       0x83FDC000   note-repeat-test3
+  7 chromatic scales           build_chroma.py            0x83FD7000   chroma-test2
+  8 SUB PAD on the SG page     build_sg_subpad.py         0x83FD4000   sg-subpad-test1
 
 Each module has to come out byte for byte as in its own test build (its blob SHA-256), and step 1 as
-bounce-3-test7's APP1. The FX probe stays out: FX deep edit took over its EXIT + VALUE chord on TOP.
+bounce-3-test8's APP1. The FX probe stays out: it used the TOP vtable slot FX deep edit takes. The fast boot
+(build_fast_boot.py) goes on top of the result as it did for combined-test3.
 
 Each builder checks the code it relies on byte for byte (its guards), so it runs before the builders that
 patch inside them: FX deep edit and pad envelopes guard the UI dispatcher note repeat bridges, note repeat
@@ -42,7 +45,7 @@ from build_arp import file_offset
 from build_kits_save import Runtime
 
 HERE = Path(__file__).resolve().parent
-REVISION = 'combined-test1'
+REVISION = 'combined-test4'
 FLASH = 0x60080000
 PCM_BANK, FLASH_LIMIT = 0x60376000, 0x60400000   # kits/build_arp_kit.py: kit PCM bank, flash planning limit
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
@@ -50,18 +53,20 @@ PARENT_SHA = '7d13c1e26d222cea7cada8b6b8ac986b432bf1b32508b5f39ac9c6c117ea61cc' 
 NAMES = ('SP404MKII_APP0.bin', 'SP404MKII_APP1.bin', 'manifest.json')
 # (step, builder, the feature's own test build, where its manifest keeps this module)
 STEPS = [
-    ('bounce', 'build_bounce.py', 'bounce-3-test7', None),
-    ('fx-deep-edit', 'build_fx_deep_edit.py', 'fx-deep-edit-test1', None),
-    ('pad-env-1', 'build_pad_env.py', 'pad-env-test5', 'stage1'),
-    ('pad-env-2', 'build_pad_pitch_filter.py', 'pad-env-test5', None),
-    ('kits-save', 'build_kits_save.py', 'kits-save-test1', None),
-    ('note-repeat', 'build_note_repeat.py', 'note-repeat-test2', None),
-    ('chroma', 'build_chroma.py', 'chroma-test1', None),
+    ('bounce', 'build_bounce.py', 'bounce-3-test8', None),
+    ('fx-deep-edit', 'build_fx_deep_edit.py', 'fx-deep-edit-test2', None),
+    ('pad-env-1', 'build_pad_env.py', 'pad-env-test6', 'stage1'),
+    ('pad-env-2', 'build_pad_pitch_filter.py', 'pad-env-test6', None),
+    ('kits-save', 'build_kits_save.py', 'kits-save-test2', None),
+    ('note-repeat', 'build_note_repeat.py', 'note-repeat-test3', None),
+    ('chroma', 'build_chroma.py', 'chroma-test2', None),
+    ('sg-subpad', 'build_sg_subpad.py', 'sg-subpad-test1', None),
 ]
 FOREIGN = {'note-repeat': [('bounce', 0x800BEF10)]}
 DISPATCHER = ('note repeat\'s entry takes VALUE (press and release) only while ROLL is held and VALUE turns only '
-              'while ROLL is held or latched with a pad repeating; every other event goes on to the stock '
-              'dispatcher, which sets and clears the held bits and calls the page as before')
+              'while ROLL is held or latched with a pad repeating (in chromatic mode not with VALUE held); every '
+              'other event goes on to the stock dispatcher, which sets and clears the held bits and calls the page '
+              'as before')
 # (the feature whose patch it is, its site, the feature whose guard spans it) -> why that guard's reason holds
 SHARED = {
     ('bounce', 0x800BEF10, 'note-repeat'):
@@ -216,7 +221,7 @@ def build(parent: Path, out: Path, zig: Path, fxmap: Path, refs: Path):
         if sha(blob) != ref_blob or man['blob_sha256'] != ref_blob:
             raise ValueError(f'{name}: the module is not {ref}\'s ({sha(blob)} against {ref_blob})')
         if name == 'bounce' and man['sha256'] != ref_man['sha256']:
-            raise ValueError(f'step 1 is not bounce-3-test7\'s APP1 ({man["sha256"]})')
+            raise ValueError(f'step 1 is not {ref}\'s APP1 ({man["sha256"]})')
         done[name] = step = dict(name=name, builder=builder, reference=ref, dir=step_dir, manifest=man, blob=blob)
         steps.append(step)
         inp = step_dir
@@ -235,10 +240,11 @@ def build(parent: Path, out: Path, zig: Path, fxmap: Path, refs: Path):
         shutil.copy2(s['dir'] / 'manifest.json', out / 'steps' / f'{i}-{s["name"]}.manifest.json')
     manifest = dict(
         revision=REVISION, status='hardware-unverified', published=False,
-        description='every latest feature test build in one APP1: bounce in place (bounce-3-test7), FX deep edit '
-                    '(fx-deep-edit-test1), pad envelopes stages 1 and 2 (pad-env-test5), kit edits saved with the '
-                    'project (kits-save-test1), note repeat (note-repeat-test2) and chromatic scales (chroma-test1), '
-                    'each module byte for byte its own build\'s, on the RESAMPLE start fix v3; not the FX probe',
+        description='every latest feature test build in one APP1: bounce in place (bounce-3-test8), FX deep edit '
+                    '(fx-deep-edit-test2), pad envelopes stages 1 and 2 (pad-env-test6), kit edits and the Sound '
+                    'Generator saved with the project (kits-save-test2), note repeat (note-repeat-test3), chromatic '
+                    'scales (chroma-test2) and SUB PAD on the Sound Generator page (sg-subpad-test1), each module '
+                    'byte for byte its own build\'s, on the RESAMPLE start fix v3; not the FX probe',
         parent_app1=str(parent / 'SP404MKII_APP1.bin'), parent_sha256=PARENT_SHA, parent_revision='resample-startfix-3',
         sha256=sha(img), size=len(img), app0_sha256=APP0_SHA,
         kit_pcm_planning_boundary=dict(address=PCM_BANK, bytes_over=max(0, FLASH + len(img) - PCM_BANK),
@@ -253,8 +259,8 @@ def build(parent: Path, out: Path, zig: Path, fxmap: Path, refs: Path):
         foreign=dict(note='note repeat\'s builder checked its input with bounce\'s gate at 0x800bef10 put back to '
                           'stock; its output has bounce\'s bytes again', patches=[hex(at) for at in (0x800BEF10,)]),
         shared_hooks=shared,
-        left_out=dict(feature='FX probe (fx-probe-test1)', why='FX deep edit uses the same TOP EXIT + VALUE chord and '
-                      'vtable slot 0x8022ce64; the probe\'s hardware questions are answered'),
+        left_out=dict(feature='FX probe (fx-probe-test1)', why='FX deep edit uses the same TOP vtable slot 0x8022ce64; '
+                      'the probe\'s hardware questions are answered'),
         tool='synth/build_combined.py')
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8', newline='\n')
     sums = ''.join(f'{sha((out / n).read_bytes())}  {n}\n' for n in NAMES)

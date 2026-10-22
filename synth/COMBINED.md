@@ -1,5 +1,8 @@
 # Combined: every feature test build in one APP1
 
+**combined-test4** (section 5) follows the user's test of combined-test3: the same steps at their new
+revisions, plus SUB PAD on the Sound Generator page, then the fast boot. Sections 1-4 describe combined-test1.
+
 A hardware test build (`combined-test1`) with the latest test build of each feature in one APP1, so they can
 be tried together. Branch `claude/combined`: the six feature branches merged on `main` (v9.46), plus
 `build_combined.py`, which runs each feature's own builder in turn. Nothing in a feature changes: each module
@@ -101,3 +104,26 @@ note-repeat-test2's behaviour on its own as well (NOTE_REPEAT.md section 5). The
 change it.
 
 **Not run:** dm-404 (not built on this machine: no `build/`, no MSYS2), and the unit.
+
+## 5. combined-test4
+
+From the user's test of combined-test3, every change in one build. Branch `claude/combined` merges the feature
+branches at these revisions and `claude/boot-anim` (the fast boot); `build_combined.py` runs eight steps, then
+`build_fast_boot.py` on its result, as for combined-test3.
+
+| Step | Feature | Module as in | What changed since combined-test3 |
+| --- | --- | --- | --- |
+| 1 | bounce in place | `bounce-3-test8` | a pad tap picks the target (the source REPLACE, an empty pad TO PAD, a used pad PAD NOT EMPTY); RESAMPLE starts |
+| 2 | FX deep edit | `fx-deep-edit-test2` | an FX button's screen stays (as REMAIN + FX); VALUE steps its screens, then the extra screens on CTRL 1-3 |
+| 3, 4 | pad envelopes | `pad-env-test6` | page 1 named on its bottom line, TIME on VALUE press, VALUE turns the pages, no DROPS |
+| 5 | kits save | `kits-save-test2` | an arp for each mode; the Sound Generator's settings saved per project (SG_KITS.BIN version 2) |
+| 6 | note repeat | `note-repeat-test3` | chromatic rolls: 1/16 from power-on, nothing taken from the pad under the finger (pad 10) |
+| 7 | chromatic scales | `chroma-test2` | -12..+27; VALUE held and turned: the scale; with SHIFT: the key |
+| 8 | SUB PAD on the SG page | `sg-subpad-test1` | new: SUB PAD plays the last pad again, in melodic and drum mode |
+
+- **Build:** every module byte for byte its own test build's; every patch in place and every guard holding on the
+  final image, with the same 7 reviewed overlaps (`SHARED`) as combined-test1; no new one. `--refs` takes a folder
+  of the seven test builds' manifests (`analysis/kit_pr1_audit/dev_combined4/refs`); the builds themselves are in
+  the dev folders.
+- **APP1** (after the fast boot): `adcb6f70…157f`, 3,151,616 bytes, in `analysis/kit_pr1_audit/release/combined-test4`.
+- **SUB PAD's slot** `0x83FD4000`-`0x83FD5000` comes from the top of pad FX's planned room, below kits save.
