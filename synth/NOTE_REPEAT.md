@@ -391,7 +391,7 @@ pad rolls at 1/16 of 90 BPM, its Roll and byte 0x70 untouched; pad 10 with a LOO
 ignore ROLL, Roll 1/64, rolls the same, no stock roll asked for; VALUE moves two rolling pads to 3/64 at once and
 the next roll starts there; ROLL + VALUE press shows it, toggles nothing, saves nothing; latched, VALUE held + turn
 is not taken. All 102 checks pass (test2's 97 unchanged). On combined-test3, pad 10's three cases fail as the user
-heard (the second hit only, no roll; 33 hits a second at 1/64).
+heard (the press plays, no repeats; at 1/64, 33 hits a second).
 
 ### 8.4 Not known
 
