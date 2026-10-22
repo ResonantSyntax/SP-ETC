@@ -2,7 +2,7 @@
 
 usage: python synth/test_chroma.py OUT_DIR [SECTIONS]      (unicorn, keystone, capstone on PYTHONPATH)
 
-SECTIONS: a comma list of static, tables, ranges, value, names, pads, record, lights (default: all).
+SECTIONS: a comma list of static, tables, ranges, value, names, pads, record, lights, push (default: all).
 
 Reads OUT_DIR/manifest.json for the parent APP1. Static checks first: only the header's scatter pointer, the
 eleven code sites, the two mask lists and the appended tail differ from the parent; the guards and the
@@ -21,7 +21,7 @@ Checks:
 - tables: after every SHIFT, SCALE and ROOT change through the setter, all five chromatic pad tables hold
   note(T[p] - shift) + shift, note() an independent model of the Sound Generator's fold; with Chrom and a
   stock shift they hold stock's T, as on the parent;
-- ranges: SHIFT's range keeps every pad within -36..+18 for every scale and root; the setter clamps to it;
+- ranges: SHIFT's range keeps every pad within -12..+27 for every scale and root; the setter clamps to it;
   SCALE's range is 0-33 in chromatic mode and the parent's elsewhere;
 - value: VALUE press in chromatic mode steps 0-33 and round; outside it, as the parent (0-6);
 - names: the SCALE label in chromatic mode is stock's for 0-6 and the 34 scales' labels for 7-33; outside it,
@@ -35,7 +35,11 @@ Checks:
 - lights (the chromatic page 0x18): with Chrom and a stock shift the pads within -12..+12 light as on the
   parent, and the pads above +12, which the parent leaves dark, light like the others above the pitch; with
   scales, roots and shifts every pad lights as the parent lights a scale note there (above, at or below the
-  sample's pitch), none dark.
+  sample's pitch), none dark;
+- push (test2, the chromatic page): VALUE tapped steps the next scale at its release; VALUE held and turned
+  moves the scale one a turn, round, and steps nothing at the release; with SHIFT held too, the key, round; the
+  popups name them and the pads follow; a turn without VALUE held, ROLL + VALUE and VALUE outside chromatic
+  mode are the parent's.
 """
 import hashlib
 import json
@@ -47,8 +51,8 @@ from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_PROT_ALL, UC_HOOK_CODE
 from unicorn import arm_const as ar
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_chroma import (GUARDS, SITES, TABLES, MASK_LISTS, KNOWN_SLOTS, STOCK_T, LO, HI, Runtime, scatter,  # noqa
-                          decompress, branches_into, scales, mask)
+from build_chroma import (GUARDS, SITES, TABLES, MASK_LISTS, VTABLE, KNOWN_SLOTS, STOCK_T, LO, HI, Runtime,  # noqa
+                          scatter, decompress, branches_into, scales, mask)
 
 FLASH, COPY, DECOMPRESS, ZERO = 0x60080000, 0x600800E4, 0x60080088, 0x60080100
 HEAP = 0x32000000
@@ -69,7 +73,9 @@ CONSUMER, NOTE_ON, NOTE_OFF, MIDI_OUT, RECORD, SEQ_STATE = (0x80050BE0, 0x800AEC
                                                              0x80030700, 0x80591F20)
 LIGHTS, LIGHT, LIGHT_REQ = 0x80025EA8, 0x800D4910, 0x802496F0
 EV_KEY, EV_KEY_UP, EV_ENCODER, EV_PAD, EV_PAD_UP = 5, 6, 7, 0x10, 0x11
-KEY_SHIFT, KEY_VALUE = 0x2A, 0x31
+KEY_SHIFT, KEY_ROLL, KEY_VALUE = 0x2A, 0x21, 0x31
+UI_HELD = 0x80592598 + 8
+ROOTS = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'G#', 'A', 'Bb', 'B']
 P_CHROMATIC, P_SHIFT, P_SOURCE, P_SCALE, P_ROOT = 0xBF, 0xC0, 0xC1, 0xF1, 0xF2
 F_SHIFT, F_SCALE, F_ROOT = PROJECT + 0x2C, PROJECT + 0x118, PROJECT + 0x11C
 SG_PAGE = 0x1E
@@ -328,9 +334,11 @@ def static_checks(out, man, img, parent):
         allowed |= set(range(file_off(at), file_off(at) + len(original)))
     for at, _ in MASK_LISTS:
         allowed |= set(range(file_off(at), file_off(at) + 24))
+    for at, *_ in VTABLE:
+        allowed |= set(range(file_off(at), file_off(at) + 4))
     diff = [i for i in range(len(parent)) if img[i] != parent[i]]
-    check(set(diff) <= allowed, f'only the scatter pointer, the {len(SITES)} code sites and the two mask lists change '
-                                f'inside the parent ({len(diff)} bytes)')
+    check(set(diff) <= allowed, f'only the scatter pointer, the {len(SITES)} code sites, the two mask lists and the '
+                                f'chromatic page\'s two vtable slots change inside the parent ({len(diff)} bytes)')
     rt, nrt = Runtime(parent), Runtime(img)
     check(all(sha(rt.read(s, e - s)) == d for s, e, d, w in GUARDS), f'{len(GUARDS)} guards hold on the parent')
     e = man['entries']
@@ -357,6 +365,8 @@ def static_checks(out, man, img, parent):
             masks.append(list(nrt.read(p - 12, 24)) == want + want and p == e['chroma_masks'] + 24 * k + 12)
     check(all(masks), 'the two mask lists point at the module\'s masks: scales 1-6 of scales.json (= stock\'s), a '
                       'period before each')
+    check(all(rt.word(at) == stock and nrt.word(at) == e[entry] for at, stock, entry, _ in VTABLE),
+          'the chromatic page\'s key press and release slots: stock\'s on the parent, chroma_key and chroma_key_up here')
     module = nrt.read(man['blob_base'], man['blob_size'])
     slot = man['slot']
     check(module == img[man['blob_file_offset']:man['blob_file_offset'] + man['blob_size']] and
@@ -397,7 +407,7 @@ def table_checks(img, parent, man):
                    f'through the setter all five tables hold the model\'s fold ({bad[:2]})')
     # a scale or root change brings a shift outside the new range back to its end: 16 notes within LO..HI
     ends = []
-    for start, scale, root in ((28, 6, 0), (-11, 6, 0), (28, 29, 5), (-11, 17, 11)):
+    for start, scale, root in ((4, 6, 0), (-20, 6, 0), (4, 29, 5), (-20, 17, 11)):
         m.set(P_SCALE, 0)
         m.set(P_ROOT, 0)
         m.set(P_SHIFT, start)
@@ -408,7 +418,7 @@ def table_checks(img, parent, man):
         notes = model(scale, root, got)[1]
         ends.append(got == min(max(start, lo), hi) and m.tables()[0] == model(scale, root, got)[0] and
                     len(set(notes)) == 16 and min(notes) >= LO and max(notes) <= HI)
-    check(all(ends), f'Chrom at shift 28 or -11, then a sparser scale or another root: the shift comes back to the '
+    check(all(ends), f'Chrom at shift 4 or -20, then a sparser scale or another root: the shift comes back to the '
                      f'new range\'s end, 16 notes within {LO}..{HI} ({ends})')
     # the parent: tables never change
     p.set(P_SCALE, 5)
@@ -436,11 +446,11 @@ def range_checks(img, parent, man):
     m.set(P_SCALE, 0)
     m.set(P_ROOT, 0)
     clamp = []
-    for v, want in ((-40, -11), (-11, -11), (28, 28), (40, 28)):
+    for v, want in ((-40, -20), (-20, -20), (4, 4), (40, 4)):
         m.set(P_SHIFT, v)
         clamp.append(m.get(P_SHIFT) == want)
-    check(all(clamp) and m.range(P_SHIFT) == (-11, 28) and p.range(P_SHIFT) == (-8, 4),
-          f'Chrom: SHIFT\'s range is -11..28 (stock -8..4); a shift set outside it comes back to its end ({clamp})')
+    check(all(clamp) and m.range(P_SHIFT) == (-20, 4) and p.range(P_SHIFT) == (-8, 4),
+          f'Chrom: SHIFT\'s range is -20..4 (stock -8..4); a shift set outside it comes back to its end ({clamp})')
     turns = []
     for x in (m, p):
         x.open_page(CHROMA_PAGE, CHROMA_REGISTRY)
@@ -460,9 +470,9 @@ def range_checks(img, parent, man):
         x.dispatch(EV_KEY_UP, KEY_SHIFT)
         turns.append((up, down, fine))
     (mu, md, mf), (pu, pd, pf) = turns
-    check(mu == [4, 8, 12, 16, 20, 24, 28, 28, 28] and md[-1] == -11 and mf == -10 and
-          pu[-1] == 4 and pd[-1] == -8 and pf == -7 and [s for s in mu if s <= 4] == [s for s in pu if s < 4] + [4],
-          f'VALUE turns move the pads a row (4), SHIFT + VALUE one, now from -11 to 28 (stock -8 to 4) '
+    check(mu == pu == [4] * 9 and md == [0, -4, -8, -12, -16, -20, -20, -20, -20, -20, -20, -20] and mf == -19 and
+          pd[-1] == -8 and pf == -7 and md[:3] == pd[:3],
+          f'VALUE turns move the pads a row (4), SHIFT + VALUE one, now from -20 to 4 (stock -8 to 4) '
           f'({mu}, {md}; parent {pu}, {pd})')
     for x in (m, p):
         x.chromatic(False)
@@ -552,8 +562,8 @@ def pad_checks(img, parent, man):
     got = pad_events(m, range(16))
     sample = [midi_note(on) for _, on, _ in got]
     bad = []
-    for scale, root, shift in ((1, 0, 0), (6, 9, 0), (5, 2, -3), (17, 0, 10), (33, 4, 0), (12, 7, 20), (0, 0, 28),
-                               (0, 0, -11)):
+    for scale, root, shift in ((1, 0, 0), (6, 9, 0), (5, 2, -3), (17, 0, -10), (33, 4, 0), (12, 7, -20), (0, 0, 4),
+                               (0, 0, -20)):
         m.set(P_SCALE, scale)
         m.set(P_ROOT, root)
         m.set(P_SHIFT, shift)
@@ -565,15 +575,16 @@ def pad_checks(img, parent, man):
             if not ok:
                 bad.append((scale, root, shift, i, note, on, off))
     check(not bad and sample == list(STOCK_T),
-          f'scales, roots and shifts (to -36 and +18): every pad\'s MIDI out note-on and note-off carry the model\'s '
+          f'scales, roots and shifts (to -12 and +27): every pad\'s MIDI out note-on and note-off carry the model\'s '
           f'note, one voice note-on and note-off each ({bad[:2]})')
-    p.set(P_SHIFT, 4)
     m.set(P_SCALE, 0)
-    m.set(P_SHIFT, 28)
+    m.set(P_SHIFT, -20)
+    top = pad_events(m, [3])[0]
+    m.set(P_SHIFT, 4)
     low = pad_events(m, [12])[0]
-    check(midi_note(low[1]) == -36 == midi_note(low[2]),
-          f'pad 13 at shift 28 plays -36: MIDI out\'s note-off is -36 too (stock would read the stored byte '
-          f'unsigned) ({low[1][0]}, {low[2][0]})')
+    check(midi_note(top[1]) == 27 == midi_note(top[2]) and midi_note(low[1]) == -12 == midi_note(low[2]),
+          f'pad 4 at shift -20 plays +27, pad 13 at shift 4 plays -12: MIDI out\'s note-on and note-off carry them '
+          f'({top[1][0]}, {top[2][0]}, {low[1][0]}, {low[2][0]})')
 
 
 def record_checks(img, parent, man):
@@ -600,9 +611,9 @@ def record_checks(img, parent, man):
     check(all(same), f'recording, Chrom at shifts -8, 0, 4: every pad within -12..+12 is recorded as on the parent; '
                      f'the pads above +12 (silent on the parent\'s page) are recorded with their note byte ({same})')
     m.set(P_SCALE, 0)
-    m.set(P_SHIFT, 20)
+    m.set(P_SHIFT, -20)
     m.records = []
-    kept, notes = [], model(0, 0, 20)[1]
+    kept, notes = [], model(0, 0, -20)[1]
     for i in range(16):
         before = len(m.records)
         m.pad(i, 100)
@@ -611,7 +622,7 @@ def record_checks(img, parent, man):
     want = [2 if -13 <= n <= 18 else 0 for n in notes]
     bytes_ = [w[0] >> 24 & 0x7F for w in m.records]
     check(kept == want and all((b - 13) in notes for b in bytes_),
-          f'recording at shift 20 (notes {min(notes)}..{max(notes)}): pads within -13..+18 recorded with their '
+          f'recording at shift -20 (notes {min(notes)}..{max(notes)}): pads within -13..+18 recorded with their '
           f'note byte, the rest not ({kept})')
 
 
@@ -641,8 +652,8 @@ def light_checks(img, parent, man):
                     all(lp[i] == 0 and lm[i] == up for i in range(16) if notes[i] > 12))
     check(all(same), 'Chrom, every stock shift: the pads within -12..+12 light as on the parent; the parent leaves '
                      'the pads above +12 dark, here they light like the others above the pitch')
-    for scale, root, shift in ((0, 0, 28), (0, 0, -11), (1, 0, 0), (2, 9, 0), (5, 2, -3), (6, 4, 0), (6, 0, 12),
-                               (17, 0, 0), (31, 7, 5)):
+    for scale, root, shift in ((0, 0, 4), (0, 0, -20), (1, 0, 0), (2, 9, 0), (5, 2, -3), (6, 4, 0), (6, 0, -12),
+                               (17, 0, 0), (31, 7, -5)):
         m.set(P_SCALE, scale)
         m.set(P_ROOT, root)
         m.set(P_SHIFT, shift)
@@ -650,8 +661,102 @@ def light_checks(img, parent, man):
         got = last(m.paint())
         if got != want(notes):
             bad.append((scale, root, shift, notes, got))
-    check(not bad, f'scales, roots and shifts (to -36 and +18): every pad lights as the parent lights a pad in the '
+    check(not bad, f'scales, roots and shifts (to -12 and +27): every pad lights as the parent lights a pad in the '
                    f'scale at that note (none dark) ({bad[:1]})')
+
+
+def push_checks(img, parent, man):
+    m, p = Machine(img, man['entries']), Machine(parent)
+    for x in (m, p):
+        x.open_page(CHROMA_PAGE, CHROMA_REGISTRY)
+        x.chromatic(True, source=3)
+        x.set(P_SCALE, 0)
+        x.set(P_ROOT, 0)
+        x.set(P_SHIFT, 0)
+    m.clear()
+    m.dispatch(EV_KEY, KEY_VALUE)
+    pressed = m.get(P_SCALE)
+    m.dispatch(EV_KEY_UP, KEY_VALUE)
+    check(pressed == 0 and m.get(P_SCALE) == 1 and m.popups == ['Scale Maj'] and
+          m.tables()[0] == model(1, 0, m.get(P_SHIFT))[0],
+          f'VALUE tapped: nothing at the press, the next scale at the release, popup "Scale Maj", the pads follow '
+          f'({pressed}, {m.get(P_SCALE)}, {m.popups})')
+    m.set(P_SCALE, 0)
+    m.set(P_SHIFT, -8)
+    m.clear()
+    m.dispatch(EV_KEY, KEY_VALUE)
+    seq = []
+    for d in (1, 1, 1, -1, -1, -1, -1, -1):
+        m.dispatch(EV_ENCODER, 0, d)
+        seq.append(m.get(P_SCALE))
+    m.dispatch(EV_KEY_UP, KEY_VALUE)
+    shift = m.get(P_SHIFT)
+    names = ['Scale ' + m.label(v) for v in seq]
+    check(seq == [1, 2, 3, 2, 1, 0, 33, 32] and m.get(P_SCALE) == 32 and m.popups == names and
+          m.get(P_ROOT) == 0 and m.tables()[0] == model(32, 0, shift)[0],
+          f'VALUE held and turned: the scale one a turn, round (0 back to 33), the shift left alone (but for the new '
+          f'range\'s end), nothing more at the release; popups name each ({seq}, {m.popups[-2:]})')
+    m.clear()
+    m.dispatch(EV_KEY, KEY_SHIFT)
+    m.dispatch(EV_KEY, KEY_VALUE)
+    keys = []
+    for d in (-1, -1, 1, 1, 1):
+        m.dispatch(EV_ENCODER, 0, d)
+        keys.append(m.get(P_ROOT))
+    m.dispatch(EV_KEY_UP, KEY_VALUE)
+    m.dispatch(EV_KEY_UP, KEY_SHIFT)
+    check(keys == [11, 10, 11, 0, 1] and m.get(P_SCALE) == 32 and
+          m.popups == ['Key ' + ROOTS[k] for k in keys] and m.tables()[0] == model(32, 1, m.get(P_SHIFT))[0],
+          f'SHIFT and VALUE held, VALUE turned: the key one a turn, round (C back to B), the scale left alone; popups '
+          f'"Key B" ..; the pads follow ({keys}, {m.popups})')
+    m.clear()
+    m.dispatch(EV_KEY, KEY_VALUE)
+    m.dispatch(EV_KEY, KEY_SHIFT)
+    m.dispatch(EV_ENCODER, 0, 1)
+    m.dispatch(EV_KEY_UP, KEY_SHIFT)
+    m.dispatch(EV_ENCODER, 0, 1)
+    m.dispatch(EV_KEY_UP, KEY_VALUE)
+    check(m.get(P_ROOT) == 2 and m.get(P_SCALE) == 33,
+          f'VALUE first, then SHIFT: the key; SHIFT let go with VALUE still held: the scale again '
+          f'({m.get(P_ROOT)}, {m.get(P_SCALE)})')
+    same = []
+    for scale in (0, 5):
+        got = []
+        for x in (m, p):
+            x.set(P_SCALE, scale)
+            x.set(P_ROOT, 3)
+            x.set(P_SHIFT, 0)
+            x.dispatch(EV_ENCODER, 0, -1)
+            a = x.get(P_SHIFT)
+            x.dispatch(EV_KEY, KEY_SHIFT)
+            x.dispatch(EV_ENCODER, 0, -1)
+            x.dispatch(EV_KEY_UP, KEY_SHIFT)
+            b = x.get(P_SHIFT)
+            x.dispatch(EV_KEY, KEY_ROLL)
+            x.dispatch(EV_ENCODER, 0, 1)
+            x.dispatch(EV_KEY_UP, KEY_ROLL)
+            got.append((a, b, x.get(P_ROOT), x.get(P_SCALE)))
+        # with a scale the shift counts scale notes in its own range (the fold): only the key is stock's
+        same.append(got[0] == got[1] if scale == 0 else got[0][2:] == got[1][2:] == (4, scale))
+    check(all(same), f'without VALUE held: Chrom, a turn moves the pads 4 and SHIFT + turn 1, as on the parent; with a '
+                     f'scale ROLL + turn moves the key, as on the parent ({same})')
+    for x in (m, p):
+        x.w32(UI_HELD, 1)
+        x.set(P_SCALE, 2)
+        x.tap(KEY_VALUE)
+    held = m.get(P_SCALE) == p.get(P_SCALE)
+    for x in (m, p):
+        x.w32(UI_HELD, 0)
+        x.chromatic(False)
+        x.set(P_SCALE, 2)
+        x.clear()
+        x.dispatch(EV_KEY, KEY_VALUE)
+    pressed = m.get(P_SCALE) == p.get(P_SCALE)
+    for x in (m, p):
+        x.dispatch(EV_KEY_UP, KEY_VALUE)
+    check(held and pressed and m.get(P_SCALE) == p.get(P_SCALE) and not m.popups,
+          f'VALUE while the page\'s press is the base class\'s, and outside chromatic mode: as the parent (at the '
+          f'press) ({m.get(P_SCALE)}, {p.get(P_SCALE)})')
 
 
 def main():
@@ -667,7 +772,8 @@ def main():
                      ('names', lambda: name_checks(img, parent, man)),
                      ('pads', lambda: pad_checks(img, parent, man)),
                      ('record', lambda: record_checks(img, parent, man)),
-                     ('lights', lambda: light_checks(img, parent, man))):
+                     ('lights', lambda: light_checks(img, parent, man)),
+                     ('push', lambda: push_checks(img, parent, man))):
         if sections is None or name in sections:
             fn()
     print(f'\n{"ALL PASS" if not fails else f"{len(fails)} FAILED"}')
