@@ -1,20 +1,20 @@
-"""combined-test4: the fork's latest feature test builds in one APP1 (combined-test1's steps at the revisions
-that follow the user's test of combined-test3, plus SUB PAD on the Sound Generator page).
+"""combined-test5: the fork's latest feature test builds in one APP1 (combined-test4's steps at the revisions
+that follow the user's test of combined-test4).
 
-Each feature's own builder runs in turn on the output of the one before, from bounce-3-test8's parent (the
+Each feature's own builder runs in turn on the output of the one before, from bounce-3-test9's parent (the
 published v9.46's kit stage plus the RESAMPLE start fix v3, resample-startfix-3):
 
-  1 bounce in place, stage 3   build_bounce.py            0x83FE8000   as in bounce-3-test8
-  2 FX deep edit               build_fx_deep_edit.py      0x83FE2000   fx-deep-edit-test2
+  1 bounce in place, stage 3   build_bounce.py            0x83FE8000   as in bounce-3-test9
+  2 FX deep edit               build_fx_deep_edit.py      0x83FE2000   fx-deep-edit-test3
   3 pad envelopes, stage 1     build_pad_env.py           0x83FDE000   pad-env-test6's stage 1
   4 pad envelopes, stage 2     build_pad_pitch_filter.py  0x83FD9000   pad-env-test6
   5 kit edits saved            build_kits_save.py         0x83FD5000   kits-save-test2
-  6 note repeat                build_note_repeat.py       0x83FDC000   note-repeat-test3
+  6 note repeat                build_note_repeat.py       0x83FDC000   note-repeat-test4
   7 chromatic scales           build_chroma.py            0x83FD7000   chroma-test2
   8 SUB PAD on the SG page     build_sg_subpad.py         0x83FD4000   sg-subpad-test1
 
 Each module has to come out byte for byte as in its own test build (its blob SHA-256), and step 1 as
-bounce-3-test8's APP1. The FX probe stays out: it used the TOP vtable slot FX deep edit takes. The fast boot
+bounce-3-test9's APP1. The FX probe stays out: it used the TOP vtable slot FX deep edit takes. The fast boot
 (build_fast_boot.py) goes on top of the result as it did for combined-test3.
 
 Each builder checks the code it relies on byte for byte (its guards), so it runs before the builders that
@@ -45,7 +45,7 @@ from build_arp import file_offset
 from build_kits_save import Runtime
 
 HERE = Path(__file__).resolve().parent
-REVISION = 'combined-test4'
+REVISION = 'combined-test5'
 FLASH = 0x60080000
 PCM_BANK, FLASH_LIMIT = 0x60376000, 0x60400000   # kits/build_arp_kit.py: kit PCM bank, flash planning limit
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
@@ -53,12 +53,12 @@ PARENT_SHA = '7d13c1e26d222cea7cada8b6b8ac986b432bf1b32508b5f39ac9c6c117ea61cc' 
 NAMES = ('SP404MKII_APP0.bin', 'SP404MKII_APP1.bin', 'manifest.json')
 # (step, builder, the feature's own test build, where its manifest keeps this module)
 STEPS = [
-    ('bounce', 'build_bounce.py', 'bounce-3-test8', None),
-    ('fx-deep-edit', 'build_fx_deep_edit.py', 'fx-deep-edit-test2', None),
+    ('bounce', 'build_bounce.py', 'bounce-3-test9', None),
+    ('fx-deep-edit', 'build_fx_deep_edit.py', 'fx-deep-edit-test3', None),
     ('pad-env-1', 'build_pad_env.py', 'pad-env-test6', 'stage1'),
     ('pad-env-2', 'build_pad_pitch_filter.py', 'pad-env-test6', None),
     ('kits-save', 'build_kits_save.py', 'kits-save-test2', None),
-    ('note-repeat', 'build_note_repeat.py', 'note-repeat-test3', None),
+    ('note-repeat', 'build_note_repeat.py', 'note-repeat-test4', None),
     ('chroma', 'build_chroma.py', 'chroma-test2', None),
     ('sg-subpad', 'build_sg_subpad.py', 'sg-subpad-test1', None),
 ]
@@ -240,9 +240,9 @@ def build(parent: Path, out: Path, zig: Path, fxmap: Path, refs: Path):
         shutil.copy2(s['dir'] / 'manifest.json', out / 'steps' / f'{i}-{s["name"]}.manifest.json')
     manifest = dict(
         revision=REVISION, status='hardware-unverified', published=False,
-        description='every latest feature test build in one APP1: bounce in place (bounce-3-test8), FX deep edit '
-                    '(fx-deep-edit-test2), pad envelopes stages 1 and 2 (pad-env-test6), kit edits and the Sound '
-                    'Generator saved with the project (kits-save-test2), note repeat (note-repeat-test3), chromatic '
+        description='every latest feature test build in one APP1: bounce in place (bounce-3-test9), FX deep edit '
+                    '(fx-deep-edit-test3), pad envelopes stages 1 and 2 (pad-env-test6), kit edits and the Sound '
+                    'Generator saved with the project (kits-save-test2), note repeat (note-repeat-test4), chromatic '
                     'scales (chroma-test2) and SUB PAD on the Sound Generator page (sg-subpad-test1), each module '
                     'byte for byte its own build\'s, on the RESAMPLE start fix v3; not the FX probe',
         parent_app1=str(parent / 'SP404MKII_APP1.bin'), parent_sha256=PARENT_SHA, parent_revision='resample-startfix-3',
