@@ -448,6 +448,7 @@ reset) passes on the stage 1 build. Four more broken builds fail them: the state
 the LP bypass from CUTOFF 126, a reset that clears 0x70, a reset that ignores COPY / REMAIN. The kit suites (test_kits, capture, chord, shortcut, midi, restart, hot resample,
 test_kit_bounce flow, 13 kits and 4 tweaked) pass on the image; test_start_fix passes on its own release, and on this
 image its trim and threshold checks pass while its 4 structural checks expect the start fix to be the top stage.
+The same on pad-env-test5 (`dev_pitchfilter\suites_release5\summary.txt`).
 
 Not run: the worker and the charges themselves (so LOOP, REVERSE and a real sample's end are not exercised through
 them; the stages only see the resampler's ring and output time, which LOOP and REVERSE don't change), the display
