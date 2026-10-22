@@ -89,6 +89,9 @@ CALLERS = {0x80023B05: 'Init', 0x8001FF39: 'A/H/R edit', 0x80022DAF: 'START edit
 INIT_RET = 0x80023B05
 EV_KEY, EV_KEY_UP, EV_TICK, EV_KNOB = 5, 6, 8, 9
 KEY_SHIFT, KEY_COPY = 42, 0x23                           # the ENVELOPE page: COPY 0x23 (REMAIN 0x24)
+KEY_DEL, KEY_EXIT, KEY_VALUE = 0x1A, 0x22, 0x31           # DOOM OS's button table 0x60331134 agrees (DEL 0x1a)
+PAGE_REQUEST = 0x8024587C                                # 0x800da598(n), EXIT's page change, stores n here
+INIT_PARAM, INIT_PARAM_OK, CMD_DISPATCH = 0x8018C220, 0x80051DB8, 0x8004D8B8
 ONE, M32 = 32768, 0xFFFFFFFF
 FALL = [0, 2, 1, 3]
 fails = []
@@ -366,9 +369,9 @@ class Machine:
         self.tick()
 
     def ui(self):
-        b = bytes(self.uc.mem_read(self.sym['env_ui'], 40))
+        b = bytes(self.uc.mem_read(self.sym['env_ui'], 41))
         return dict(page=b[0], shift=b[1], used=b[2], dirty=b[3], saves=struct.unpack_from('<I', b, 16)[0],
-                    labels=b[31], bottom=b[32], draws=struct.unpack_from('<I', b, 36)[0])
+                    labels=b[31], bottom=b[32], draws=struct.unpack_from('<I', b, 36)[0], asking=b[40])
 
     def screen(self):
         """(the screen, the page's static layer): 8192 bytes each"""
@@ -1623,6 +1626,223 @@ def ui_checks(img, parent, man, frames, curves):
           all(len(t) <= 10 for row in PAGE_LABELS for t in row) and all(len(t) <= 16 and t.isascii() for t in texts),
           f'the module shows no popups (only stock\'s own COPY ones: {stock}); every label is at most 10 characters, '
           f'every value and bottom line at most 16')
+    reset_checks(m, p, screens, man)
+
+
+def all_bytes(mm, pad):
+    """bytes 0x64-0x7F of the pad's extended block"""
+    return bytes(mm.uc.mem_read(EXT + pad * 0x80 + 0x64, 0x1C))
+
+
+def full_settings(pad):
+    """envelope settings in every byte 0x64-0x7F (0x70, note repeat's, too)"""
+    return ext_bytes(3, 32, 90, 0x19, 70, 40, rest=b'\x01\x30\x00') + bytes((pad + 0x41 + i) & 0x7F | 1 for i in range(16))
+
+
+def press(mm, key):
+    """a key pressed and let go: the key-down event, then its held bit cleared (the key-up path of DEL and
+    the pads waits on the panel's serial port, which this machine does not have)"""
+    mm.dispatch(EV_KEY, key)
+    b = mm.uc.mem_read(KEYS + (key >> 3), 1)[0]
+    mm.uc.mem_write(KEYS + (key >> 3), bytes([b & ~(1 << (key & 7)) & 0xFF]))
+
+
+def reset_checks(m, p, screens, man):
+    """DEL on the ENVELOPE page: the pad's envelope settings back to stock, after VALUE"""
+    def asked(n, pad, text):
+        st = pad_state(m, pad)
+        v = screens.view(n, pad, st['b'], st['a'], st['h'], st['r'], st['loop'], st['play'])
+        v['bottom'] = text
+        return m.screen() == screens.draw(v, pad, st['a'], st['h'], st['r'], st['loop'], st['play'])
+
+    def is_reset(pad, before):
+        now = all_bytes(m, pad)
+        return now[:12] == bytes(12) and now[12] == before[12] and now[13:] == bytes(15)
+
+    m.protected = set()
+    m.uc.mem_write(APPLY_MODE, struct.pack('<i', 0))
+    m.current_pad(5)
+    m.load_pad(5)
+    # stock's page does nothing with DEL
+    p.open_page()
+    p.current_pad(5)
+    p.draw()
+    p.clear()
+    before = p.screen()
+    press(p, KEY_DEL)
+    check(p.screen() == before and not p.posts and not p.setters and not p.popups and not p.fanouts,
+          'stock\'s ENVELOPE page: DEL does nothing (its key handler 0x800f5ad8 returns 1 for key 0x1a)')
+    # DEL asks, VALUE resets
+    go_to(m, 1)
+    m.uc.mem_write(EXT + 5 * 0x80 + 0x64, full_settings(5))
+    b5 = all_bytes(m, 5)
+    m.draw()
+    m.clear()
+    edge = m.screen()[0]
+    press(m, KEY_DEL)
+    q = 'RESET A-6? press VALUE'
+    after = m.screen()[0]
+    outside = all(edge[y * 128 + x] == after[y * 128 + x] for y in range(48, 64) for x in list(range(12)) + list(range(116, 128)))
+    check(m.ui()['asking'] == 1 and all_bytes(m, 5) == b5 and asked(1, 5, q) and outside and not m.fanouts and
+          not m.setters and not m.posts and not m.popups and (64, NAME_Y, q) in m.texts,
+          f'DEL on page 2: "{q}" in the bottom line (inside x 12-115: the S and E marks stay), nothing written yet')
+    m.clear()
+    saves = m.ui()['saves']
+    press(m, KEY_VALUE)
+    reset_now = is_reset(5, b5)
+    m.tick(20)
+    check(reset_now and m.ui()['asking'] == 0 and {f[1] for f in m.fanouts} == {5} and matches(m, screens, 1, 5) and
+          [x[:3] for x in m.posts] == [(0xD, 1, 0)] and m.ui()['saves'] == saves + 1,
+          f'VALUE: bytes 0x64-0x6F and 0x71-0x7F of the pad are 0 (0x70, note repeat\'s, stays {all_bytes(m, 5)[12]:#x}), '
+          f'its voices recompute, the page shows stock settings, and the save goes out 1 s later ({all_bytes(m, 5).hex()})')
+    # cancelled: EXIT (stays on the page), a knob, a pad change, another key
+    seq = []
+    m.uc.mem_write(EXT + 5 * 0x80 + 0x64, full_settings(5))
+    m.draw()
+    req = m.r16(PAGE_REQUEST)
+    press(m, KEY_DEL)
+    m.clear()
+    press(m, KEY_EXIT)
+    seq.append(('EXIT', m.ui()['asking'] == 0 and all_bytes(m, 5) == b5 and m.r16(PAGE_REQUEST) == req and
+                m.r32(PAGE_PTR) == m.page and matches(m, screens, 1, 5) and not m.posts))
+    press(m, KEY_DEL)
+    m.knob(1, 64)                        # page 2 CTRL 1: attack curve LOG
+    seq.append(('knob', m.ui()['asking'] == 0 and all_bytes(m, 5) == b5[:3] + bytes([b5[3] & ~3 | 2]) + b5[4:] and
+                matches(m, screens, 1, 5)))
+    m.uc.mem_write(EXT + 5 * 0x80 + 0x64, full_settings(5))
+    m.draw()
+    press(m, KEY_DEL)
+    m.load_pad(7)
+    m.samples[7] = SPAN
+    m.current_pad(7)
+    m.call(m.r32(m.r32(m.page) + 0xC8), m.page, count=50_000_000)
+    seq.append(('pad change', m.ui()['asking'] == 0 and all_bytes(m, 5) == b5 and matches(m, screens, 1, 7)))
+    m.current_pad(5)
+    m.call(m.r32(m.r32(m.page) + 0xC8), m.page, count=50_000_000)
+    press(m, KEY_DEL)
+    m.clear()
+    m.dispatch(EV_KEY, KEY_COPY)
+    asked_after = m.ui()['asking']
+    m.dispatch(EV_KEY_UP, KEY_COPY)
+    m.uc.mem_write(APPLY_MODE, struct.pack('<i', 0))
+    seq.append(('COPY', asked_after == 0 and all_bytes(m, 5) == b5 and
+                [t for t, _ in m.popups] == ['to MUTE GROUP', 'to Current PAD']))
+    m.draw()
+    press(m, KEY_DEL)
+    press(m, KEY_DEL)
+    seq.append(('DEL again', m.ui()['asking'] == 0 and all_bytes(m, 5) == b5 and matches(m, screens, 1, 5)))
+    check(all(ok for _, ok in seq), f'cancelled, nothing written: EXIT (the page stays, no page change), a knob (which '
+                                    f'then turns), a pad change, another key (COPY, which then does its stock '
+                                    f'thing), DEL again ({seq})')
+    # not asked: SHIFT held, an empty pad
+    m.dispatch(EV_KEY, KEY_SHIFT)
+    press(m, KEY_DEL)
+    shift_held = m.ui()['asking']
+    m.dispatch(EV_KEY_UP, KEY_SHIFT)
+    m.tick()
+    page_after = m.ui()['page']
+    m.unload_pad(5)
+    press(m, KEY_DEL)
+    empty = m.ui()['asking']
+    m.load_pad(5)
+    check(shift_held == 0 and page_after == 1 and empty == 0 and all_bytes(m, 5) == b5,
+          'DEL with SHIFT held goes to stock (and makes that SHIFT press no tap); on a pad without a sample, nothing')
+    # COPY held: the mute group; REMAIN held: the bank
+    for pad, group in ((5, 2), (7, 2), (12, 2), (18, 2), (3, 1), (21, 0)):
+        m.load_pad(pad)
+        m.set(0x6D, group, pad)
+    pads = (3, 5, 7, 9, 12, 18, 21)
+    for pad in pads:
+        m.uc.mem_write(EXT + pad * 0x80 + 0x64, full_settings(pad))
+    want = {pad: all_bytes(m, pad) for pad in pads}
+    m.protected = {1}
+    m.uc.mem_write(APPLY_MODE, struct.pack('<i', 1))
+    m.clear()
+    press(m, KEY_DEL)
+    q_group = asked(1, 5, 'RESET GROUP? press VALUE')
+    m.uc.mem_write(APPLY_MODE, struct.pack('<i', 0))         # COPY let go before VALUE
+    press(m, KEY_VALUE)
+    group = [pad for pad in pads if is_reset(pad, want[pad])]
+    kept = [pad for pad in pads if all_bytes(m, pad) == want[pad]]
+    check(q_group and group == [5, 7, 12] and kept == [3, 9, 18, 21] and {f[1] for f in m.fanouts} == {5, 7, 12},
+          f'COPY held at DEL: "RESET GROUP? press VALUE", and VALUE resets the mute group (2: pads 5, 7, 12; pad 18 '
+          f'is in protected bank B), the mode taken at DEL ({group}, kept {kept})')
+    for pad in pads:
+        m.uc.mem_write(EXT + pad * 0x80 + 0x64, full_settings(pad))
+    m.unload_pad(9)
+    m.uc.mem_write(APPLY_MODE, struct.pack('<i', 2))
+    m.clear()
+    press(m, KEY_DEL)
+    q_bank = asked(1, 5, 'RESET BANK A? press VALUE')
+    press(m, KEY_VALUE)
+    m.uc.mem_write(APPLY_MODE, struct.pack('<i', 0))
+    m.load_pad(9)
+    bank = [pad for pad in pads if is_reset(pad, want[pad])]
+    kept = [pad for pad in pads if all_bytes(m, pad) == want[pad]]
+    m.uc.mem_write(APPLY_MODE, struct.pack('<i', 1))
+    m.set(0x6D, 0, 5)
+    press(m, KEY_DEL)
+    no_group = m.ui()['asking']
+    press(m, KEY_EXIT)
+    m.uc.mem_write(APPLY_MODE, struct.pack('<i', 0))
+    m.set(0x6D, 2, 5)
+    check(q_bank and bank == [3, 5, 7, 12] and kept == [9, 18, 21] and no_group == 1,
+          f'REMAIN held: "RESET BANK A? press VALUE", and VALUE resets bank A but pad 9, which holds no sample; COPY '
+          f'held on a pad in no mute group asks for the pad alone ({bank}, kept {kept})')
+    # page 1 (stock's screen)
+    m.protected = set()
+    go_to(m, 0)
+    m.set_ext(5, ext_bytes())
+    m.draw()
+    press(m, KEY_DEL)
+    q1 = asked(0, 5, 'RESET A-6? press VALUE')
+    press(m, KEY_EXIT)
+    check(q1 and matches(m, screens, 0, 5),
+          'page 1 (stock\'s screen): DEL asks in the bottom line; EXIT gives stock\'s screen back')
+    # the question's width: every pad name, group and bank
+    widths = []
+    for text in ['RESET J-16? press VALUE', 'RESET GROUP? press VALUE', 'RESET BANK J? press VALUE']:
+        p.uc.mem_write(SCREEN_PIX, bytes(8192))
+        ctx = p.r32(p.page + 0x34)
+        p.uc.mem_write(SCRATCH + 0x7840, text.encode() + b'\0')
+        p.call(FONT | 1, ctx, FONT_ID)
+        p.call(TEXT | 1, ctx, 64, NAME_Y, SCRATCH + 0x7840, count=20_000_000)
+        pix = bytes(p.uc.mem_read(SCREEN_PIX, 8192))
+        xs = [x for y in range(48, 64) for x in range(128) if pix[y * 128 + x]]
+        widths.append((min(xs), max(xs)))
+    p.leave()
+    check(all(12 <= a and b <= 115 for a, b in widths),
+          f'the longest questions stay inside the bottom line\'s box (x 12-115) ({widths})')
+    # stock's INIT PARAM (SHIFT + pad 6, then OK) on the parent: command 0x40a; its handler clears 0x40-0x7F
+    q = Machine(m_parent_img(man), arm_max=True)
+    q.load_pad(5)
+    blk = EXT + 5 * 0x80
+    q.uc.mem_write(blk, bytes(range(0x80, 0x100)))
+    q.call(INIT_PARAM_OK | 1, 5, count=50_000_000)
+    posted = [x[:3] for x in q.posts]
+    q.call(INIT_PARAM | 1, CSMPLPRM, 5, count=50_000_000)
+    after = bytes(q.uc.mem_read(blk, 0x80))
+    case = struct.unpack('<H', bytes(q.uc.mem_read(CMD_DISPATCH + 0x22 + 2 * 0x40A, 2)))[0] * 2 + CMD_DISPATCH + 0x22
+    chain = (bl_target(q, case + 10), bl_target(q, 0x8018523C))
+    check(posted == [(0x40A, 5, 0)] and after[:0x40] == bytes(range(0x80, 0xC0)) and after[0x40:] == bytes(0x40) and
+          case == 0x8004F848 and chain == (0x80185208, INIT_PARAM),
+          f'stock\'s INIT PARAM (its OK 0x80051db8 posts command 0x40a; the command task\'s case 0x8004f848 -> '
+          f'0x80185208 -> 0x8018c220) clears bytes 0x40-0x7F of the pad\'s extended block: these settings, note '
+          f'repeat\'s 0x70 and the pad FX bytes; 0x00-0x3F stay ({posted}, {after[0x3C:0x48].hex()})')
+
+
+def m_parent_img(man):
+    return Path(man['parent_app1']).read_bytes()
+
+
+def bl_target(mm, at):
+    """where the BL at `at` goes"""
+    h1, h2 = struct.unpack('<HH', bytes(mm.uc.mem_read(at, 4)))
+    if (h1 & 0xF800) != 0xF000 or (h2 & 0xD000) != 0xD000:
+        return None
+    sgn, j1, j2 = h1 >> 10 & 1, h2 >> 13 & 1, h2 >> 11 & 1
+    off = sgn << 24 | (~(j1 ^ sgn) & 1) << 23 | (~(j2 ^ sgn) & 1) << 22 | (h1 & 0x3FF) << 12 | (h2 & 0x7FF) << 1
+    return at + 4 + off - (sgn << 25)
 
 
 def main():

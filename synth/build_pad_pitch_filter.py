@@ -35,12 +35,13 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY = 0x60080000, 0x600800E4
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'pad-env-test3'
+REVISION = 'pad-env-test5'
 SLOT = 0x3000                       # reserved: [base, base + SLOT)
 GAP = (0x83FC9000, 0x83FF0000)      # above the fork's rows (end 0x83FC8450), below the end of cacheable SDRAM
 # Every other fork module's reserved RAM (branch, start, end).
 KNOWN_SLOTS = [
-    ('pad FX (planned; pad_fx/REPORT.md)', 0x83FC9000, 0x83FD9000),
+    ('pad FX (planned; pad_fx/REPORT.md)', 0x83FC9000, 0x83FD7000),
+    ('chromatic mode module (planned, its own branch)', 0x83FD7000, 0x83FD9000),
     ('claude/note-repeat (note repeat)', 0x83FDC000, 0x83FDE000),
     ('claude/pad-env-amp (pad envelopes stage 1)', 0x83FDE000, 0x83FE2000),
     ('claude/fx-deep-edit (FX deep edit)', 0x83FE2000, 0x83FE6000),
@@ -51,7 +52,7 @@ KNOWN_SLOTS = [
     ('main (RESAMPLE start fix)', 0x83FEF000, 0x83FF0000),
 ]
 EXPORTS = ('pf_mono_entry', 'pf_stereo_entry', 'pf_active', 'pf_mono', 'pf_stereo', 'pf_stage', 'pf_voices', 'pf_gen',
-           'pf_pages', 'pf_pow2', 'pf_g', 'pf_k', 'pf_comp', 'pf_hz', 'pf_q10')
+           'pf_pages', 'pf_pow2', 'pf_g', 'pf_k', 'pf_k30', 'pf_comp15', 'pf_hz', 'pf_q10')
 # stage 1's tables and its two helpers for later stages' pages, linked by address
 STAGE1_LINKS = ('env_fine_frames', 'env_curve', 'env_targets', 'env_touched')
 STAGE1_NEEDS = ('env_recompute', 'env_dispatch', 'env_stages', 'env_more_pages', 'env_ui_knob', 'env_ui_draw') + \
@@ -97,6 +98,9 @@ GUARDS = [
      'voice param setter: PITCH/FINE store voice + 0xd4/+0xd8 and set the step voice + 0x160 directly'),
     (0x800C0660, 0x800C06C8, '8fc9e8cc40a884facd9598e2733b99a3527deb4befa73c822c843cc4e266fd77',
      'line (context, {x, y}, {x, y}): the pages\' graphs'),
+    (0x000168FE, 0x00016F50, '051324b2c5e1be61dbd40602196d0b8d6e2f187c8c2af086bebdf822e8abb739',
+     'the stream consumer: a 64-frame block whose chunk is not filled yet (header word != -1, or none left) plays '
+     'nothing and adds 1 to 0x82e0b940 (0x16cc4, 0x16cdc), which nothing else reads: the page\'s DROPS'),
 ]
 
 # ---------------------------------------------------------------- tables
@@ -133,8 +137,14 @@ def k_table():
     return [f32(1 / q_of(r)) for r in range(128)]
 
 
-def comp_table():
-    return [f32(2 ** (-r * Q_OCT / 2 / 127)) for r in range(128)]
+def k30_table():
+    """k = 1 / Q in Q30 (the frame loop's)"""
+    return [int(round(1 / q_of(r) * 2 ** 30)) for r in range(128)]
+
+
+def comp15_table():
+    """LP / HP input gain 1 / sqrt(Q / 0.7071) in Q15: 32768 at RESO 0"""
+    return [int(round(2 ** (-r * Q_OCT / 2 / 127) * 32768)) for r in range(128)]
 
 
 def hz_table():
@@ -146,10 +156,10 @@ def q10_table():
 
 
 def tables():
-    return pow2_table(), g_table(), k_table(), comp_table(), hz_table(), q10_table()
+    return pow2_table(), g_table(), k_table(), k30_table(), comp15_table(), hz_table(), q10_table()
 
 
-def header(pow2, g, k, comp, hz, q10):
+def header(pow2, g, k, k30, comp, hz, q10):
     def rows(values, per, fmt):
         return [', '.join(fmt(v) for v in values[i:i + per]) + ',' for i in range(0, len(values), per)]
 
@@ -160,10 +170,11 @@ def header(pow2, g, k, comp, hz, q10):
              'EXPORT const u32 pf_pow2[97] = {', *rows(pow2, 12, str), '};',
              '/* g = tan(pi * fc / 48000), fc = 20 Hz * 1000^(i / 127); a guard entry */',
              'EXPORT const float pf_g[129] = {', *rows(g, 6, hexf), '};',
-             '/* k = 1 / Q, Q = 0.7071 * 2^(r * 4.5 / 127) */',
+             '/* k = 1 / Q, Q = 0.7071 * 2^(r * 4.5 / 127): float for the coefficients, Q30 for the frame loop */',
              'EXPORT const float pf_k[128] = {', *rows(k, 6, hexf), '};',
-             '/* LP / HP input gain 1 / sqrt(Q / 0.7071) */',
-             'EXPORT const float pf_comp[128] = {', *rows(comp, 6, hexf), '};',
+             'EXPORT const s32 pf_k30[128] = {', *rows(k30, 8, str), '};',
+             '/* LP / HP input gain 1 / sqrt(Q / 0.7071), Q15 */',
+             'EXPORT const u16 pf_comp15[128] = {', *rows(comp, 16, str), '};',
              '/* the screen: cutoff in Hz, Q x 10 */',
              'EXPORT const u16 pf_hz[128] = {', *rows(hz, 16, str), '};',
              'EXPORT const u8 pf_q10[128] = {', *rows(q10, 16, str), '};']
@@ -271,8 +282,8 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
             != curve_tables():
         raise ValueError('the parent\'s env_fine_frames / env_curve are not stage 1\'s tables')
 
-    pow2, g, k, comp, hz, q10 = tables()
-    tables_h = header(pow2, g, k, comp, hz, q10)
+    pow2, g, k, k30, comp, hz, q10 = tables()
+    tables_h = header(pow2, g, k, k30, comp, hz, q10)
     folder = build_dir or out / 'build'
     links = {n: man['entries'][n] for n in STAGE1_LINKS}
     module, symbols, source_sha, tables_sha = compile_module(folder, zig, base, base + SLOT, tables_h, links)
@@ -354,15 +365,20 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
         pitch=dict(step='base x 2^(depth x env / 12) per 64 output frames (175 in stretch mode 2), clamped to '
                         f'{4096}..{34716} (-24..+13 semitones) unless the base is already outside',
                    pow2_q16=pow2),
-        filter=dict(kind='TPT state-variable (Zavalishin/Simper), float32, coefficients per 32 frames',
+        filter=dict(kind='TPT state-variable (Zavalishin/Simper): coefficients per 32 frames in float32, then Q31; '
+                         'the frame loop in fixed point (the signal x 2^9, SMMULR / SMMLAR)',
                     cutoff=f'{CUT_LO} Hz * {CUT_RATIO}^(i / 127)', q=f'{Q_LO:.4f} * 2^(r * {Q_OCT} / 127)',
-                    gain='LP and HP input x 1 / sqrt(Q / 0.7071); BP = k * v1 (unity peak)',
-                    clip='soft knee above 24576, saturating at 32767'),
+                    gain='LP and HP input x 1 / sqrt(Q / 0.7071) (Q15); BP = k * v1 (unity peak)',
+                    clip='soft knee above 24576, saturating at 32767',
+                    bypass='a block where an LP is at 127 or an HP at 0 without resonance passes as it is'),
+        drops='CURVES page CTRL 2: stock\'s count 0x82e0b940 of 64-frame blocks the stream consumer found no filled '
+              'chunk for (played as silence), since power-on',
         ui=dict(page='ENVELOPE (0x10), SHIFT + PITCH/SPEED, tap SHIFT: pages 5-8 after stage 1\'s four',
                 pages=['5 PITCH: DEPTH -24..+24 st (OFF), ATTACK, DECAY (or HOLD); graph: the pitch envelope',
                        '6 FILTER: TYPE OFF/LPF/BPF/HPF, CUTOFF 20 Hz - 20 kHz, RESO Q 0.7 - 16; graph: stage 1\'s',
                        '7 F-ENV: AMOUNT -63..+63 (+-9.9 octaves), ATTACK, DECAY (or HOLD); graph: the cutoff envelope',
-                       '8 CURVES: PITCH and FILTER envelope curves LIN/EXP/LOG/S; graph: stage 1\'s'],
+                       '8 CURVES: PITCH and FILTER envelope curves LIN/EXP/LOG/S, DROPS (stock\'s dropout count) '
+                       'between them; graph: stage 1\'s'],
                 apply='COPY held: the mute group; REMAIN held: the bank (stage 1\'s env_targets); Edited and the save '
                       'timer through env_touched'),
         tool='synth/build_pad_pitch_filter.py')

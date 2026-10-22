@@ -76,6 +76,16 @@ page, no popups (test 1 used popups; test 2 draws on the page itself):
 - Re-opening the page starts on page 1. A SHIFT held since the opening chord, held over a second, or with another
   key pressed or let go, a knob turned or the pad changed in between, is no tap. A key held from before SHIFT
   until after it, or a key bit that never changes, doesn't stop a tap.
+- **DEL returns the envelope to stock** (test 5). On any of the pages, DEL (key 0x1a; stock's page does nothing
+  with it, `0x800f5ad8` returns 1) puts `RESET A-1? press VALUE` in the bottom line. VALUE then sets every envelope
+  byte of the pad to 0: stage 1's 0x64-0x6F and stage 2's 0x71-0x7F. Note repeat's 0x70 stays, and so do stock's
+  own ATTACK / HOLD / RELEASE (with FINE on they hold the nearest stock values, which stock then plays). The pad's
+  sounding voices recompute, and the save goes out 1 s later. With COPY or REMAIN held at DEL the question is
+  `RESET GROUP? press VALUE` / `RESET BANK A? press VALUE`, and VALUE resets the pads a turn would reach (taken at
+  DEL, so COPY can be let go first). Any other key, a knob or a pad change cancels, and then does what it does;
+  EXIT only cancels (the page stays). DEL with SHIFT held, on a pad without a sample, or while the knobs drive the
+  effect is stock's. The key ID comes from DOOM OS's own button table (`0x60331134`: DEL 0x1a, REC 0x1b,
+  RESAMPLE 0x1c, EXIT 0x22, COPY 0x23, REMAIN 0x24).
 
 ## Storage and saving
 
@@ -98,6 +108,14 @@ Stock saves, loads, copies, moves and exchanges these bytes and resets them for 
 §5.2). A change sets stock's Edited flag; command 0xD (`0x800e25c0(0xd, 1, 0)`, what stock's setter posts)
 goes out once, 1 s after the last change, or when the page closes.
 
+**Stock's INIT PARAM clears them too** (SHIFT + pad 6, then OK; "Current Sample / Parameter Init", confirm popup
+0x21). Its OK (`0x80051db8`, from the page's dialog method `0x80134e78`) posts command 0x40a; the command task's
+case `0x8004f848` calls `0x80185208`, which calls `0x8018c220(CSmplPrm, pad)`: the pad's record back to defaults
+and `bzero(block + 0x40, 0x40)`. So bytes 0x40-0x7F go to 0 with the rest of the pad's parameters: stage 1's and
+stage 2's envelope bytes, note repeat's 0x70 and pad FX's 0x54-0x63; words 0x00-0x3F stay (run in Unicorn on the
+parent). The pad FX study's list misses it because `0x8018c220` adds `0xF840`, not `0xF800`. DEL's reset is the
+narrow one: the envelopes only.
+
 ## The patches
 
 All on code DOOM OS ED5E and the fork leave stock (39 guards, SHA-256 of every span the module calls, reads or
@@ -115,8 +133,8 @@ literal and MOVW/MOVT pair in the image is checked).
    runs the displaced instructions and goes on in ITCM.
 4. **ENVELOPE page vtable** `0x8021ec14`: +0x04 (deleting destructor) -> `env_ui_leave`, +0xC8 (pad change:
    START/END again, then `0x800f5f00`) -> `env_ui_pad`, +0xCC (redraw, `b.w 0x800f5f00`) -> `env_ui_draw`, +0xD0
-   (tick, stock `bx lr`, called every 50 ms with 50) -> `env_ui_poll`, +0xE4 (knob) -> `env_ui_knob`. DOOM OS's
-   +0x08 is untouched. The REPORT named +0xD0 and +0xE4; +0x04 makes the save go out when the page closes, and
+   (tick, stock `bx lr`, called every 50 ms with 50) -> `env_ui_poll`, +0xD8 (key press, test 5: DEL's reset)
+   -> `env_ui_key`, +0xE4 (knob) -> `env_ui_knob`. DOOM OS's +0x08 is untouched. The REPORT named +0xD0 and +0xE4; +0x04 makes the save go out when the page closes, and
    +0xC8/+0xCC draw the pages: those two are the only callers of stock's redraw `0x800f5f00`, and stock's
    refresh (event 4: the static layer copied over the screen, then +0xCC) goes through them too.
 5. **The re-hit**: in the stop `0x80094168`, its call of the re-hit / steal stop `0x80024580` (10 bytes at
@@ -131,7 +149,7 @@ literal and MOVW/MOVT pair in the image is checked).
    Stock decides where the new voice goes: free slots first, a steal only when there are too few, and then
    the re-hit stop has wait 1 (it waits for the declick to free the slot), which this leaves stock.
 
-The module (Zig 0.13.0, -Os; about 7.6 KB code, 3.1 KB tables, 3.7 KB state; 2.0 KB of the slot free) is a new
+The module (Zig 0.13.0, -Os; about 8.3 KB code, 3.1 KB tables, 3.7 KB state; 1.2 KB of the slot free) is a new
 boot copy row in a 16 KB slot at
 **`0x83FDE000`-`0x83FE2000`**. The REPORT's slot `0x83FE4000`-`0x83FE8000` is taken since: FX deep edit uses
 `0x83FE2000`-`0x83FE6000` and the FX probe `0x83FE6000`-`0x83FE8000`. The builder checks the slot against every
@@ -214,6 +232,13 @@ page, boot's three 128 x 64 surfaces made (`0x8006fcb8`) so every drawing call r
   refresh and a pad change, is a reference drawn on the parent with stock's own calls from the settings alone
   (labels, values, every fine time, the graph from a Python model of the envelope, the bottom line); the module
   shows no popups. Two broken builds (labels not in the static layer, the graph a row off) fail it.
+- the reset (test 5): stock's page does nothing with DEL; DEL asks (the question inside the bottom line's box, x
+  12-115, for the longest pad, group and bank names; the S and E marks stay), nothing written yet; VALUE clears
+  0x64-0x6F and 0x71-0x7F, keeps 0x70, recomputes and saves; EXIT (no page change), a knob, a pad change, another
+  key (COPY) and DEL again cancel; SHIFT held and an empty pad go to stock; COPY / REMAIN at DEL reach the mute
+  group / bank (protected banks and empty pads skipped; a pad in no group alone); page 1 gives stock's screen back;
+  stock's INIT PARAM chain run on the parent clears 0x40-0x7F. The DEL key-up isn't run: in Unicorn it waits on the
+  panel's serial port (`0x800d9f10`), so the tests clear the key's bit instead.
 
 Cost (Unicorn instructions, stereo): stock pads unchanged (unity 41, attack ramp 119, release 54 per frame; the
 hook adds about 25 per 2048-frame call). Shaped pads: ramps 41 per frame with any curve, sustain 20, unity 0.
@@ -228,6 +253,7 @@ threshold checks pass while its structural checks expect the start fix to be the
 ## Not known (the hardware test, or later)
 
 - How it sounds: the curves, the FINE times near the click threshold, the pluck (test 1: "sound fine").
+- DEL on the unit: whether DOOM OS's SHORTCUT bindings (SYSTEM -> SHORTCUT) can take DEL first, and its key-up.
 - The screen on the unit: the emulator draws into the screen surface and stops there (the display transfer
   isn't run); which events refresh the page on the unit (event 4 and the pad change go through the module).
 - Stock behaviour the design leans on but the unit hasn't confirmed (REPORT E0): every LOOP pass faded, the
@@ -258,7 +284,7 @@ Stock APP0 must sit beside the input APP1. keystone, unicorn and capstone on PYT
 # Stage 2: a pitch envelope and a filter with a cutoff envelope
 
 A second module on top of stage 1 (`synth/pad_pitch_filter.c`, `synth/build_pad_pitch_filter.py`,
-`synth/test_pad_pitch_filter.py`; release `pad-env-test3`). Per pad and opt-in, like stage 1: **a pad whose new
+`synth/test_pad_pitch_filter.py`; releases `pad-env-test3`, `pad-env-test5`). Per pad and opt-in, like stage 1: **a pad whose new
 settings are all zero plays exactly as before**: it goes straight on to the stock resampler, and the emulator checks
 compare it bit for bit with the parent.
 
@@ -318,13 +344,18 @@ resampler's output before that copy.
    DEPTH or TYPE set. Otherwise the stock resampler with the registers, stack and return address as the veneer got
    them.
 2. A new generation (stage 1's dispatcher called `pf_stage` from Init) resets the voice's clock and filter state.
+   The fill works on its own copy of the voice's state and writes it back only if no new start came meanwhile
+   (test 5; see "Test 5: the crackles").
 3. Pitch: a step per sub-block of 64 output frames (175 in stretch mode 2) from the envelope at its start, equal
    steps in one call, then the step put back. A step set elsewhere meanwhile (another task's pitch edit) is the base
    from the next sub-block on and is left in place.
 4. Filter: coefficients per 32 frames (g from a 129-entry tan table, interpolated in 1/256 steps; a1 = 1 / (1 + g (g +
-   k)), a2 = g a1, a3 = g a2), then the TPT state-variable filter per frame in float32 (`-ffp-contract=off`; VMLA isn't
-   fused): LP = v2, BP = k v1 (unity peak), HP = x - k v1 - v2, the input x 1 / sqrt(Q / 0.707) for LP and HP; a soft
-   knee from 24576 to 32767, rounding half away from zero. States under 1e-20 are flushed per block.
+   k)), a2 = g a1, a3 = g a2, in float32 with `-ffp-contract=off`, then Q31), then the TPT state-variable filter per
+   frame in fixed point (test 5; test 3's was float32): the signal x 2^9 in 32-bit integers, SMMULR / SMMLAR products,
+   k Q30, the input gain Q15 (1 / sqrt(Q / 0.707) for LP and HP); LP = v2, BP = k v1 (unity peak), HP = x - k v1 -
+   v2; a soft knee from 24576 to 32767. Within 1 LSB of the float version. The states are clamped to +-2^29 per block.
+   A block where an LP is at CUTOFF 127, or an HP at 0, without resonance (after the envelope) passes as it is, the
+   state following the input, so the filter takes over smoothly when the cutoff moves again.
 5. The clock advances by the frames produced; a short return (the source's end) ends the chunk there.
 
 ## Storage
@@ -356,12 +387,15 @@ After stage 1's four, through `env_more_pages[0..3]`:
 | 5 PITCH | `C1:DEPTH` OFF, -24st .. +24st | `C2:ATTACK` 0ms .. 8.00s | `C3:DECAY` HOLD, 0.5ms .. 8.00s | the pitch envelope, up for +, down for - |
 | 6 FILTER | `C1:TYPE` OFF, LPF, BPF, HPF | `C2:CUTOFF` 20Hz .. 20.0k | `C3:RESO` 0.7 .. 16.0 (Q) | stage 1's |
 | 7 F-ENV | `C1:AMOUNT` -9.9oct .. +9.9oct | `C2:ATTACK` | `C3:DECAY` | the cutoff envelope |
-| 8 CURVES | `C1:PITCH` LIN EXP LOG S | - | `C3:FILTER` LIN EXP LOG S | stage 1's |
+| 8 CURVES | `C1:PITCH` LIN EXP LOG S | `DROPS`: stock's dropout count (test 5) | `C3:FILTER` LIN EXP LOG S | stage 1's |
 
 The bottom line reads `A-1 PITCH 5/8`; stage 1's pages count to 8 too. A turn writes the pad's byte (and, with COPY
 or REMAIN held, its mute group's or bank's, through `env_targets`), the layout version, then `env_touched` (Edited,
 the save 1 s after the last change). Bytes under an unknown layout version didn't count, so a turn clears them first.
-TYPE from OFF to LPF or BPF with CUTOFF at 0 opens the cutoff fully. A pad without a sample gets nothing.
+TYPE from OFF to LPF or BPF with CUTOFF at 0 opens the cutoff fully. A pad without a sample gets nothing. DROPS
+shows `0x82e0b940`, which the stream consumer `0x168fe` adds 1 to for every 64-frame block whose chunk isn't filled
+in time (`0x16cc4` / `0x16cdc`; it plays nothing for that block, about 1.3 ms); nothing else reads it. It counts
+from power-on, every pad's voices. Stage 1's DEL reset clears these bytes too.
 
 ## The patches
 
@@ -371,8 +405,9 @@ TYPE from OFF to LPF or BPF with CUTOFF at 0 opens the cutoff fully. A pad witho
 2. Stage 1's `env_stages[0]` -> `pf_stage`; `env_more_pages[0..3]` -> the four pages (words in stage 1's copy row,
    zero in the parent).
 
-Eight guards (SHA-256 of the resampler wrappers and kernel, the worker, the veneers, the engine init, Init, the voice
-param setter, the line call). The module (Zig 0.13.0, -Os; 5.5 KB code, 2.6 KB tables and pages, 0.9 KB state) is a
+Nine guards (SHA-256 of the resampler wrappers and kernel, the worker, the veneers, the engine init, Init, the voice
+param setter, the line call, the stream consumer and its drop counter). The module (Zig 0.13.0, -Os; 5.4 KB code,
+2.8 KB tables and pages, 0.9 KB state) is a
 new boot copy row in a **12 KB slot at `0x83FD9000`-`0x83FDC000`, taken from the top of pad FX's planned room**, which
 keeps `0x83FC9000`-`0x83FD9000` (64 KB; the pad FX study estimated 15 KB). Stage 1's slot has 2.3 KB free, too little.
 The builder checks the slot against every row of the input, every fork module's slot (pad FX's room, note repeat
@@ -396,16 +431,20 @@ less than 4096) and started with Init's recompute; the real veneers, wrappers an
 - pitch: the steps and sub-block lengths the kernel gets are the model's, chunk after chunk; the frames are what the
   parent's kernel gives for that step sequence; the state after each chunk is the parent's; the step goes back; a
   step set elsewhere mid-chunk is the new base; a source that runs out ends the chunk;
-- filter: every frame is a float32 model's (LP, BP, HP, cutoff envelopes up and down, resonance, mono and stereo),
-  its state carried across chunks; pitch and filter together;
-- a new start (Init's recompute through stage 1's dispatcher) resets the envelopes and the filter; edits don't;
+- filter: every frame is a fixed-point model's (LP, BP, HP, cutoff envelopes up and down, resonance, mono and
+  stereo), its state carried across chunks; pitch and filter together; the open-filter bypass passes the parent's
+  frames and hands over to the filter exactly where the cutoff moves again;
+- a new start (Init's recompute through stage 1's dispatcher) resets the envelopes and the filter; edits don't; a new
+  start during a fill (the generation bumped while the kernel runs) keeps that fill's state from being written back;
+- stock's drop counter: the consumer `0x168fe` run on an unfilled chunk adds 1 and plays nothing, on a filled one
+  plays and adds nothing; page 8 shows the count;
 - the pages: the taps reach them after stage 1's four; the screen and static layer match a reference drawn on the
   parent with stock's calls, byte for byte, for 5 kinds of settings and after every turn; every value the knobs
   reach is shown as the model says (768 turns); COPY / REMAIN; the save timer and the save on close; an empty pad.
 
 Five broken builds fail it (sub-blocks of 96, the filter state dropped per block, the step not put back, DEPTH in
-48 zones, the layout version ignored). Stage 1's suite (test_pad_env, 50 checks) passes on the stage 1 build with
-`env_targets` / `env_touched`. The kit suites (test_kits, capture, chord, shortcut, midi, restart, hot resample,
+48 zones, the layout version ignored). In test 5: 44 checks; stage 1's suite (test_pad_env, 62 checks with the
+reset) passes on the stage 1 build. The kit suites (test_kits, capture, chord, shortcut, midi, restart, hot resample,
 test_kit_bounce flow, 13 kits and 4 tweaked) pass on the image; test_start_fix passes on its own release, and on this
 image its trim and threshold checks pass while its 4 structural checks expect the start fix to be the top stage.
 
@@ -414,25 +453,53 @@ them; the stages only see the resampler's ring and output time, which LOOP and R
 transfer, and tasks preempting each other.
 
 Cost (Unicorn instructions per 2048-frame chunk, a voice's second chunk; stock at unity 360k mono / 444k stereo in
-stretch mode 0, 1.03M / 1.11M in mode 2):
+stretch mode 0, 1.03M / 1.11M in mode 2; test 5):
 
-| | mono, mode 0 | stereo, mode 0 | in the module |
-|---|---|---|---|
-| untouched pad | +124 | +124 | 124 |
-| pitch, +12 st decaying over 739 ms | 470k (x1.31) | 692k (x1.56) | 7.6k |
-| pitch after its decay (one call) | 362k | 446k | 1.4k |
-| LP, resonance 80, cutoff envelope | 431k (x1.20) | 571k (x1.29) | 71k / 127k |
-| both | 541k (x1.50) | 818k (x1.84) | 78k / 134k |
+| | mono, mode 0 | stereo, mode 0 | stereo, mode 2 | in the module |
+|---|---|---|---|---|
+| untouched pad | +124 | +124 | +124 | 124 |
+| pitch, +12 st decaying over 739 ms | 471k (x1.31) | 692k (x1.56) | 1.35M (x1.22) | 7.6k |
+| pitch after its decay (one call) | 362k | 446k | 1.11M | 1.4k |
+| LP, resonance 80, cutoff envelope | 423k (x1.17) | 556k (x1.25) | 1.22M (x1.10) | 63k / 112k |
+| both | 533k (x1.48) | 804k (x1.81) | 1.46M (x1.32) | 70k / 119k |
 
-The module's own share is small for the pitch (32 sub-calls); the rest is the stock pitch shifter working at a
-shifted pitch (stock at a static +12 st: about 394k mono, 550k stereo). The filter is 34 instructions per frame
-(31 per channel in stereo). In mode 2 the pitch's module share is 3k (12 calls). Codex's version cost 638k (pitch),
-951k (filter) and 1.14M (both) against its own 343k mono fixture.
+The module's own share is small for the pitch (32 sub-calls; 32 calls at a constant step cost 2.5k more than one);
+the rest is the stock pitch shifter splicing at a shifted pitch: stock at a static PITCH costs about the same (mono
++5 st 411k, +12 st 394k, -7 st 398k; stereo +5 st 567k, +12 st 544k), a moving step 5-25 % more than the same
+static one. The filter is about 31 instructions per frame (27 per channel in stereo; test 3's float32: 34 / 31). In
+mode 2 the pitch's module share is 3k (12 calls). Codex's version cost 638k (pitch), 951k (filter) and 1.14M (both)
+against its own 343k mono fixture.
+
+### Test 5: the crackles
+
+The report on test 3: crackles with 4 enveloped pads at once, and when rolling; still there with RESO at 0, milder
+with the filter off (pitch only). What the emulator shows:
+
+- **A race on a reused voice object (fixed).** Test 3 kept a voice's clock and filter state in place. A new note's
+  first chunk is filled by the command dispatcher, which can preempt the charge task while it is still filling the
+  same voice object's previous note: the new fill started fresh, then the old fill, finishing, wrote its clock and
+  filter state over the new note's. The new note then played the rest of its envelopes from the old note's point (a
+  pitch and cutoff jump: a click), most likely on rolls, which reuse voice objects fastest. Test 5 works on a copy
+  and writes it back only if no Init came meanwhile (checked by bumping the generation mid-chunk).
+- **The step changes inside the shifter don't click.** Pure tones (80 Hz, 440 Hz, 2 kHz) through the parent's kernel
+  with the envelope's steps, mono and stereo, stretch modes 0-2, +12 st over 60 ms, +24 st over 200 ms, -12 st over
+  739 ms, a 20 ms attack: no second difference above 6 x the tone's own bound A (2 pi f / fs)^2, the same as stock at
+  a static pitch.
+- **CPU:** the table above. An enveloped voice costs what stock's own PITCH knob costs at that shift plus 5-25 %;
+  with the filter up to 1.8 x a stock voice (stereo, mode 0). A voice's first chunk costs the same as the others
+  (filled by the command dispatcher at the hit). Whether that runs out on the unit with 4 pads rolled isn't known
+  from the emulator: **DROPS on page 8** counts every 64-frame block the stream consumer found unfilled. If the
+  crackles come with the count going up, the fill can't keep up; if it stays put, they are something else.
+- Cheaper in test 5: the filter's frame loop in fixed point (about 12 % fewer instructions), and a fully open LP
+  (CUTOFF 127, RESO 0, the envelope back down) or HP at 0 costs nothing.
 
 ## Not known (the hardware test, or later)
 
 - How it sounds, and how the pitch shifter splices under fast pitch moves (as the PITCH knob does at its extremes).
 - CPU in the fill with many enveloped voices next to the kits: the fill has to stay 4 chunks ahead for 32 voices.
+  DROPS (page 8) shows whether it does.
+- Whether test 3's crackles were the race: tasks preempting each other aren't run in the emulator; the race was
+  found by reading the fill's two contexts and checked by forcing it.
 - That nothing else moves the step between sub-blocks on the unit (another task's pitch edit is handled).
 - Whether the bytes survive Roland's app and a stock-firmware round trip (as for stage 1 and pad FX).
 

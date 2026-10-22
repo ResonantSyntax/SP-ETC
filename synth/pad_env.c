@@ -33,7 +33,8 @@
  *   0x8009424e (10 bytes, a call) -> env_retrig: the stop 0x80094168 calling the re-hit / steal stop
  *              0x80024580; for the voice manager's re-hits of a FADE pad, the key-up release instead
  *   ENVELOPE page vtable 0x8021ec14: +0x04 (leave) env_ui_leave, +0xC8 (pad change) env_ui_pad,
- *              +0xCC (redraw) env_ui_draw, +0xD0 (tick) env_ui_poll, +0xE4 (knob) env_ui_knob
+ *              +0xCC (redraw) env_ui_draw, +0xD0 (tick) env_ui_poll, +0xD8 (key press) env_ui_key,
+ *              +0xE4 (knob) env_ui_knob
  *
  * The ENVELOPE page (SHIFT + PITCH/SPEED) gets four pages; tap SHIFT (press and release, nothing else
  * touched) for the next. The screen shows them, no popups: the CTRL 1-3 labels on top, their values under
@@ -47,6 +48,12 @@
  * Later stages add pages through env_more_pages[]. A pad with stock settings keeps stock's graph, and on
  * page 1 the whole stock screen.
  * Holding COPY or REMAIN applies a turn to the mute group or bank, as stock's apply 0x800f5df0 does.
+ * DEL (stock's page ignores it) asks "RESET A-1? press VALUE": VALUE puts every envelope setting of the pad
+ * back to stock (0x64-0x6F, and the later stages' 0x71-0x7F; note repeat's 0x70 stays, as do stock's own
+ * ATTACK / HOLD / RELEASE); with COPY or REMAIN held at DEL, its mute group or bank ("RESET GROUP?",
+ * "RESET BANK A?"). Any other key, a knob or a pad change cancels; EXIT then stays on the page.
+ * Stock's INIT PARAM (SHIFT + pad 6, command 0x40a -> 0x8018c220) clears bytes 0x40-0x7F of the pad's
+ * extended block itself: these settings, note repeat's byte and the pad FX bytes, with the rest of the pad.
  * Like stock's setter, nothing is written for a pad without a sample it edits (0x800d9e30).
  * A change sets the stock Edited flag; command 0xD (save) goes out 1 s after the last turn, or when
  * the page closes.
@@ -80,9 +87,13 @@ typedef unsigned long long u64;
 #define KEYS ((const volatile u8 *)0x80592448u)    /* held keys, set and cleared by the UI dispatcher */
 #define KEY_BYTES 11
 #define KEY_SHIFT 42
+#define KEY_DEL 0x1A
+#define KEY_EXIT 0x22
+#define KEY_VALUE 0x31
 
 #define STOCK_KNOB ((s32 (*)(void *, s32, s32))0x800F5D11u)   /* ENVELOPE page knob */
 #define STOCK_LEAVE ((void *(*)(void *))0x800F6239u)          /* ENVELOPE page deleting destructor */
+#define STOCK_KEY ((s32 (*)(void *, s32))0x800F5AD9u)            /* ENVELOPE page key press */
 #define FX_KNOBS ((s32 (*)(void *))0x800CE421u)               /* non-zero: the knobs drive the effect */
 #define EDITABLE ((s32 (*)(s32))0x800D9E31u)                  /* the pad holds a sample the setter edits */
 #define GETTER ((s32 (*)(u32, s32, s32))0x800DC6B9u)          /* (CSmplPrm, param, pad) */
@@ -104,6 +115,8 @@ typedef unsigned long long u64;
 #define B_RETRIG 0x6A                 /* 0 CUT (stock), 1 FADE */
 #define B_FADE 0x6B                   /* the re-hit fade, fine index */
 #define B_VERSION 0x6D                /* 1 whenever any of 0x64-0x6C is not 0 */
+#define B_REPEAT 0x70                 /* note repeat's (its own module): the reset leaves it */
+#define B_END 0x80                    /* the later stages' bytes run up to here (0x71-0x7F) */
 #define F_FINE 1
 #define F_ADSR 2
 #define F_ONCE 4
@@ -712,6 +725,7 @@ struct env_ui_state {
     u8 labels;           /* the page whose labels are on the screen */
     u8 bottom;           /* the screen shows our bottom line */
     u32 draws;           /* screens drawn, since boot */
+    u8 asking;           /* DEL pressed: 1 + the apply mode it reaches (pad, group, bank) until the next key */
 };
 
 EXPORT struct env_ui_state env_ui;
@@ -781,8 +795,8 @@ static u32 protected(u32 pad) {
 /* the current pad, then the pads stock's apply 0x800f5df0 reaches: COPY held, the other pads of its
  * (non-zero) mute group; REMAIN held, the rest of its bank; protected banks never; and, as for stock's
  * setter, only pads holding a sample it edits */
-static u32 targets(u32 pad, u8 *out) {
-    u32 n = 0, mode = (u32)APPLY_MODE;
+static u32 targets_in(u32 pad, u8 *out, u32 mode) {
+    u32 n = 0;
     out[n++] = (u8)pad;
     if (mode == 1) {
         s32 group = GETTER(CSMPLPRM, P_MUTE, (s32)pad);
@@ -796,6 +810,10 @@ static u32 targets(u32 pad, u8 *out) {
                 out[n++] = (u8)p;
     }
     return n;
+}
+
+static u32 targets(u32 pad, u8 *out) {
+    return targets_in(pad, out, (u32)APPLY_MODE);
 }
 
 static void changed(u32 pad) {
@@ -826,6 +844,24 @@ EXPORT void env_touched(void) {
     EDITED = 1;
     env_ui.dirty = 1;
     env_ui.quiet_ms = 0;
+}
+
+/* DEL, then VALUE: every envelope byte of the pad and of the pads mode reaches back to 0 (stock), but note
+ * repeat's; the pads' voices recompute (stage 2's settings go with them) and the save follows */
+static void reset(u32 pad, u32 mode) {
+    u8 list[PADS];
+    u32 n = targets_in(pad, list, mode);
+    for (u32 k = 0; k < n; k++) {
+        u8 *b = ext(list[k]);
+        u32 any = 0;
+        for (u32 i = B_FLAGS; i < B_END; i++)
+            if (i != B_REPEAT) {
+                any |= b[i];
+                b[i] = 0;
+            }
+        if (any)
+            changed(list[k]);
+    }
 }
 
 /* FINE on for a pad: keep its fine index while the stock field still holds that index's nearest stock
@@ -1067,12 +1103,38 @@ static void bottom_line(u32 ctx, u32 pad, const struct env_page *pg, u32 n) {
     text(ctx, 64, NAME_Y, env_text);
 }
 
+/* the reset's question in the bottom line: "RESET A-1? press VALUE", "RESET GROUP? ...", "RESET BANK A? ..." */
+static void question(u32 ctx, u32 pad) {
+    char *p = put(env_text, "RESET ");
+    if (env_ui.asking == 2) {
+        p = put(p, "GROUP");
+    } else if (env_ui.asking == 3) {
+        p = put(p, "BANK ");
+        *p++ = (char)('A' + pad / 16);
+    } else {
+        p = pad_name(p, pad);
+    }
+    put0(p, "? press VALUE");
+    fill(ctx, 12, 48, 115, 63);
+    text(ctx, 64, NAME_Y, env_text);
+    env_ui.bottom = 1;
+}
+
 /* ENVELOPE page redraw (vtable + 0xCC; stock's knob, the page's first draw and env_ui_pad come here). Stock
  * draws first; page 1 with a stock pad is stock's alone. Otherwise the labels, values and bottom line are the
- * page's, and the graph is the pad's real envelope. */
+ * page's, and the graph is the pad's real envelope. The reset's question goes over the bottom line. */
+static void draw(void *page);
+
 EXPORT void env_ui_draw(void *page) {
     if (FX_KNOBS(page))                  /* stock draws nothing while the knobs drive the effect */
         return;
+    draw(page);
+    s32 pad = page_pad(page);
+    if (env_ui.asking && (u32)pad < PADS)
+        question(PAGE_CTX(page), (u32)pad);
+}
+
+static void draw(void *page) {
     u32 n = page_now(), ctx = PAGE_CTX(page);
     const struct env_page *pg = page_at(n);
     s32 pad = page_pad(page);
@@ -1121,8 +1183,10 @@ EXPORT void env_ui_draw(void *page) {
 /* ENVELOPE page pad change (vtable + 0xC8): stock reads the new pad's START/END and draws; then ours */
 EXPORT void env_ui_pad(void *page) {
     s32 before = PAGE_LAST_PAD(page);
+    u32 asked = env_ui.asking;
+    env_ui.asking = 0;
     STOCK_PAD(page);
-    if (PAGE_LAST_PAD(page) != before)
+    if (PAGE_LAST_PAD(page) != before || asked)
         env_ui_draw(page);
 }
 
@@ -1146,6 +1210,10 @@ static s32 knob_stock_page(void *page, u32 pad, s32 ctrl, s32 raw) {
 EXPORT s32 env_ui_knob(void *page, s32 ctrl, s32 raw) {
     if (env_ui.shift == SH_DOWN)
         env_ui.used = 1;
+    if (env_ui.asking) {                 /* a turn cancels the reset's question, then turns */
+        env_ui.asking = 0;
+        env_ui_draw(page);
+    }
     if ((u32)(ctrl - 1) > 2 || FX_KNOBS(page))
         return STOCK_KNOB(page, ctrl, raw);
     s32 pad = page_pad(page);
@@ -1158,6 +1226,33 @@ EXPORT s32 env_ui_knob(void *page, s32 ctrl, s32 raw) {
         pg->turn((u32)pad, (u32)ctrl, raw);
     env_ui_draw(page);
     return 1;
+}
+
+/* ENVELOPE page key press (vtable + 0xD8). DEL (stock's: nothing) asks for the reset, for the pads COPY or
+ * REMAIN reach when it is pressed; VALUE then resets, any other key cancels and does what it does (EXIT only
+ * cancels: the page stays). DEL with SHIFT held, on an empty pad or while the knobs drive the effect: stock. */
+EXPORT s32 env_ui_key(void *page, s32 key) {
+    s32 pad = page_pad(page);
+    if (env_ui.asking) {
+        u32 mode = env_ui.asking - 1u;
+        env_ui.asking = 0;
+        if (key == KEY_VALUE && (u32)pad < PADS && EDITABLE(pad))
+            reset((u32)pad, mode);
+        env_ui_draw(page);
+        if (key == KEY_VALUE || key == KEY_EXIT || key == KEY_DEL)
+            return 1;
+        return STOCK_KEY(page, key);
+    }
+    if (key == KEY_DEL && !(KEYS[KEY_SHIFT >> 3] >> (KEY_SHIFT & 7) & 1) && (u32)pad < PADS && EDITABLE(pad) &&
+        !FX_KNOBS(page)) {
+        u32 mode = (u32)APPLY_MODE;
+        if (mode > 2 || (mode == 1 && !GETTER(CSMPLPRM, P_MUTE, pad)))
+            mode = 0;
+        env_ui.asking = (u8)(1 + mode);
+        env_ui_draw(page);
+        return 1;
+    }
+    return STOCK_KEY(page, key);
 }
 
 /* ENVELOPE page tick (vtable + 0xD0, stock an empty function), every 50 ms with ms = 50. A SHIFT tap is a
@@ -1208,6 +1303,7 @@ EXPORT void *env_ui_leave(void *page) {
     env_ui.page = 0;
     env_ui.labels = 0;
     env_ui.bottom = 0;
+    env_ui.asking = 0;
     env_ui.shift = SH_ARMING;
     return STOCK_LEAVE(page);
 }

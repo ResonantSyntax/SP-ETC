@@ -15,8 +15,9 @@ for byte against what it replaces:
   #0; bl; eor r7, r0, #1) -> a call of env_retrig, which gives a FADE pad's re-hit voice the key-up release
   and otherwise calls 0x80024580, and sets r7 as the eor did;
 - data: the ENVELOPE page vtable 0x8021ec14, slots +0x04 (deleting destructor), +0xC8 (pad change), +0xCC
-  (redraw), +0xD0 (tick, stock empty) and +0xE4 (knob) -> env_ui_leave, env_ui_pad, env_ui_draw, env_ui_poll,
-  env_ui_knob, which go on to the stock methods; the screen shows the pages (no popups).
+  (redraw), +0xD0 (tick, stock empty), +0xD8 (key press) and +0xE4 (knob) -> env_ui_leave, env_ui_pad,
+  env_ui_draw, env_ui_poll, env_ui_key, env_ui_knob, which go on to the stock methods; the screen shows the
+  pages (no popups), and DEL asks for the reset of the pad's envelope settings.
 Nothing branches into the displaced bytes but their entries (every BL, B, B<cond>, CB(N)Z, B.W, literal and
 MOVW/MOVT pair in the image is checked). Stock code the module calls, reads or relies on is checked byte
 for byte (GUARDS). The module (Zig 0.13.0, -Os) goes in a new boot copy row in a 16 KB slot at 0x83FDE000,
@@ -63,7 +64,8 @@ KNOWN_SLOTS = [
 ]
 EXPORTS = ('env_recompute', 'env_recompute_stock', 'env_dispatch', 'env_fwd', 'env_fwd_stock', 'env_fwd_apply',
            'env_rev', 'env_rev_stock', 'env_rev_apply', 'env_shaped', 'env_release', 'env_release_r6',
-           'env_ui_knob', 'env_ui_poll', 'env_ui_leave', 'env_ui_draw', 'env_ui_pad', 'env_voices', 'env_stages',
+           'env_ui_knob', 'env_ui_poll', 'env_ui_leave', 'env_ui_draw', 'env_ui_pad', 'env_ui_key', 'env_voices',
+           'env_stages',
            'env_more_pages', 'env_targets', 'env_touched', 'env_ui', 'env_text', 'env_fine_frames',
            'env_fine_stock', 'env_stock_fine', 'env_curve', 'env_retrig', 'env_retrig_c', 'env_fade_voice',
            'env_fade_frames')
@@ -94,6 +96,8 @@ VTABLE_SLOTS = [(0x04, 0x800F6239, 'env_ui_leave', 'deleting destructor (the pag
                 (0xC8, 0x800F5A61, 'env_ui_pad', 'pad change: START/END again, then the redraw 0x800f5f00'),
                 (0xCC, 0x800F5AC9, 'env_ui_draw', 'redraw: values row, graph, pad name (b.w 0x800f5f00)'),
                 (0xD0, 0x800F5751, 'env_ui_poll', 'tick: stock bx lr; the base class calls it with 50 (ms)'),
+                (0xD8, 0x800F5AD9, 'env_ui_key', 'key press: DEL 0x1a consumed with nothing done, COPY / REMAIN -> '
+                 'apply modes 1 / 2, EXIT, VALUE; the rest to 0x800c9788'),
                 (0xE4, 0x800F5D11, 'env_ui_knob', 'knob: CTRL 1-3 -> Attack, Hold, Release')]
 VTABLE_KEEP = [(0x08, 0x6031C8F9, 'DOOM OS ED5E\'s event filter'),
                (0x14C, 0x80133B31, 'current pad')]
@@ -128,7 +132,8 @@ GUARDS = [
      'slot start: allocator, then Init (voice, index, pad, ...)'),
     (0x800F5710, 0x800F6300, '6dfd9270b015989a30be46aba62a1f6c61e0289da6cca53f7b261b9f1bbdbd14',
      'ENVELOPE page methods: knob 0x800f5d10 (FX-knob check, setter, apply 0x800f5df0 with mode 0x80591b54, redraw), '
-     'tick 0x800f5750 (empty), deleting destructor 0x800f6238'),
+     'tick 0x800f5750 (empty), key press 0x800f5ad8 (DEL 0x1a: return 1, nothing else), deleting destructor '
+     '0x800f6238'),
     (0x800608D0, 0x800609C0, '9f28c52279fdca61df4135974d916133c4b37da3ec2bfb3c9cec746a3be74d49',
      'ENVELOPE page registry handler: a new object per entry; leaving sends the event, then vtable +4'),
     (0x800735B0, 0x800735E0, 'fb5fa2d3a81b637ed3c6967cb740fca12a90fb41612a6c810d39978a0467505b',
@@ -391,6 +396,7 @@ SECTIONS {{
  .text : {{ KEEP(*(.text.env_recompute)) KEEP(*(.text.env_release)) KEEP(*(.text.env_fwd))
             KEEP(*(.text.env_rev)) KEEP(*(.text.env_ui_knob)) KEEP(*(.text.env_ui_poll))
             KEEP(*(.text.env_ui_leave)) KEEP(*(.text.env_ui_draw)) KEEP(*(.text.env_ui_pad))
+            KEEP(*(.text.env_ui_key))
             KEEP(*(.text.env_retrig)) KEEP(*(.text.env_targets)) KEEP(*(.text.env_touched))
             *(.text*) }}
  .rodata : ALIGN(16) {{ KEEP(*(.rodata.env_*)) *(.rodata*) }}
@@ -579,7 +585,14 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
                 more_pages='env_more_pages[4]: pointers to struct env_page {name, label[3], value(), turn(), '
                            'graph()} for later stages, after MODE; env_targets(pad, out[160]) gives the pads a turn '
                            'reaches, env_touched() sets Edited and starts the save timer',
-                apply='COPY held: the mute group; REMAIN held: the bank (as stock\'s apply 0x800f5df0)'),
+                apply='COPY held: the mute group; REMAIN held: the bank (as stock\'s apply 0x800f5df0)',
+                reset='DEL (stock\'s page: nothing) asks "RESET A-1? press VALUE" in the bottom line ("RESET GROUP?" / '
+                      '"RESET BANK A?" with COPY / REMAIN held at DEL); VALUE zeroes bytes 0x64-0x6F and 0x71-0x7F of '
+                      'the pads (0x70 stays), recomputes their voices and saves 1 s later; any other key, a knob or a '
+                      'pad change cancels (EXIT stays on the page); with SHIFT held, on an empty pad or while the '
+                      'knobs drive the effect, DEL is stock\'s',
+                init_param='stock\'s INIT PARAM (SHIFT + pad 6, OK: command 0x40a -> 0x80185208 -> 0x8018c220) '
+                           'clears bytes 0x40-0x7F of the pad\'s extended block itself'),
         tool='synth/build_pad_env.py')
     (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8', newline='\n')
     sums = ''.join(f'{sha((out / n).read_bytes())}  {n}\n' for n in ('SP404MKII_APP0.bin', 'SP404MKII_APP1.bin',

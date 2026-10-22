@@ -49,7 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import test_pad_env as T  # noqa: E402
 from build_pad_env import Runtime, scatter, branches_into, movw_movt_bx, fine_frames, curve_tables, sha  # noqa: E402
 from build_pad_pitch_filter import (GUARDS, VENEERS, CALLERS, KNOWN_SLOTS, SLOT, STAGE1_LINKS, pow2_table,  # noqa
-                                    g_table, k_table, comp_table, hz_table, q10_table)
+                                    g_table, k_table, k30_table, comp15_table, hz_table, q10_table)
 from build_start_fix import refs_into  # noqa: E402
 
 
@@ -218,7 +218,8 @@ class Model:
         self.P = pow2_table()
         self.G = [F(x) for x in g_table()]
         self.K = [F(x) for x in k_table()]
-        self.CP = [F(x) for x in comp_table()]
+        self.K30 = k30_table()
+        self.C15 = comp15_table()
 
     def settings(self, b):
         if b[14] != 1:
@@ -274,60 +275,77 @@ class Model:
             done += m
         return out
 
+    # the filter, in the module's fixed point: the signal x 2^9, Q31 coefficients, SMMULR / SMMLAR
     @staticmethod
-    def to_s16(y):
-        a = -y if y < F(0) else y
-        if a > F(24576):
-            u = (a - F(24576)) * (F(1) / F(16382))
-            a = F(32767) if u >= F(1) else F(24576) + F(8191) * (u * (F(2) - u))
-        r = min(int(a + F(0.5)), 32767)
-        return -r if y < F(0) else r
+    def smmulr(a, b):
+        return (a * b + 0x80000000) >> 32
 
-    def svf(self, st, x, a1, a2, a3, k, gain, kind):
+    @staticmethod
+    def q31(a):
+        f = a * F(2147483648.0)
+        return 0x7FFFFFFF if f >= F(2147483648.0) else int(f)
+
+    @staticmethod
+    def out16(y):
+        r = (y + 256) >> 9
+        if r > 24576 or r < -24576:
+            a = abs(r)
+            d = a - 24576
+            a = min(32767 if d >= 16384 else 24576 + d - ((d * d) >> 15), 32767)
+            r = -a if r < 0 else a
+        return r
+
+    def svf(self, st, x, c, kind):
+        a1, a2, a3, k, gain = c
         ic1, ic2 = st
+        mm = self.smmulr
         out = []
         for v in x:
-            xi = F(v) * gain
+            xi = (v * gain) >> 6
             v3 = xi - ic2
-            v1 = a1 * ic1 + a2 * v3
-            v2 = (ic2 + a2 * ic1) + a3 * v3
-            ic1 = (v1 + v1) - ic1
-            ic2 = (v2 + v2) - ic2
-            y = v2 if kind == 1 else k * v1 if kind == 2 else (xi - k * v1) - v2
-            out.append(self.to_s16(y))
-        if F(-1e-20) < ic1 < F(1e-20):
-            ic1 = F(0)
-        if F(-1e-20) < ic2 < F(1e-20):
-            ic2 = F(0)
-        return out, (ic1, ic2)
+            hv1 = mm(a1, ic1) + mm(a2, v3)
+            hs = mm(a2, ic1) + mm(a3, v3)
+            v2 = ic2 + 2 * hs
+            ic1 = 4 * hv1 - ic1
+            ic2 = ic2 + 4 * hs
+            y = v2 if kind == 1 else 8 * mm(k, hv1) if kind == 2 else xi - 8 * mm(k, hv1) - v2
+            out.append(self.out16(y))
+        bound = 1 << 29
+        return out, (max(-bound, min(bound, ic1)), max(-bound, min(bound, ic2)))
 
     def filter(self, s, st, L, R, t0):
         k = self.K[s['res']]
-        gain = F(1) if s['type'] == 2 else self.CP[s['res']]
+        k30, gain = self.K30[s['res']], 32768 if s['type'] == 2 else self.C15[s['res']]
         L, R, sl, sr = list(L), list(R), st[0], st[1]
         for j in range(0, len(L), 32):
             c8 = s['cut'] << 8
             if s['amt']:
                 c8 += (s['amt'] * self.level(t0 + j, s['fatk'], s['fdec'], s['fcurve'])) >> 6
             c8 = max(0, min(127 << 8, c8))
+            m = min(32, len(L) - j)
+            if not s['res'] and ((s['type'] == 1 and c8 == 127 << 8) or (s['type'] == 3 and not c8)):
+                sl = (0, L[j + m - 1] << 9 if s['type'] == 1 else 0)    # the block passes; the state follows it
+                sr = (0, R[j + m - 1] << 9 if s['type'] == 1 and R else 0)
+                continue
             ci, cf = c8 >> 8, c8 & 255
             g = self.G[ci] + (self.G[ci + 1] - self.G[ci]) * (F(cf) * F(1 / 256))
             a1 = F(1) / (F(1) + g * (g + k))
             a2 = g * a1
             a3 = g * a2
-            L[j:j + 32], sl = self.svf(sl, L[j:j + 32], a1, a2, a3, k, gain, s['type'])
+            c = (self.q31(a1), self.q31(a2), self.q31(a3), k30, gain)
+            L[j:j + 32], sl = self.svf(sl, L[j:j + 32], c, s['type'])
             if R:
-                R[j:j + 32], sr = self.svf(sr, R[j:j + 32], a1, a2, a3, k, gain, s['type'])
+                R[j:j + 32], sr = self.svf(sr, R[j:j + 32], c, s['type'])
         return L, R, (sl, sr)
 
 
-ZERO_STATE = ((F(0), F(0)), (F(0), F(0)))
+ZERO_STATE = ((0, 0), (0, 0))
 
 
 def voice_state(m, sym, i):
     b = bytes(m.uc.mem_read(sym['pf_voices'] + i * 24, 24))
     gen, clock = struct.unpack_from('<2I', b)
-    return gen, clock, tuple(F(x) for x in struct.unpack_from('<4f', b, 8))
+    return gen, clock, struct.unpack_from('<4i', b, 8)
 
 
 # ---------------------------------------------------------------- static
@@ -389,7 +407,8 @@ def static_checks(out, man, img, parent):
     pow2 = list(struct.unpack('<97I', nrt.read(e['pf_pow2'], 388)))
     g = list(struct.unpack('<129f', nrt.read(e['pf_g'], 516)))
     k = list(struct.unpack('<128f', nrt.read(e['pf_k'], 512)))
-    comp = list(struct.unpack('<128f', nrt.read(e['pf_comp'], 512)))
+    k30 = list(struct.unpack('<128i', nrt.read(e['pf_k30'], 512)))
+    comp = list(struct.unpack('<128H', nrt.read(e['pf_comp15'], 256)))
     import math
     check(pow2 == [round(2 ** (i / 96) * 65536) for i in range(97)] and pow2[0] == 65536 and pow2[96] == 131072,
           'pf_pow2: 2^(i / 96) in Q16, 65536 .. 131072')
@@ -399,9 +418,11 @@ def static_checks(out, man, img, parent):
           f'pf_g: tan(pi fc / 48000), fc 20 Hz .. 20 kHz in 128 log steps ({g[0]:.6f} .. {g[127]:.4f})')
     q = [0.7071067811865476 * 2 ** (r * 4.5 / 127) for r in range(128)]
     check(all(abs(k[r] - 1 / q[r]) <= 1e-6 for r in range(128)) and
-          all(abs(comp[r] - (q[r] / 0.7071067811865476) ** -0.5) <= 1e-6 for r in range(128)) and
+          k30 == [round(2 ** 30 / q[r]) for r in range(128)] and
+          comp == [round((q[r] / 0.7071067811865476) ** -0.5 * 32768) for r in range(128)] and comp[0] == 32768 and
           abs(1 / k[127] - 16) < 1e-3,
-          f'pf_k = 1 / Q, Q 0.707 .. {1 / k[127]:.2f}; pf_comp = 1 / sqrt(Q / 0.707)')
+          f'pf_k = 1 / Q (float and Q30), Q 0.707 .. {1 / k[127]:.2f}; pf_comp15 = 1 / sqrt(Q / 0.707) in Q15 '
+          f'(32768 at RESO 0)')
     hz = list(struct.unpack('<128H', nrt.read(e['pf_hz'], 256)))
     q10 = list(nrt.read(e['pf_q10'], 128))
     check(hz == [round(f) for f in fc] and hz[0] == 20 and hz[127] == 20000 and q10 == [round(x * 10) for x in q] and
@@ -660,6 +681,90 @@ def restart_checks(img, man, model):
           'stage 1\'s env_stages[0] is pf_stage in the running image')
 
 
+# ---------------------------------------------------------------- test 5: the bypass, the race, the drop counter
+def robust_checks(img, parent, man, model):
+    e = man['entries']
+    # an LP fully open (or an HP fully down) without resonance passes the frames as they are
+    p, m = Fill(parent), Fill(img, e)
+    ok = []
+    for b, follows in ((ext2(0, 0, 0, 1, 127, 0), True), (ext2(0, 0, 0, 3, 0, 0), False),
+                       (ext2(0, 0, 0, 1, 127, 0, -40, 0, 40), True)):
+        for stereo in (False, True):
+            for f in (p, m):
+                f.set_ext(4, b)
+            objs = [f.setup(6, 4, 0, 0x4000, 1.0, stereo, seed=21) for f in (p, m)]
+            s = model.settings(b)
+            st, t, same = ZERO_STATE, 0, True
+            for c in range(3):
+                outs = []
+                for f, o in zip((p, m), objs):
+                    f.fill(o, stereo)
+                    outs.append(f.chunk(o, 2048, stereo, base=0x4000))
+                wL, wR, st = model.filter(s, st, outs[0][1], outs[0][2], t)
+                vs = voice_state(m.m, e, 6)
+                same = same and outs[1][1:3] == (wL, wR) and vs[2] == (st[0][0], st[0][1], st[1][0], st[1][1])
+                t += 2048
+            passes = outs[1][1:3] == outs[0][1:3]
+            ok.append((same, passes if s['amt'] == 0 else True, vs[2][0] == 0 and (vs[2][1] != 0) == follows))
+    check(all(all(x) for x in ok),
+          f'the bypass: an LP at 127 or an HP at 0 without resonance passes the frames as they are (the parent\'s), its '
+          f'state following the input (LP: the low state on the last sample, HP: zero); an LP opening back up after a '
+          f'falling envelope matches the model through the switch ({ok})')
+    # a new start (another task's Init) while a fill is running: that fill's state isn't written back
+    m = Fill(img, e)
+    b = ext2(12, 0, 64, 1, 50, 90, 40, 0, 72, 1, 1)
+    m.set_ext(9, b)
+    obj = m.setup(8, 9, 0, 0x4000, 1.0, False, seed=8)
+    for c in range(2):
+        m.fill(obj, False)
+        m.chunk(obj, 2048, False, base=0x4000)
+    before = bytes(m.uc.mem_read(e['pf_voices'] + 8 * 24, 24))
+    fired = []
+
+    def init_now(uc, a, sz, _):
+        if not fired:
+            fired.append(1)
+            m.m.w32(e['pf_gen'] + 8 * 4, m.m.r32(e['pf_gen'] + 8 * 4) + 1)
+    h = m.uc.hook_add(UC_HOOK_CODE, init_now, None, begin=KERNEL, end=KERNEL)
+    m.fill(obj, False)
+    m.chunk(obj, 2048, False, base=0x4000)
+    m.uc.hook_del(h)
+    after = bytes(m.uc.mem_read(e['pf_voices'] + 8 * 24, 24))
+    m.fill(obj, False)
+    m.calls = []
+    m.chunk(obj, 2048, False, base=0x4000)
+    calls, m.calls = m.calls, None
+    fresh = voice_state(m.m, e, 8)
+    want = model.calls(model.settings(b), 0x4000, 0, 0, 2048)
+    check(fired and after == before and calls == want and fresh[1] == 2048,
+          f'a new start while a fill runs (pf_gen bumped during the chunk, as another task\'s Init on a reused voice '
+          f'would): the fill\'s clock and filter state are not written back, and the next chunk starts the envelopes '
+          f'from zero ({after == before}, {calls[:2]}, clock {fresh[1]})')
+    # stock's drop counter: the stream consumer adds 1 for a 64-frame block whose chunk isn't filled, and plays
+    # nothing in it; a filled chunk plays and counts nothing
+    p = Fill(parent)
+    S, C, OUT, POS = 0x30079000, 0x3007A000, 0x3007D000, 0x3007D400
+    seq = []
+    for filled in (False, True, False):
+        p.uc.mem_write(S, bytes(0x40))
+        p.uc.mem_write(S, b'\x01\x00')
+        p.m.w32(S + 0x20, C)
+        p.uc.mem_write(C, bytes(0x2090))
+        if filled:
+            p.m.w32(C, M32)
+            p.m.w32(C + 8, 2048)
+            p.uc.mem_write(C + 0x80, struct.pack('<64h', *range(100, 164)))
+        p.uc.mem_write(OUT, bytes(0x200))
+        p.m.w32(POS, 0)
+        before = p.m.r32(DROPS)
+        rc = p.m.call(0x168FE | 1, S, OUT, POS)
+        seq.append((p.m.r32(DROPS) - before, rc if not filled else None,
+                    bytes(p.uc.mem_read(OUT, 0x200)) != bytes(0x200)))
+    check(seq == [(1, 2, False), (0, None, True), (1, 2, False)],
+          f'stock\'s dropout counter 0x82e0b940: the stream consumer adds 1 for a block whose chunk is not filled yet '
+          f'and plays nothing in it (returns 2); a filled chunk plays and counts nothing ({seq})')
+
+
 # ---------------------------------------------------------------- CPU
 def cpu_checks(img, parent, man):
     p, m = Fill(parent), Fill(img, man['entries'])
@@ -694,7 +799,8 @@ def cpu_checks(img, parent, man):
 
 # ---------------------------------------------------------------- the ENVELOPE pages
 PF_LABELS = [['C1:DEPTH', 'C2:ATTACK', 'C3:DECAY'], ['C1:TYPE', 'C2:CUTOFF', 'C3:RESO'],
-             ['C1:AMOUNT', 'C2:ATTACK', 'C3:DECAY'], ['C1:PITCH', '', 'C3:FILTER']]
+             ['C1:AMOUNT', 'C2:ATTACK', 'C3:DECAY'], ['C1:PITCH', 'DROPS', 'C3:FILTER']]
+DROPS = 0x82E0B940                                       # stock's dropout counter (the stream consumer's)
 PF_NAMES = ['PITCH', 'FILTER', 'F-ENV', 'CURVES']
 FILTER_NAMES = ['OFF', 'LPF', 'BPF', 'HPF']
 CURVE_NAMES = ['LIN', 'EXP', 'LOG', 'S']
@@ -713,7 +819,7 @@ def zone(raw, n):
     return max(0, min(127, raw)) * n >> 7
 
 
-def pf_values(model, k, b):
+def pf_values(model, k, b, drops=0):
     """the three values page 5 + k shows for bytes 0x71-0x7f"""
     e = b if b[14] == 1 else bytes(15)
     F = model.F
@@ -731,7 +837,7 @@ def pf_values(model, k, b):
         a = max(-63, min(63, s8(e[6])))
         t = (abs(a) * 156942 + 50000) // 100000
         return ['0' if not a else f'{"-" if a < 0 else "+"}{t // 10}.{t % 10}oct'] + times(7, 8)
-    return [CURVE_NAMES[e[9] & 3], '', CURVE_NAMES[e[9] >> 2 & 3]]
+    return [CURVE_NAMES[e[9] & 3], str(drops), CURVE_NAMES[e[9] >> 2 & 3]]
 
 
 def pf_graph(model, k, b):
@@ -760,7 +866,7 @@ def pf_matches(m, screens, model, pad, k):
     """the image's screen and static layer are the reference's for page 5 + k of pad"""
     st = T.pad_state(m, pad)
     b2 = ext2_of(m, pad)
-    v = dict(labels=PF_LABELS[k], values=pf_values(model, k, b2),
+    v = dict(labels=PF_LABELS[k], values=pf_values(model, k, b2, m.r32(DROPS)),
              bottom=f'{T.pad_label(pad)} {PF_NAMES[k]} {5 + k}/{PAGES}')
     g = pf_graph(model, k, b2)
     if g is None:
@@ -862,7 +968,7 @@ def ui_checks(img, parent, man, model):
             m.texts.clear()
             m.knob(ctrl, raw)
             shown = [s for x, y, s in m.texts if y == T.VALUE_Y and x == T.COLUMNS[ctrl - 1]]
-            texts.append((shown[-1:] == [pf_values(model, k, ext2_of(m, 5))[ctrl - 1]], shown[-1:]))
+            texts.append((shown[-1:] == [pf_values(model, k, ext2_of(m, 5), m.r32(DROPS))[ctrl - 1]], shown[-1:]))
     sample = [t[1] for t in texts[0::37]]
     check(all(t[0] for t in texts), f'every value the knobs reach is shown as the model says: depths, attack and decay '
                                     f'times (and HOLD), cutoffs in Hz and k, Q, amounts in octaves ({len(texts)} turns; '
@@ -921,8 +1027,41 @@ def ui_checks(img, parent, man, model):
     check(ext2_of(m, 5) == before, 'a pad holding no sample: pages 5-8 write nothing (stage 1 calls no turn)')
     m.load_pad(5)
     lines = [s for _, _, s in m.texts] + [x for k in range(4) for x in PF_LABELS[k] + PF_NAMES[k:k + 1]]
+    m.w32(DROPS, 12345)
+    T.go_to(m, 0)
+    m.texts.clear()
+    T.go_to(m, 7)                        # the labels are drawn when the page comes up
+    m.draw()
+    shown = [(x, s) for x, y, s in m.texts if y == T.VALUE_Y]
+    first = ('DROPS' in [s for x, y, s in m.texts if y == T.LABEL_Y]) and (T.COLUMNS[1], '12345') in shown and \
+        pf_matches(m, screens, model, 5, 3)
+    m.w32(DROPS, 12399)
+    b = ext2_of(m, 5)
+    m.texts.clear()
+    m.knob(2, 77)
+    again = [(x, s) for x, y, s in m.texts if y == T.VALUE_Y and x == T.COLUMNS[1]][-1:]
+    check(first and again == [(T.COLUMNS[1], '12399')] and ext2_of(m, 5) == b,
+          f'page 8 shows stock\'s dropout count (0x82e0b940) under DROPS, in CTRL 2\'s place; turning CTRL 2 '
+          f'writes nothing and shows the count again ({shown[-3:]}, {again})')
     check(all(len(s) <= 16 and s.isascii() for s in lines) and all(len(x) <= 10 for k in range(4) for x in PF_LABELS[k]),
           f'labels at most 10 characters, values and names at most 16 ({max(lines, key=len)!r})')
+    # DEL, then VALUE, on one of these pages: stage 1's reset clears this stage's bytes too, 0x70 stays
+    T.go_to(m, 4)
+    m.uc.mem_write(EXT + 5 * 0x80 + 0x64, T.full_settings(5)[:13] + ext2(12, 30, 80, 1, 50, 90, 40, 0, 72, 1, 1))
+    before = T.all_bytes(m, 5)
+    m.w32(VOICES + 2 * VOICE_SIZE + 0x14274, 5)
+    on_before = m.call(man['entries']['pf_active'] | 1, VOICES + 2 * VOICE_SIZE + 0x140)
+    m.draw()
+    m.clear()
+    T.press(m, T.KEY_DEL)
+    asked = m.ui()['asking'] == 1 and (64, T.NAME_Y, 'RESET A-6? press VALUE') in m.texts
+    T.press(m, T.KEY_VALUE)
+    after = T.all_bytes(m, 5)
+    on_after = m.call(man['entries']['pf_active'] | 1, VOICES + 2 * VOICE_SIZE + 0x140)
+    check(asked and after[:12] == bytes(12) and after[12] == before[12] and after[13:] == bytes(15) and
+          pf_matches(m, screens, model, 5, 0) and on_before and not on_after and {x[1] for x in m.fanouts} == {5},
+          f'DEL on page 5 asks "RESET A-6? press VALUE"; VALUE clears stage 1\'s bytes and these (0x71-0x7F: pitch and '
+          f'filter off, PITCH 5/8 shows it), note repeat\'s 0x70 stays, the pad\'s voices recompute ({after.hex()})')
 
 
 def main():
@@ -939,6 +1078,7 @@ def main():
     filter_checks(img, parent, man, model, n)
     filter_checks(img, parent, man, model, max(2, n // 2), both=True)
     restart_checks(img, man, model)
+    robust_checks(img, parent, man, model)
     ui_checks(img, parent, man, model)
     cpu_checks(img, parent, man)
     print(f'\n{cases[0] - len(fails)}/{cases[0]} checks pass')
