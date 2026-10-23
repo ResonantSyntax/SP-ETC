@@ -1,5 +1,5 @@
-"""Checks for FX deep edit test 5 (build_fx_deep_edit.py): on the FX screen REMAIN + FX opens, VALUE through its
-screens and the effect's extra screens, the input FX's too; an effect without extra settings says so; an FX
+"""Checks for FX deep edit test 7 (build_fx_deep_edit.py): on the FX screen REMAIN + FX opens, VALUE through its
+screens and the effect's extra screens, the input FX's too; an effect without extra settings is stock's; an FX
 button alone as stock.
 
 usage: python synth/test_fx_deep_edit.py OUT_DIR [FXMAP]     (unicorn, keystone, capstone on PYTHONPATH)
@@ -26,7 +26,7 @@ Checks:
   REMAIN + FX opens the screen that stays while the bus has an effect, as on the parent, and asks to close when that
   FX button turns the effect off or the bus has none;
 - VALUE through the screens (REMAIN + FX): Tape Echo (screen 2, three extra screens), Isolator (one extra screen),
-  Crusher (none: stock's toggle, as on the parent, and "CRUSHER / NO EXTRA SETTINGS"); the popups; nothing sent;
+  Crusher (none: stock's toggle, as on the parent, no popup); the popups; nothing sent;
 - on an extra screen CTRL 1-3 set its settings across their ranges, one frame per change; a knob without a setting
   does nothing; pads go on as usual; another button leaves (the popup goes) and goes on as usual; afterwards the
   knobs are stock's; every setting of every effect reaches its min and max; per bus; the input FX (slot 0) too;
@@ -49,7 +49,7 @@ from unicorn import arm_const as ar
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_fx_deep_edit import GUARDS, Runtime, scatter, decompress, branches_into, DT1, DT1_HEAD, TOGGLE, \
-    TOGGLE_HEAD  # noqa: E402
+    TOGGLE_HEAD, EXCLUDED  # noqa: E402
 
 FLASH, COPY, DECOMPRESS, ZERO = 0x60080000, 0x600800E4, 0x60080088, 0x60080100
 HEAP = 0x32000000
@@ -314,7 +314,8 @@ class Settings:
             self.by_fx[e['id']] = [dict(id=base[0] + i, name=p['name'], aa=p['addr'], min=self.min[base[0] + i],
                                         max=self.max[base[0] + i], default=self.default[base[0] + i])
                                    for i, p in enumerate(e['params'])
-                                   if p['default'] is None and base[0] + i not in record]
+                                   if p['default'] is None and base[0] + i not in record and
+                                   (e['id'], p['name']) not in EXCLUDED]
 
     def text(self, bus, fx, cursor=0, value=None, edit=False):
         s = self.by_fx[fx][cursor]
@@ -373,7 +374,7 @@ def static_checks(out, man, img, parent, fxmap, st):
     names = [nrt.read(e['fde_names'] + 10 * i, 10).split(b'\0')[0].decode() for i in range(n)]
     labels = [nrt.read(e['fde_effect_names'] + 13 * i, 13).split(b'\0')[0].decode() for i in range(49)]
     mine = [(p['id'], p['name']) for fx in range(1, 49) for p in st.by_fx[fx]]
-    check(n == 142 and list(zip(ids, names)) == mine and
+    check(n == 141 and list(zip(ids, names)) == mine and
           all(count[fx] == len(st.by_fx[fx]) and first[fx] == sum(len(st.by_fx[k]) for k in range(1, fx))
               for fx in range(1, 49)) and count[0] == 0 and labels[1:] == st.effect_names[1:],
           f'the compiled settings are the {len(mine)} parameters with no boot value in fxmap and not in the knob '
@@ -383,6 +384,11 @@ def static_checks(out, man, img, parent, fxmap, st):
           'the manifest lists the same settings with the firmware\'s ranges and defaults')
     check(all(0 <= p['min'] <= p['default'] <= p['max'] <= 255 for fx in st.by_fx for p in st.by_fx[fx]),
           'every setting\'s range is inside 0..255 and holds its default')
+    comp = [p['name'] for p in st.by_fx[28]]
+    check(EXCLUDED == {(28, 'MODE'): EXCLUDED[(28, 'MODE')]} and count[28] == 0 and comp == [] and
+          'MODE' not in names[first[28]:first[28] + count[28]],
+          'test6: COMPRESSOR\'s MODE is left out (a user\'s report: dangerously loud); the Compressor has no extra '
+          'settings now')
     lines = [f'{labels[fx]} {n}/{n}' for fx in range(1, 49)
              for n in [2 + any(x != -1 for x in rt.words(RECORDS + 24 * fx + 12, 3)) + (len(st.by_fx[fx]) + 2) // 3]] + \
             [f'C3 {p["name"]} {p["max"]}' for fx in st.by_fx for p in st.by_fx[fx]]
@@ -424,7 +430,7 @@ def builder_checks(img, parent, man, fxmap, st):
                 if not ok or other or got != [fx_frame(fx, bus, s['aa'], 0x5A)] or \
                         [x['addr'] for x in fxmap[fx]['params'] if x['name'] == s['name'] and x['default'] is None] != [s['aa']]:
                     bad.append((fx, s['name'], bus))
-    check(not bad and n == 710, f'through the jump, the builder sends fxmap\'s address for all {n} setting/slot pairs '
+    check(not bad and n == 705, f'through the jump, the builder sends fxmap\'s address for all {n} setting/slot pairs '
                                 f'({bad[:4]})')
 
 
@@ -595,11 +601,9 @@ def screen_checks(img, parent, man, st):
             ss.value()
             flags.append((ss.flag(VIEW_SCREEN2), mm.popups))
         out.append(flags)
-    note = (f'{st.effect_names[CRUSHER]}\nNO EXTRA SETTINGS', 1500)
-    check([f for f, _ in out[0]] == [f for f, _ in out[1]] == [1, 0, 1] and all(not q for _, q in out[0]) and
-          all(q == [note] for _, q in out[1]),
+    check(out[0] == out[1] == [(1, []), (0, []), (1, [])],
           f'Crusher (no screen 2, no extra settings): VALUE toggles stock\'s screen flag, as on the parent with REMAIN, '
-          f'and says so for 1.5 s: {note[0]!r} ({out[1]})')
+          f'and shows no popup (test7) ({out[1]})')
 
     # the knobs on an extra screen
     m, sc = fx_machine(img, man)
@@ -703,7 +707,7 @@ def range_checks(img, man, st):
             n += 1
             if not all(out):
                 bad.append((fx, s['name'], out))
-    check(not bad and n == 142, f'all {n} settings: CTRL at 0 sends the firmware\'s min, at 127 its max, one frame '
+    check(not bad and n == 141, f'all {n} settings: CTRL at 0 sends the firmware\'s min, at 127 its max, one frame '
                                 f'each ({bad[:4]})')
 
 
@@ -718,8 +722,8 @@ def resend_checks(img, parent, man, st):
     edits = {(1, 'TAPE DIST'): 2, (1, 'BASS'): 10, (2, 'TREBLE'): 19, (0, 'BASS'): 7}
     for (bus, name), v in edits.items():               # held as the extra screens leave them (slot 0: the input FX)
         i = first + te[name][0]
-        m.uc.mem_write(e['fde_values'] + bus * 142 + i, bytes([v]))
-        m.uc.mem_write(e['fde_edited'] + bus * 142 + i, bytes([1]))
+        m.uc.mem_write(e['fde_values'] + bus * 141 + i, bytes([v]))
+        m.uc.mem_write(e['fde_edited'] + bus * 141 + i, bytes([1]))
     ours1 = [fx_frame(TAPE_ECHO, 1, te['BASS'][1]['aa'], 10), fx_frame(TAPE_ECHO, 1, te['TAPE DIST'][1]['aa'], 2)]
     ours2 = [fx_frame(TAPE_ECHO, 2, te['TREBLE'][1]['aa'], 19)]
     ours0 = [fx_frame(TAPE_ECHO, 0, te['BASS'][1]['aa'], 7)]
@@ -827,8 +831,8 @@ def passthrough_checks(img, parent, man):
         for bus in range(5):                            # an edited value held for every slot's Reverb and Tape Echo
             for fx in (REVERB, TAPE_ECHO):
                 i = b.r32(e['fde_first'] + fx) & 0xFF
-                b.uc.mem_write(e['fde_values'] + bus * 142 + i, bytes([3]))
-                b.uc.mem_write(e['fde_edited'] + bus * 142 + i, bytes([1]))
+                b.uc.mem_write(e['fde_values'] + bus * 141 + i, bytes([3]))
+                b.uc.mem_write(e['fde_edited'] + bus * 141 + i, bytes([1]))
         x, y = run_script(a, script), run_script(b, script)
         check(x == y and all(r[3] for r in y), f'{label}: as on the parent, every event through DOOM OS\'s filter '
                                                f'({sum(len(r[1]) for r in y)} chip bytes)')

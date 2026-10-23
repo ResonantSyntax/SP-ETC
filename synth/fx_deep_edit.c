@@ -14,8 +14,8 @@
  * then screen 1 again. The slot is the one the CTRL knobs drive (settings 0x3a: 0 the input FX, 1-4 BUS 1-4,
  * what the knob path 0x800cc030 uses) and the effect that slot's (system 0x27c[slot], what the knob path and
  * the FX screen read). Test 4 adds the input FX (test 2 and 3 offered BUS 1-4 only, so with the knobs on the
- * input FX VALUE only flipped screens 1 and 2) and, for an effect without extra settings, a note on the VALUE
- * press that goes back to screen 1 ("CHORUS" / "NO EXTRA SETTINGS"). An effect's settings are
+ * input FX VALUE only flipped screens 1 and 2). An effect without extra settings keeps stock's VALUE (test4's
+ * "NO EXTRA SETTINGS" note is gone since test7). An effect's settings are
  * its parameters that are not in its six-ID knob record (fx_deep_edit_tables.h, made by build_fx_deep_edit.py
  * from the firmware's tables and DM-404's fxmap.json). On an extra screen any button but VALUE and SHIFT leaves
  * it and then does what it always does; pads work as usual. (Test 1's TOP page, EXIT + VALUE, is gone, and
@@ -75,7 +75,6 @@ typedef unsigned char u8;
 #define PER_SCREEN 3
 #define SCREEN_MS 600000                                 /* an extra screen's popup: until it is left */
 #define GONE_MS 1                                        /* leaving: the popup goes at the next tick */
-#define NOTE_MS 1500                                     /* "NO EXTRA SETTINGS" */
 
 #include "fx_deep_edit_tables.h"
 
@@ -247,12 +246,6 @@ EXPORT void fde_value(u8 *screen) {
         fde.screen = 1;
         show();
         return;
-    }
-    if (fde.effect && fde.bus < SLOTS) {               /* an effect without extra settings says so */
-        char *p = put(fde_text, fde_effect_names[fde.effect]);
-        p = put(p, "\nNO EXTRA SETTINGS");
-        *p = 0;
-        POPUP(fde_text, NOTE_MS);
     }
     screen[VIEW_SCREEN2] ^= 1;                         /* stock's toggle */
 }

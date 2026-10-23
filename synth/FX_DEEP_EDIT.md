@@ -10,6 +10,21 @@ firmware's own state is never changed and nothing is saved: values live in RAM, 
 until power-off. Outside the page the build behaves as v9.46, except that an edited value goes to
 the chip again whenever the firmware selects that effect on that bus.
 
+## Test 7 (fx-deep-edit-test7): no NO EXTRA SETTINGS popup
+
+The user asked for test 4's note to go: an effect without extra settings keeps stock's VALUE, with no popup. The
+Compressor's MODE stays left out (test 6). Checked in the emulator: 71 checks pass (Crusher's VALUE as on the
+parent, no popup).
+
+## Test 6 (fx-deep-edit-test6): the Compressor's MODE is left out
+
+A user's report on v9.47: the Compressor's extra setting on CTRL 1 (MODE, 0-1) "almost blew my ears off".
+Set to 1 it makes the output dangerously loud. The builder now has a list of settings left out on purpose
+(`EXCLUDED`), and MODE is on it: the Compressor has no extra settings. 141
+settings remain. The patcher page and README tell everyone to turn the volume down before trying the hidden
+settings, since others (gains, EQ boosts, feedback, resonance) can also get loud. Checked in the emulator: 71
+checks pass (the Compressor offers nothing; every other test 5 check).
+
 ## Test 5 (fx-deep-edit-test5): VALUE holds the screen itself
 
 From the user's test of combined-test6: still no extra screens, never the NO EXTRA SETTINGS note, on the main
@@ -234,7 +249,7 @@ menu; their rows only matter if they ever get onto a bus.
 | 23 GT AMP SIM | AMP SW 0-1 (1), AMP TYPE 0-13 (0), MASTER 0-255 (200), GAIN 0-2 (1), PRESENCE 0-255 (0), BRIGHT 0-1 (0), SP SW 0-1 (1), SP TYPE 0-15 (4), MIC SET 0-2 (1), MIC LEVEL 0-255 (255), DIRECT 0-255 (0), PAN 0-255 (128) |
 | 24 STOPPER | HOLD 0-1 (1) |
 | 26 SLICER | ATTACK 0-255 (100), RESET SW 0-1 (0), RESET THR 0-255 (120), LEVEL 0-255 (255) |
-| 28 COMPRESSOR | MODE 0-1 (0) |
+| 28 COMPRESSOR | none since test6 (MODE 0-1 (0) was left out: set to 1 it made the output dangerously loud) |
 | 30 SCATTER | BALANCE 0-255 (255) |
 | 31 404 VINYLSIM | DIST 0-255 (60), DISC TYPE 0-2 (0), BALANCE 0-255 (255) |
 | 32 303 VINYLSIM | BALANCE 0-255 (255) |
