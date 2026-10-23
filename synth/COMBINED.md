@@ -230,3 +230,20 @@ has screen 2 or extra settings, then steps on. The rest as in combined-test6, th
 shortcut, midi, restart and hot resample pass (the kit module's hashes re-pointed for the footer byte). Not rerun:
 the other feature suites and the 18 kit bounce runs (their modules are combined-test5's byte for byte). The patcher
 test passes with v9.47 = combined-test7.
+
+## 9. combined-test8
+
+A user reported that the Compressor's hidden MODE setting on v9.47 (combined-test7) made the output dangerously
+loud, and the user asked for the NO EXTRA SETTINGS note to go. FX deep edit at `fx-deep-edit-test7`: the
+builder leaves the Compressor's MODE out of its table (`EXCLUDED`), and an effect without extra settings keeps
+stock's VALUE with no popup. The rest as in combined-test7, then the fast boot and the kit footer.
+
+- **APP1:** `fbcff606…e9f0`, 3,152,272 bytes, in `analysis/kit_pr1_audit/release/combined-test8` (the combined build
+  `7e294a75…a4d6`, after the fast boot `7fb4371c…2c96`). Every module byte for byte its own test build's; the same 7
+  reviewed overlaps. Only the FX deep edit module differs from combined-test7.
+
+**Checked** (Unicorn, `analysis/kit_pr1_audit/dev_combined8/run_suites.py`): on the final APP1,
+`test_fx_deep_edit.py` 68 of 71 (the same 2 layout checks and ROLL's key; the Compressor has no extra settings,
+Crusher's VALUE shows no popup) and the kit suites kits, capture, chord, shortcut, midi, restart and hot resample
+pass (the kit module's hashes re-pointed for the footer byte). Not rerun: the other feature suites and the 18 kit
+bounce runs (their modules are combined-test7's byte for byte). The patcher test passes with v9.48 = combined-test8.

@@ -51,8 +51,10 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'fx-deep-edit-test5'
+REVISION = 'fx-deep-edit-test7'
 SLOT = 0x4000                       # reserved: [base, base + SLOT)
+# Settings left out on purpose: (effect, fxmap name) -> why. test6: a user's report on v9.47.
+EXCLUDED = {(28, 'MODE'): 'COMPRESSOR MODE: set to 1 it made the output dangerously loud (a user\'s report on v9.47)'}
 SLOT_CEILING = 0x83FE6000           # the FX probe's slot starts here
 EXPORTS = ('fde_filter', 'fde_dt1', 'fde_dt1_stock', 'fde_dt1_fxtype', 'fde_value', 'fde', 'fde_values',
            'fde_edited', 'fde_text', 'fde_effect_names', 'fde_first', 'fde_count', 'fde_ids', 'fde_names')
@@ -250,7 +252,7 @@ class Tables:
                 raise ValueError(f'{e["name"]}: {p["name"]} ID {pid} does not match fxmap at {p["addr"]}')
             if (pid in record) != (p['default'] is not None):
                 raise ValueError(f'{e["name"]}: {p["name"]} is in the knob record xor in the boot capture')
-            if pid in record:
+            if pid in record or (fx, p['name']) in EXCLUDED:
                 continue
             lo, hi, d = self.min[pid], self.max[pid], self.default[pid]
             if not 0 <= lo <= d <= hi <= 255:
@@ -449,7 +451,7 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
                     '(CTRL 4-6), then extra screens with three each of the effect\'s parameters stock never sends to '
                     'the effects chip (BMC) on CTRL 1-3, for the slot the CTRL knobs drive (test4: the input FX too); '
                     'values live in RAM per slot and effect and are sent again after every FxType write for that '
-                    'slot; an effect without extra settings says so on VALUE (test4); an FX button alone is stock '
+                    'slot; an effect without extra settings keeps stock\'s VALUE (test7: no note); an FX button alone is stock '
                     '(test3: test2\'s hold kept MFX\'s effect choice away)',
         parent_app1=str(inp), parent_sha256=sha(inp.read_bytes()),
         parent_revision=json.loads(parent_manifest.read_text(encoding='utf-8')).get('revision')
@@ -471,8 +473,8 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
                            'extra screens, screen 1 again',
                      bus='settings 0x3a (0 input FX, 1-4 BUS 1-4), what TOP\'s knob path 0x800cc030 and the FX '
                          'screen use; extra screens on all five slots (test2 and test3: BUS 1-4 only)',
-                     none='an effect without extra settings: the VALUE press that goes back to screen 1 shows '
-                          '"CHORUS\nNO EXTRA SETTINGS" for 1.5 s, and stock\'s toggle runs',
+                     none='an effect without extra settings: stock\'s toggle, no popup (test4 to test6 showed '
+                          '"NO EXTRA SETTINGS"; the user asked for it to go)',
                      effect='system 0x27c[bus] (0 none), what the knob path checks',
                      knobs='on an extra screen CTRL k (event 9, k, 0..127) sets its setting across the firmware\'s '
                            'min/max (min + ((max - min) x position + 63) / 127); a change is one DT1 (ID, slot = bus)',
@@ -482,6 +484,7 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
         resend='after the firmware sends FxType 0x7e..0x82 (the input FX, BUS 1-4) = fx, the edited values of '
                'that slot for fx go out again, in table order; nothing else adds a frame',
         settings_total=sum(len(s) for s in settings), effects=effects,
+        excluded=[dict(effect=fx, name=n, why=w) for (fx, n), w in EXCLUDED.items()],
         dt1='F0 41 10 00 00 00 00 08 12 a1 a2 a3 a4 hi lo sum F7 via the stock builder 0x800d8118 (link '
             '0x80592500, ID, slot, value): packets 04 F0 41 10 / 04 00 00 00 / 04 00 08 12 / 04 a1 a2 a3 / '
             '04 a4 hi lo / 06 sum F7 xx (xx: whatever the stock packet buffer held)',
