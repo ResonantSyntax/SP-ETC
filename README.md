@@ -2,7 +2,7 @@
 
 **[Open the patcher](https://tracelistener.github.io/SP-ETC/)**
 
-The patcher builds **Sound Generator + Kits v9.48** for the SP-404MKII:
+The patcher builds **Sound Generator + Kits v9.49** for the SP-404MKII:
 Sound Generator **v9.9.3** (four live voices, 17 new waveforms, nine
 volume/filter-envelope presets, 34 scale choices and an arpeggiator) plus
 thirteen synthesized machine kits. It also adds bounce in place, pad
@@ -18,15 +18,21 @@ reproduction and validation](synth/KITS.md).
 
 > **Keep your volume low when you try the hidden effect settings.** Some of
 > them can make the sound suddenly very loud, loud enough to hurt your ears or
-> your speakers. Turn the volume down first, especially on headphones. v9.48
-> removes the Compressor setting that did this in v9.47.
-> If you installed v9.47, patch again with v9.48.
+> your speakers. Turn the volume down first, especially on headphones. The
+> Compressor and Super Filter settings that did this in v9.47 and v9.48 are
+> removed.
+> If you installed v9.47 or v9.48, patch again with v9.49.
+
+## New in v9.49
+
+- **Safety fix:** the Super Filter's hidden settings are gone: one of them
+  could make the sound suddenly, dangerously loud.
+  If you installed v9.47 or v9.48, patch again with v9.49.
 
 ## New in v9.48
 
 - **Safety fix:** the Compressor's hidden MODE setting is gone: changing it
   could make the sound suddenly, dangerously loud.
-  If you installed v9.47, patch again with v9.48.
 - **No more "NO EXTRA SETTINGS":** on an effect without hidden settings, VALUE
   works as it normally does.
 
@@ -268,7 +274,7 @@ You can also download this repository as a ZIP file (under the Code button), unz
 ### Manual installation
 
 1. Download the 5.52 system update from [Roland's support page](https://www.roland.com/global/support/by_product/sp-404mk2/updates_drivers/) and unzip it.
-2. Open [our patcher](https://tracelistener.github.io/SP-ETC/), load the stock `SP404MKII_APP1.bin` and press Patch firmware. It builds Sound Generator + Kits v9.48. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
+2. Open [our patcher](https://tracelistener.github.io/SP-ETC/), load the stock `SP404MKII_APP1.bin` and press Patch firmware. It builds Sound Generator + Kits v9.49. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
 3. Download the patched `SP404MKII_APP1.bin` and use it with the unchanged official 5.52 `SP404MKII_APP0.bin` for your test update. Back up first and keep your known-good update for rollback.
 4. Insert the card, hold **SHIFT** while you turn the SP on, and press the **VALUE** knob when the update menu appears.
 5. When the update is done, turn the SP off and on again.
@@ -295,6 +301,13 @@ to DOOM OS 0.6.1: your projects and samples stay, but settings or patterns from
 the newer DOOM OS might not carry over.
 
 ## Status
+
+**v9.49** (2026-10-23) is combined-test9: v9.48 with FX deep edit test8. A user
+reported that CTRL 2 on the Super Filter's hidden settings spiked the volume,
+so all six of its hidden settings are left out. Its APP1 SHA-256 is
+`8f285b01…4750`. Only the FX deep edit module differs from v9.48, and the change
+was checked in the emulator; every other module is v9.47's byte for byte.
+[COMBINED.md](synth/COMBINED.md), [FX_DEEP_EDIT.md](synth/FX_DEEP_EDIT.md).
 
 **v9.48** (2026-10-23) is combined-test8: v9.47 with FX deep edit test7. A user
 reported that the Compressor's hidden MODE setting made the sound dangerously

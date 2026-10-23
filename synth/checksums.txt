@@ -46,3 +46,7 @@ DOOM-SoundGenerator-Kits-v9.47  be758f67da1d4a9aa1977a4935f533d727c23c712611763c
 # hidden effect settings after a user's report that it made the output dangerously loud; no NO EXTRA SETTINGS
 # popup). Every other module is v9.47's byte for byte. Replaces v9.47.
 DOOM-SoundGenerator-Kits-v9.48  fbcff60613e96a054bd6a480824cc3a9b2bc43c8e7a69d39d0d44f9a35b8e9f0  3152272
+# v9.49 (combined-test9), in the patcher: v9.48 with FX deep edit test8 (the Super Filter's six hidden settings
+# left out after a user's report that CTRL 2 on them spiked the volume). Every other module is v9.47's byte for
+# byte. Replaces v9.48.
+DOOM-SoundGenerator-Kits-v9.49  8f285b018ed7c540fed81f0b39128331edc6039900eed95e1a4ce8e762644750  3152144
