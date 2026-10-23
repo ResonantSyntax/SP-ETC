@@ -1,5 +1,5 @@
-"""Checks for FX deep edit test 6 (build_fx_deep_edit.py): on the FX screen REMAIN + FX opens, VALUE through its
-screens and the effect's extra screens, the input FX's too; an effect without extra settings says so; an FX
+"""Checks for FX deep edit test 7 (build_fx_deep_edit.py): on the FX screen REMAIN + FX opens, VALUE through its
+screens and the effect's extra screens, the input FX's too; an effect without extra settings is stock's; an FX
 button alone as stock.
 
 usage: python synth/test_fx_deep_edit.py OUT_DIR [FXMAP]     (unicorn, keystone, capstone on PYTHONPATH)
@@ -26,7 +26,7 @@ Checks:
   REMAIN + FX opens the screen that stays while the bus has an effect, as on the parent, and asks to close when that
   FX button turns the effect off or the bus has none;
 - VALUE through the screens (REMAIN + FX): Tape Echo (screen 2, three extra screens), Isolator (one extra screen),
-  Crusher (none: stock's toggle, as on the parent, and "CRUSHER / NO EXTRA SETTINGS"); the popups; nothing sent;
+  Crusher (none: stock's toggle, as on the parent, no popup); the popups; nothing sent;
 - on an extra screen CTRL 1-3 set its settings across their ranges, one frame per change; a knob without a setting
   does nothing; pads go on as usual; another button leaves (the popup goes) and goes on as usual; afterwards the
   knobs are stock's; every setting of every effect reaches its min and max; per bus; the input FX (slot 0) too;
@@ -601,11 +601,9 @@ def screen_checks(img, parent, man, st):
             ss.value()
             flags.append((ss.flag(VIEW_SCREEN2), mm.popups))
         out.append(flags)
-    note = (f'{st.effect_names[CRUSHER]}\nNO EXTRA SETTINGS', 1500)
-    check([f for f, _ in out[0]] == [f for f, _ in out[1]] == [1, 0, 1] and all(not q for _, q in out[0]) and
-          all(q == [note] for _, q in out[1]),
+    check(out[0] == out[1] == [(1, []), (0, []), (1, [])],
           f'Crusher (no screen 2, no extra settings): VALUE toggles stock\'s screen flag, as on the parent with REMAIN, '
-          f'and says so for 1.5 s: {note[0]!r} ({out[1]})')
+          f'and shows no popup (test7) ({out[1]})')
 
     # the knobs on an extra screen
     m, sc = fx_machine(img, man)
