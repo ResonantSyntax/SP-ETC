@@ -11,8 +11,8 @@ const input = process.argv[2];
 if (!input) throw new Error('Usage: node synth/test_browser.cjs /path/to/stock/SP404MKII_APP1.bin');
 const stock = new Uint8Array(fs.readFileSync(input));
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
-const KITS_SHA = 'be758f67da1d4a9aa1977a4935f533d727c23c712611763c90ae54282aba34b4';
-const KITS_SIZE = 3152432;
+const KITS_SHA = 'fbcff60613e96a054bd6a480824cc3a9b2bc43c8e7a69d39d0d44f9a35b8e9f0';
+const KITS_SIZE = 3152272;
 
 function load(includeKits = true) {
   const elements = new Map();
@@ -63,7 +63,7 @@ async function download(page) {
   }
   assert.equal(api.hex(api.sha256(stock)), digest(stock), 'browser SHA matches Node');
 
-  // The overlays: DOOM OS base from stock 5.52, then v9.47 (combined-test7: the combined feature build + fast boot + kit footer).
+  // The overlays: DOOM OS base from stock 5.52, then v9.48 (combined-test8: the combined feature build + fast boot + kit footer).
   const kits = page.context.window.DOOMOS_KITS;
   const doom = api.applyPatch(api.fromBase64(page.context.window.DOOMOS_PATCH), stock);
   assert.equal(doom.digest, kits.base_sha256);
@@ -73,13 +73,13 @@ async function download(page) {
   assert.equal(kitResult.bytes.length, KITS_SIZE);
   assert.equal(kits.sha256, KITS_SHA);
   assert.equal(kits.size, KITS_SIZE);
-  assert.equal(kits.release, 'v9.47');
-  assert.equal(kits.revision, 'combined-test7');
+  assert.equal(kits.release, 'v9.48');
+  assert.equal(kits.revision, 'combined-test8');
   assert.equal(kits.start_fix, 'resample-startfix-3');
-  assert.equal(kits.combined_sha256, '94d2786c72a2953216e5aa2b0b9e66c6cae926d5a4ccebeb835017cf87e18ea7');
+  assert.equal(kits.combined_sha256, '7e294a75c3d6e7012d0e64a672ea2e4e07255413d4005a93b21b6b578c28a4d6');
   assert.equal(kits.kit_stage_sha256, '88384c3c9760559e721c1a14973ef3a2ced6abf016572b0a73c5dfb0cef492ba');
   assert.equal(kits.features.length, 11);
-  assert.equal(kits.hardware_verified, true);
+  assert.equal(kits.hardware_verified, false);
   assert.equal(JSON.stringify(kits.kit_selector_range), '[1,13]');
   assert.equal(kits.kits.length, 13);
   assert.equal(kits.synthesis_only, true);
@@ -87,16 +87,16 @@ async function download(page) {
   const badKit = kitOverlay.slice(); badKit[badKit.length - 1] ^= 1;
   assert.throws(() => api.applyPatch(badKit, doom.bytes), /came out wrong/);
 
-  // One build, no selector: drop in stock, press Patch, get v9.47.
+  // One build, no selector: drop in stock, press Patch, get v9.48.
   const panel = page.get('doomos-patcher').innerHTML;
   assert.equal((panel.match(/type="checkbox"/g) || []).length, 0, 'no build selector');
-  assert.match(panel, /Builds Sound Generator \+ Kits v9\.47 on DOOM OS 0\.6\.1 \(ED5E\)/);
+  assert.match(panel, /Builds Sound Generator \+ Kits v9\.48 on DOOM OS 0\.6\.1 \(ED5E\)/);
   await choose(page, stock);
   assert.equal(page.get('patch').disabled, false);
   await page.get('patch').listeners.click();
   assert.equal(page.get('download').hidden, false);
   assert.equal(await download(page), KITS_SHA);
-  assert.match(page.get('status').textContent, /Sound Generator \+ Kits v9\.47 with DOOM OS 0\.6\.1 has been patched into firmware 5\.52\+kits-v9\.47/);
+  assert.match(page.get('status').textContent, /Sound Generator \+ Kits v9\.48 with DOOM OS 0\.6\.1 has been patched into firmware 5\.52\+kits-v9\.48/);
 
   page.get('reset').listeners.click();
   assert.equal(page.get('download').hidden, true);
@@ -132,11 +132,20 @@ async function download(page) {
   // The page and README.
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
-  assert.match(html, /kits-data\.js\?v=kits-v9-47-be758f67/);
-  assert.match(html, /doomos-patcher\.js\?v=kits-v9-47-doom-os/);
+  assert.match(html, /kits-data\.js\?v=kits-v9-48-fbcff606/);
+  assert.match(html, /doomos-patcher\.js\?v=kits-v9-48-doom-os/);
   assert.doesNotMatch(html, /synth-data\.js|waves-data\.js|kits-midi-data|MIDI test guide|v9\.43|v9\.44/);
   assert.doesNotMatch(html, /[Tt]ick one|unticked|Pick one of/);
+  assert.match(html, /What's new in v9\.48/);
   assert.match(html, /What's new in v9\.47/);
+  // The volume warning (a user's report on v9.47: the Compressor's MODE was dangerously loud), and no
+  // NO EXTRA SETTINGS note.
+  for (const text of [html, readme]) {
+    assert.ok(text.includes('Keep your volume low when you try the hidden effect settings'), 'the volume warning');
+    assert.ok(text.includes('If you installed v9.47, patch again with v9.48'), 'patch again after v9.47');
+    assert.doesNotMatch(text, /says NO EXTRA SETTINGS|some can get loud/);
+  }
+  assert.ok(html.includes('<strong>Safety fix:</strong>') && readme.includes('**Safety fix:**'), 'v9.48 lists the fix');
   for (const q of ['I already have DOOM OS, or an older version of this mod', 'Which file do I need?',
                    'Will I lose my work?']) {
     assert.ok(html.includes(q) && readme.includes(q), 'the page and README answer: ' + q);
@@ -163,7 +172,7 @@ async function download(page) {
   assert.doesNotMatch(readme, /Pattern sequencer with a graphical interface|## Main controls|## Upstream plans|## Improvements/);
   assert.doesNotMatch(html, /Base released|data-doomos="version"|data-doomos="build"/);
   // The page says the build includes DOOM OS and links its quickstart.
-  assert.match(html, /builds Sound Generator \+ Kits v9\.47 on DOOM OS 0\.6\.1, so your firmware includes DOOM OS/);
+  assert.match(html, /builds Sound Generator \+ Kits v9\.48 on DOOM OS 0\.6\.1, so your firmware includes DOOM OS/);
   assert.match(html, /<h2>DOOM OS<span class="v">0\.6\.1<\/span><\/h2>/);
   assert.match(html, /<dt>DOOM OS<\/dt><dd>0\.6\.1<\/dd>/);
   assert.match(html, /href="manual\/">DOOM OS quickstart/);
@@ -176,5 +185,5 @@ async function download(page) {
   assert.doesNotMatch(html, /For V8, start at modest LEVEL|Uncheck Wave Lab|Expected Wave Lab V8 APP1/);
   assert.doesNotMatch(readme, /<img[^>]*doom-os-512/);
   assert.doesNotMatch(html, /<img[^>]*doom-os/);
-  console.log('PASS: one build, no selector: stock 5.52 gives exactly Sound Generator + Kits v9.47 (combined-test7), repeatably; overlay metadata, wrong-input and corruption rejection, no corrupt download, DOOM OS base without kit data; page and README text.');
+  console.log('PASS: one build, no selector: stock 5.52 gives exactly Sound Generator + Kits v9.48 (combined-test8), repeatably; overlay metadata, wrong-input and corruption rejection, no corrupt download, DOOM OS base without kit data; page and README text.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

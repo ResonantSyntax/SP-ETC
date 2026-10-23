@@ -2,10 +2,10 @@
 
 **[Open the patcher](https://tracelistener.github.io/SP-ETC/)**
 
-The patcher builds **Sound Generator + Kits v9.47** for the SP-404MKII:
+The patcher builds **Sound Generator + Kits v9.48** for the SP-404MKII:
 Sound Generator **v9.9.3** (four live voices, 17 new waveforms, nine
 volume/filter-envelope presets, 34 scale choices and an arpeggiator) plus
-thirteen synthesized machine kits. v9.47 also adds bounce in place, pad
+thirteen synthesized machine kits. It also adds bounce in place, pad
 envelopes, note repeat, chromatic scales, settings saved with the project,
 SUB PAD on the Sound Generator, hidden effect settings and a faster start-up.
 It is built on, and includes, **DOOM OS 0.6.1**
@@ -15,6 +15,20 @@ Drop in the original, unmodified Roland firmware 5.52 file and press Patch; ther
 (an already-patched file or another version is refused). Firmware
 processing happens locally in your browser; nothing is uploaded. [Kit controls,
 reproduction and validation](synth/KITS.md).
+
+> **Keep your volume low when you try the hidden effect settings.** Some of
+> them can make the sound suddenly very loud, loud enough to hurt your ears or
+> your speakers. Turn the volume down first, especially on headphones. v9.48
+> removes the Compressor setting that did this in v9.47.
+> If you installed v9.47, patch again with v9.48.
+
+## New in v9.48
+
+- **Safety fix:** the Compressor's hidden MODE setting is gone: changing it
+  could make the sound suddenly, dangerously loud.
+  If you installed v9.47, patch again with v9.48.
+- **No more "NO EXTRA SETTINGS":** on an effect without hidden settings, VALUE
+  works as it normally does.
 
 ## New in v9.47
 
@@ -57,8 +71,9 @@ reproduction and validation](synth/KITS.md).
 - **Hidden effect settings:** press an FX button, then VALUE. The effect screen
   stays up, and each VALUE press shows the next page, including extra settings
   the SP normally keeps hidden (for example Tape Echo's tape distortion). Turn
-  CTRL 1-3 to change them. An effect that has none says NO EXTRA SETTINGS. These
-  settings reset when you turn the SP off, and some can get loud.
+  CTRL 1-3 to change them. **Turn your volume down before you try them:** some
+  can make the sound suddenly very loud. These settings reset when you turn the
+  SP off.
   [FX_DEEP_EDIT.md](synth/FX_DEEP_EDIT.md)
 - **Faster start-up:** once the project has loaded, the SP goes straight to the
   main screen and skips DOOM OS's start-up animation (about 4 seconds faster).
@@ -255,7 +270,7 @@ You can also download this repository as a ZIP file (under the Code button), unz
 ### Manual installation
 
 1. Download the 5.52 system update from [Roland's support page](https://www.roland.com/global/support/by_product/sp-404mk2/updates_drivers/) and unzip it.
-2. Open [our patcher](https://tracelistener.github.io/SP-ETC/), load the stock `SP404MKII_APP1.bin` and press Patch firmware. It builds Sound Generator + Kits v9.47. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
+2. Open [our patcher](https://tracelistener.github.io/SP-ETC/), load the stock `SP404MKII_APP1.bin` and press Patch firmware. It builds Sound Generator + Kits v9.48. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
 3. Download the patched `SP404MKII_APP1.bin` and use it with the unchanged official 5.52 `SP404MKII_APP0.bin` for your test update. Back up first and keep your known-good update for rollback.
 4. Insert the card, hold **SHIFT** while you turn the SP on, and press the **VALUE** knob when the update menu appears.
 5. When the update is done, turn the SP off and on again.
@@ -282,6 +297,14 @@ to DOOM OS 0.6.1: your projects and samples stay, but settings or patterns from
 the newer DOOM OS might not carry over.
 
 ## Status
+
+**v9.48** (2026-10-23) is combined-test8: v9.47 with FX deep edit test7. A user
+reported that the Compressor's hidden MODE setting made the sound dangerously
+loud, so it is left out of the hidden effect settings; an effect without
+hidden settings no longer shows NO EXTRA SETTINGS. Its APP1 SHA-256 is
+`fbcff606…e9f0`. Only the FX deep edit module differs from v9.47, and the
+change was checked in the emulator; every other module is v9.47's byte for
+byte. [COMBINED.md](synth/COMBINED.md), [FX_DEEP_EDIT.md](synth/FX_DEEP_EDIT.md).
 
 **v9.47** (2026-10-22) is combined-test7: every feature's latest test build in
 one APP1 (`build_combined.py`), plus fast boot (`build_fast_boot.py`) and no
@@ -320,7 +343,8 @@ and steps to reproduce. Preserve your backups and known-good firmware pair.
 ## Disclaimer
 
 Unofficial; not affiliated with Roland or Klangfeld Labs. Firmware modification
-is at your own risk. Synth additions are by tracelistener; the underlying
+is at your own risk. Keep your volume low when you try the hidden effect
+settings: some can make the sound suddenly very loud. Synth additions are by tracelistener; the underlying
 DOOM OS 0.6.1 ED5E base is by Quintus Oostendorp / Klangfeld Labs under the
 MIT License ([LICENSE](LICENSE)), retained unchanged. FX deep edit's parameter
 table comes from DM-404's `core/fx/fxmap.json` by Nicholas Petty and the dm-404

@@ -42,3 +42,7 @@ DOOM-SoundGenerator-Kits-v9.46  7b5fbcb4c3ce1e8782fef4b5803be74c7d14eddf25a1b536
 # on the Sound Generator) on the RESAMPLE start fix v3, plus fast boot. Replaces v9.46. Played on an
 # SP-404MKII as a whole, with no bugs found.
 DOOM-SoundGenerator-Kits-v9.47  be758f67da1d4a9aa1977a4935f533d727c23c712611763c90ae54282aba34b4  3152432
+# v9.48 (combined-test8), in the patcher: v9.47 with FX deep edit test7 (the Compressor's MODE left out of the
+# hidden effect settings after a user's report that it made the output dangerously loud; no NO EXTRA SETTINGS
+# popup). Every other module is v9.47's byte for byte. Replaces v9.47.
+DOOM-SoundGenerator-Kits-v9.48  fbcff60613e96a054bd6a480824cc3a9b2bc43c8e7a69d39d0d44f9a35b8e9f0  3152272

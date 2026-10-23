@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tracelistener · SP-404MKII synth patcher</title>
-<meta name="description" content="Tracelistener's SP-404MKII Sound Generator mod: Sound Generator + Kits v9.47, with four voices, 17 added waves, envelopes, 34 scales, an arpeggiator and 13 synthesized drum kits, plus MIDI, kit bounce and looper support, bounce in place, pad envelopes, note repeat, chromatic scales, saved kit edits and Sound Generator settings, FX deep edit and fast boot. Includes DOOM OS 0.6.1. Local browser patching; no firmware uploads.">
+<meta name="description" content="Tracelistener's SP-404MKII Sound Generator mod: Sound Generator + Kits v9.48, with four voices, 17 added waves, envelopes, 34 scales, an arpeggiator and 13 synthesized drum kits, plus MIDI, kit bounce and looper support, bounce in place, pad envelopes, note repeat, chromatic scales, saved kit edits and Sound Generator settings, FX deep edit and fast boot. Includes DOOM OS 0.6.1. Local browser patching; no firmware uploads.">
 <style>
 
 :root {
@@ -78,6 +78,8 @@ h1 { margin: 0; font-size: 44px; font-weight: 700; letter-spacing: -0.03em; line
 .build p { margin: 6px 0 0; font-size: 15.5px; line-height: 1.55; color: var(--text); }
 .build .nw { white-space: nowrap; }
 .versions-note { margin: 12px 0 0; font-size: 14.5px; line-height: 1.55; color: var(--quiet); }
+.volume-warning { margin: 16px 0 0; padding: 12px 14px; border: 2px solid var(--hot); background: var(--box); font-size: 16.5px; line-height: 1.55; color: var(--ink); }
+.volume-warning strong { color: var(--accent-text); }
 
 main { margin-top: 44px; }
 article.row { padding: 22px 0 36px; border-top: 1px solid var(--rule); }
@@ -176,10 +178,11 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
     <span class="n">01</span>
     <div class="body">
       <h1>SP-404MKII synth patcher</h1>
-      <p class="lede">Tracelistener's Sound Generator mod for stock SP-404MKII firmware 5.52. The patcher builds Sound Generator + Kits v9.47 on DOOM OS 0.6.1, so your firmware includes DOOM OS as well. Your firmware stays in your browser; nothing is uploaded.</p>
+      <p class="lede">Tracelistener's Sound Generator mod for stock SP-404MKII firmware 5.52. The patcher builds Sound Generator + Kits v9.48 on DOOM OS 0.6.1, so your firmware includes DOOM OS as well. Your firmware stays in your browser; nothing is uploaded.</p>
+      <p class="volume-warning"><strong>Keep your volume low when you try the hidden effect settings.</strong> Some of them can make the sound suddenly very loud, loud enough to hurt your ears or your speakers. Turn the volume down first, especially on headphones. v9.48 removes the Compressor setting that did this in v9.47. If you installed v9.47, patch again with v9.48.</p>
       <dl class="facts">
         <div><dt>Stock firmware</dt><dd>5.52</dd></div>
-        <div><dt>Sound Generator + Kits</dt><dd>v9.47</dd></div>
+        <div><dt>Sound Generator + Kits</dt><dd>v9.48</dd></div>
         <div><dt>DOOM OS</dt><dd>0.6.1</dd></div>
         <div><dt>Drum kits</dt><dd>13</dd></div>
       </dl>
@@ -189,7 +192,7 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
           <p>Four live voices, 17 added waves, nine envelope and filter presets, 34 scales and an arpeggiator.</p>
         </section>
         <section class="build">
-          <h2>Kits<span class="v">v9.47</span></h2>
+          <h2>Kits<span class="v">v9.48</span></h2>
           <p>13 synthesized drum kits on the same Sound Generator: <span class="nw">TR-808</span>, <span class="nw">DR-110</span>, <span class="nw">KPR-77</span>, <span class="nw">Lel' UDS</span>, <span class="nw">TR-909</span>, <span class="nw">TR-606</span>, <span class="nw">SDS-V</span>, <span class="nw">Mini Pops 7</span>, <span class="nw">CR-78</span>, <span class="nw">CR-8000</span>, <span class="nw">TR-707</span>, <span class="nw">TR-727</span> and a <span class="nw">DX-style</span> FM kit. Play them from a sequencer over MIDI, bounce a kit into a sample bank, resample them or loop them.</p>
         </section>
         <section class="build">
@@ -197,7 +200,7 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
           <p>Klangfeld Labs' pattern sequencer for the SP: step and piano-roll editing, track and pattern panels, a mixer and automation. Hold REMAIN and press SUB PAD to open it. Included unchanged (build ED5E); see the <a class="inline" href="manual/">DOOM OS quickstart</a>.</p>
         </section>
       </div>
-      <p class="versions-note">All three come in one build. Sound Generator + Kits has its own version number: v9.47 is built on Sound Generator v9.9.3, not an older release of it.</p>
+      <p class="versions-note">All three come in one build. Sound Generator + Kits has its own version number: v9.48 is built on Sound Generator v9.9.3, not an older release of it.</p>
     </div>
   </section>
   <main>
@@ -206,7 +209,14 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
       <div class="body">
         <p class="t">Works with stock firmware <strong data-doomos="firmware-list"></strong>. Drop in the stock <code>SP404MKII_APP1.bin</code> and press Patch firmware. It only takes the original, unmodified Roland file: an already-patched file or another firmware version is refused.</p>
         <div id="doomos-patcher"></div>
-        <p class="t">Our <a class="inline" href="https://github.com/tracelistener/SP-ETC/blob/main/synth/ARP.md">arpeggiator notes and test instructions</a> · <a class="inline" href="https://github.com/tracelistener/SP-ETC/blob/main/synth/KITS.md">kit controls and test status</a> · <a class="inline" href="https://github.com/tracelistener/SP-ETC/blob/main/synth/COMBINED.md">v9.47 build and test status</a> ·<a class="inline" href="https://github.com/tracelistener/SP-ETC/blob/main/synth/SCALES.md">v9.6 scales and fixes</a> · <a class="inline" href="https://github.com/tracelistener/SP-ETC/blob/main/synth/WAVES.md">wave list</a> · <a class="inline" href="https://github.com/tracelistener/SP-ETC">source code</a> · <a class="inline" href="https://tracelistener.github.io/sp404mk2-sound-generator/">Wave Lab preview</a> · <a class="inline" href="manual/">DOOM OS quickstart</a></p>
+        <p class="t">Our <a class="inline" href="https://github.com/tracelistener/SP-ETC/blob/main/synth/ARP.md">arpeggiator notes and test instructions</a> · <a class="inline" href="https://github.com/tracelistener/SP-ETC/blob/main/synth/KITS.md">kit controls and test status</a> · <a class="inline" href="https://github.com/tracelistener/SP-ETC/blob/main/synth/COMBINED.md">v9.48 build and test status</a> ·<a class="inline" href="https://github.com/tracelistener/SP-ETC/blob/main/synth/SCALES.md">v9.6 scales and fixes</a> · <a class="inline" href="https://github.com/tracelistener/SP-ETC/blob/main/synth/WAVES.md">wave list</a> · <a class="inline" href="https://github.com/tracelistener/SP-ETC">source code</a> · <a class="inline" href="https://tracelistener.github.io/sp404mk2-sound-generator/">Wave Lab preview</a> · <a class="inline" href="manual/">DOOM OS quickstart</a></p>
+        <details class="env-guide" open>
+          <summary>What's new in v9.48</summary>
+          <ul>
+            <li><strong>Safety fix:</strong> the Compressor&rsquo;s hidden MODE setting is gone: changing it could make the sound suddenly, dangerously loud. If you installed v9.47, patch again with v9.48.</li>
+            <li><strong>No more &ldquo;NO EXTRA SETTINGS&rdquo;:</strong> on an effect without hidden settings, VALUE works as it normally does.</li>
+          </ul>
+        </details>
         <details class="env-guide" open>
           <summary>What's new in v9.47</summary>
           <ul>
@@ -224,7 +234,7 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
             <li><strong>Chromatic scales:</strong> in chromatic mode, hold VALUE and turn it to choose one of 34 scales (a quick press steps to the next one). Hold SHIFT as well to change the key. The pads now reach an octave higher.</li>
             <li><strong>Saved with the project:</strong> the drum kits and their settings, the MIDI channel, the arpeggiator, the envelopes, the scale and the Sound Generator&rsquo;s sound settings now come back after you restart. Drum mode and melodic mode each keep their own arpeggiator settings.</li>
             <li><strong>SUB PAD on the Sound Generator:</strong> plays the last pad again, in melodic and drum mode.</li>
-            <li><strong>Hidden effect settings:</strong> press an FX button, then VALUE. The effect screen stays up, and each VALUE press shows the next page, including extra settings the SP normally keeps hidden (for example Tape Echo&rsquo;s tape distortion). Turn CTRL 1&ndash;3 to change them. An effect that has none says NO EXTRA SETTINGS. These settings reset when you turn the SP off, and some can get loud.</li>
+            <li><strong>Hidden effect settings:</strong> press an FX button, then VALUE. The effect screen stays up, and each VALUE press shows the next page, including extra settings the SP normally keeps hidden (for example Tape Echo&rsquo;s tape distortion). Turn CTRL 1&ndash;3 to change them. <strong>Turn your volume down before you try them:</strong> some can make the sound suddenly very loud. These settings reset when you turn the SP off.</li>
             <li><strong>Faster start-up:</strong> once the project has loaded, the SP goes straight to the main screen and skips DOOM OS&rsquo;s start-up animation (about 4 seconds faster).</li>
             <li><strong>Cleaner resampling:</strong> a resampled sample now starts just before its first sound, so its beginning isn&rsquo;t cut off.</li>
           </ul>
@@ -326,10 +336,10 @@ footer.site .note { flex-basis: 100%; font-size: 13px; }
   </main>
   <footer class="site">
     <p>Tracelistener's SP-404MKII Sound Generator mod.</p>
-    <p class="note">Unofficial; not affiliated with Roland or Klangfeld Labs. Base attribution: DOOM OS 0.6.1 ED5E by Quintus Oostendorp / Klangfeld Labs, MIT License retained in the repository. FX deep edit's parameter table comes from DM-404's fxmap.json by Nicholas Petty and the dm-404 contributors, MIT License (THIRD-PARTY-NOTICES.md). This page cannot flash your SP automatically.</p>
+    <p class="note">Unofficial; not affiliated with Roland or Klangfeld Labs. Use at your own risk, and keep your volume low when you try the hidden effect settings. Base attribution: DOOM OS 0.6.1 ED5E by Quintus Oostendorp / Klangfeld Labs, MIT License retained in the repository. FX deep edit's parameter table comes from DM-404's fxmap.json by Nicholas Petty and the dm-404 contributors, MIT License (THIRD-PARTY-NOTICES.md). This page cannot flash your SP automatically.</p>
   </footer>
 </div>
-<script src="kits-data.js?v=kits-v9-47-be758f67"></script>
-<script src="doomos-patcher.js?v=kits-v9-47-doom-os"></script>
+<script src="kits-data.js?v=kits-v9-48-fbcff606"></script>
+<script src="doomos-patcher.js?v=kits-v9-48-doom-os"></script>
 </body>
 </html>
