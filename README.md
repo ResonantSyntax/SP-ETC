@@ -66,8 +66,6 @@ reproduction and validation](synth/KITS.md).
 - **Cleaner resampling:** a resampled sample now starts just before its first
   sound, so its beginning isn't cut off.
 
-Known issue: a bounced sample can start a few samples late and cut the very
-start of the sound. If you hear that, move its START point back a little.
 
 How the build is put together, and its test status: [COMBINED.md](synth/COMBINED.md).
 
