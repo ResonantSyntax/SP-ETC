@@ -247,3 +247,20 @@ stock's VALUE with no popup. The rest as in combined-test7, then the fast boot a
 Crusher's VALUE shows no popup) and the kit suites kits, capture, chord, shortcut, midi, restart and hot resample
 pass (the kit module's hashes re-pointed for the footer byte). Not rerun: the other feature suites and the 18 kit
 bounce runs (their modules are combined-test7's byte for byte). The patcher test passes with v9.48 = combined-test8.
+
+## 10. combined-test9
+
+A user's report on v9.48 (combined-test8): on the Super Filter's extra screens CTRL 2 spiked the volume (FLT
+GAIN, 0-12, is CTRL 2 on the first). The user asked for the Super Filter's hidden settings to go. FX deep edit at
+`fx-deep-edit-test8`: all six are on the builder's `EXCLUDED` (135 settings remain). The rest as in combined-test8,
+then the fast boot and the kit footer.
+
+- **APP1:** `8f285b01…4750`, 3,152,144 bytes, in `analysis/kit_pr1_audit/release/combined-test9` (the combined build
+  `484b4d3a…9184`, after the fast boot `c45a4ca9…2a60`). Every module byte for byte its own test build's; the same 7
+  reviewed overlaps. Only the FX deep edit module differs from combined-test8.
+
+**Checked** (Unicorn, `analysis/kit_pr1_audit/dev_combined9/run_suites.py`): on the final APP1,
+`test_fx_deep_edit.py` 69 of 72 (the same 2 layout checks and ROLL's key; the Super Filter and the Compressor have
+no extra settings) and the kit suites kits, capture, chord, shortcut, midi, restart and hot resample pass. Not
+rerun: the other feature suites and the 18 kit bounce runs (their modules are combined-test7's byte for byte). The
+patcher test passes with v9.49 = combined-test9.

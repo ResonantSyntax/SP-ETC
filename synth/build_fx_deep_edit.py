@@ -51,10 +51,13 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'fx-deep-edit-test7'
+REVISION = 'fx-deep-edit-test8'
 SLOT = 0x4000                       # reserved: [base, base + SLOT)
-# Settings left out on purpose: (effect, fxmap name) -> why. test6: a user's report on v9.47.
-EXCLUDED = {(28, 'MODE'): 'COMPRESSOR MODE: set to 1 it made the output dangerously loud (a user\'s report on v9.47)'}
+# Settings left out on purpose: (effect, fxmap name) -> why. test6 and test8: users' reports on v9.47 and v9.48.
+SUPER_FILTER_OUT = ('FLT SLOPE', 'FLT GAIN', 'MOD SW', 'MOD WAVE', 'ATTACK', 'LEVEL')
+EXCLUDED = {(28, 'MODE'): 'COMPRESSOR MODE: set to 1 it made the output dangerously loud (a user\'s report on v9.47)',
+            **{(34, n): 'SUPER FILTER: CTRL 2 spiked the volume (FLT GAIN 0-12 is CTRL 2 on its first extra screen), '
+                        'so all six are out (a user\'s report on v9.48)' for n in SUPER_FILTER_OUT}}
 SLOT_CEILING = 0x83FE6000           # the FX probe's slot starts here
 EXPORTS = ('fde_filter', 'fde_dt1', 'fde_dt1_stock', 'fde_dt1_fxtype', 'fde_value', 'fde', 'fde_values',
            'fde_edited', 'fde_text', 'fde_effect_names', 'fde_first', 'fde_count', 'fde_ids', 'fde_names')
