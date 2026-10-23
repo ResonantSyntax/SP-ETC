@@ -310,8 +310,7 @@ one APP1 (`build_combined.py`), plus fast boot (`build_fast_boot.py`) and no
 SHA-256 is `be758f67…34b4`. Each module is byte for byte its own test build's,
 and the branch rebuilds the APP1 exactly. It was played on an SP-404MKII as a
 whole, with no bugs found, after each feature was tried on the unit in its own
-test builds. Known: a bounce's START can sit a few samples after the
-sound's first sample (move START back by hand). [COMBINED.md](synth/COMBINED.md).
+test builds. [COMBINED.md](synth/COMBINED.md).
 
 **Kits v9.46** (2026-10-13) is build v9.46-test3 plus the RESAMPLE start fix
 (APP1 SHA-256 `7b5fbcb4…684a`). Its test builds were played on hardware (drum
