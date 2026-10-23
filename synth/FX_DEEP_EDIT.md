@@ -10,6 +10,12 @@ firmware's own state is never changed and nothing is saved: values live in RAM, 
 until power-off. Outside the page the build behaves as v9.46, except that an edited value goes to
 the chip again whenever the firmware selects that effect on that bus.
 
+## Test 8 (fx-deep-edit-test8): the Super Filter's settings are left out
+
+A user's report on v9.48: on the Super Filter's extra screens CTRL 2 spiked the volume (FLT GAIN, 0-12, is
+CTRL 2 on the first). The user asked for the Super Filter's hidden settings to go, so all six are on
+`EXCLUDED`: the Super Filter has no extra settings, and 135 settings remain. Checked in the emulator.
+
 ## Test 7 (fx-deep-edit-test7): no NO EXTRA SETTINGS popup
 
 The user asked for test 4's note to go: an effect without extra settings keeps stock's VALUE, with no popup. The
@@ -254,7 +260,7 @@ menu; their rows only matter if they ever get onto a bus.
 | 31 404 VINYLSIM | DIST 0-255 (60), DISC TYPE 0-2 (0), BALANCE 0-255 (255) |
 | 32 303 VINYLSIM | BALANCE 0-255 (255) |
 | 33 ZAN-ZOU | M D LEVEL 0-255 (0), M D MODE 0-2 (2), M D SYNC 0-1 (0), M D TIME 0-255 (188), M D FBK 0-255 (153), M HF DAMP 0-17 (17), M D PAN1 0-255 (0), M D PAN2 0-255 (255), M D PAN3 0-255 (64), M D PAN4 0-255 (192), S D PAN1 0-255 (0), S D PAN2 0-255 (255), S D PAN3 0-255 (64), S D PAN4 0-255 (192) |
-| 34 SUPER FILTER | FLT SLOPE 0-2 (0), FLT GAIN 0-12 (0), MOD SW 0-1 (1), MOD WAVE 0-4 (2), ATTACK 0-255 (100), LEVEL 0-255 (255) |
+| 34 SUPER FILTER | none since test8 (FLT SLOPE 0-2 (0), FLT GAIN 0-12 (0), MOD SW 0-1 (1), MOD WAVE 0-4 (2), ATTACK 0-255 (100), LEVEL 0-255 (255) were left out: CTRL 2 spiked the volume) |
 | 35 HYPER-RESO | BALANCE 0-255 (255), LOW CUT F 0-17 (0) |
 | 36 KO-DA-MA | LEVEL 0-255 (255), TAP 0-255 (128), HIGH CUT 0-14 (14), HIGH DAMP 0-81 (81), LOW DAMP 0-81 (81) |
 | 37 HA-DOU | DENSITY 0-10 (10) |
