@@ -8,7 +8,9 @@ screen 2 (where the effect has CTRL 4-6), then the effect's extra screens, three
 Each change is one DT1 through the stock builder 0x800d8118, inside the firmware's own min/max for the ID.
 Values live in RAM per bus and effect, and go to the chip again whenever the firmware selects that effect on
 that bus (an FxType write). (Test 1's TOP page, EXIT + VALUE, is gone; test 3 drops test 2's FX button hold,
-which kept MFX's effect choice away: an FX button alone is stock again.)
+which kept MFX's effect choice away: an FX button alone is stock again.) Test11: HOLD + VALUE switches the hidden
+settings off (each slot's edits back to the firmware's defaults, VALUE and VALUE + EXT SOURCE stock's) and on again;
+the edits and the switch are kept over a restart in B:/_fx_hidden.bin.
 
 The settings of an effect are the parameters that are not in its six-ID knob record (0x802e5b40) and that
 DM-404's fxmap.json (MIT, bases from a boot capture) gives no boot value. IDs come from the firmware's name
@@ -51,7 +53,7 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'fx-deep-edit-test10'
+REVISION = 'fx-deep-edit-test11'
 SLOT = 0x4000                       # reserved: [base, base + SLOT)
 # Settings left out on purpose: (effect, fxmap name) -> why. test6 and test8: users' reports on v9.47 and v9.48.
 SUPER_FILTER_OUT = ('FLT SLOPE', 'FLT GAIN', 'MOD SW', 'MOD WAVE', 'ATTACK', 'LEVEL')
@@ -61,7 +63,8 @@ EXCLUDED = {(28, 'MODE'): 'COMPRESSOR MODE: set to 1 it made the output dangerou
 SLOT_CEILING = 0x83FE6000           # the FX probe's slot starts here
 EXPORTS = ('fde_filter', 'fde_dt1', 'fde_dt1_stock', 'fde_dt1_fxtype', 'fde_value', 'fde', 'fde_values',
            'fde_edited', 'fde_text', 'fde_effect_names', 'fde_first', 'fde_count', 'fde_ids', 'fde_names',
-           'fde_key_down', 'fde_key_up', 'fde_knob', 'fde_down_bridge', 'fde_up_bridge', 'fde_knob_bridge')
+           'fde_key_down', 'fde_key_up', 'fde_knob', 'fde_down_bridge', 'fde_up_bridge', 'fde_knob_bridge',
+           'fde_path', 'fde_file')
 # test10: the UI dispatcher's key press, key release and knob handlers (event types 5, 6, 9 from its table at
 # 0x8003b53a): (site, displaced bytes, where the handler goes on, bridge, its C function, what)
 HOOKS = [
@@ -160,6 +163,13 @@ GUARDS = [
      'the generic key handler\'s VALUE on the FX screen: mov r0, r1 (the screen); bl 0x801479a0'),
     (0x80183C48, 0x80183C9C, '3de29a45ebc4155e97be64b625fff9fd3ce52a7bb0eb0b4073e9b2629dce42e6',
      'TOP\'s knob handler (vtable +0xe4): CTRL k (event 9, k, position) to the bus effect path 0x800cc030'),
+    # test11: the edits kept in a file (the calls kits-save makes)
+    (0x800DEC48, 0x800DEC74, '4c47643ec8919640e6d5e25d52995230bcb2544ac00915fb0b4f3a6c79718504',
+     'test11: file read (fd, buf, n) and open (path, flags: 0 read, 0x601 write, create, truncate) on the file table'),
+    (0x800DEBD8, 0x800DEC48, '22abec76d1aba2f98baf9ba58a4383d2075417a6d981e86b791054dccef5d6bf',
+     'test11: file close (fd)'),
+    (0x800DD9B8, 0x800DD9F8, 'd204acf3596d8eab1eca7a6d4e1cf2aec6429890e0b05a88ed1357982cda0fb6',
+     'test11: file write (fd, buf, n): bytes written'),
 ]
 MD = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB | capstone.CS_MODE_MCLASS)
 
@@ -537,7 +547,19 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
                            'CTRL 1-3 edit them; any other button leaves; the EXT SOURCE press and release are taken '
                            '(the input is not switched); an input FX without extra settings shows nothing'),
         resend='after the firmware sends FxType 0x7e..0x82 (the input FX, BUS 1-4) = fx, the edited values of '
-               'that slot for fx go out again, in table order; nothing else adds a frame',
+               'that slot for fx go out again, in table order (test11: not while switched off); nothing else adds '
+               'a frame',
+        switch='test11: HOLD + VALUE (press; the VALUE press and release taken), on any page: HIDDEN FX OFF, each '
+               'slot\'s edited settings of the effect it has get the firmware\'s default (one DT1 each), the FX '
+               'screen\'s VALUE is stock\'s toggle (+0x1b40 ^= 1 with +0x1b3f set), VALUE + EXT SOURCE is stock\'s, '
+               'an FxType re-sends nothing; again: HIDDEN FX ON and the edits sent again. The edits are kept',
+        saved='test11: B:/_fx_hidden.bin (beside stock\'s B:/_emphasis.bin): "FXHS", version 1, the switch, the '
+              'record count (u16), FNV-1a 32 of the header\'s first 8 bytes and the records; a record per edited '
+              'setting: slot, value, parameter ID (u16). Read once, at TOP\'s first event after the boot (or the '
+              'first VALUE + EXT SOURCE or HOLD + VALUE): records for IDs this build lacks are dropped, values '
+              'kept inside the firmware\'s range, then (switched on) each slot\'s edits for its effect sent. '
+              'Written whole (open 0x601) on leaving an extra screen after an edit and on each HOLD + VALUE; a '
+              'missing, short or bad file changes nothing, a failed write leaves the edits pending',
         settings_total=sum(len(s) for s in settings), effects=effects,
         excluded=[dict(effect=fx, name=n, why=w) for (fx, n), w in EXCLUDED.items()],
         dt1='F0 41 10 00 00 00 00 08 12 a1 a2 a3 a4 hi lo sum F7 via the stock builder 0x800d8118 (link '

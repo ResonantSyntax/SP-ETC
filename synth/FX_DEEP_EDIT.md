@@ -6,9 +6,45 @@ the effects chip (BMC); 142 of the 383 effect parameters are never sent. The FX 
 tried. This page lets you set them.
 
 It is a stage on top of the published Sound Generator + Kits v9.46 (APP1 `7b5fbcb4…684a`). The
-firmware's own state is never changed and nothing is saved: values live in RAM, per bus and effect,
-until power-off. Outside the page the build behaves as v9.46, except that an edited value goes to
+firmware's own state is never changed. Values live in RAM, per bus and effect, and (test 11) in one file of the
+module's own. Outside the page the build behaves as v9.46, except that an edited value goes to
 the chip again whenever the firmware selects that effect on that bus.
+
+## Test 11 (fx-deep-edit-test11): a switch, and the edits kept over a restart
+
+From the user's test of v9.50: "Maybe an option to toggle the hidden effects too. could hold+value knob work", then
+"could the hidden paramter edits be saved upon restart?". Asked what off should do, the user chose that it undoes the
+edits too (an A/B).
+
+- **HOLD + VALUE** (press), on any page, caught in `fde_key_down` like the input FX's chord (VALUE's press and
+  release taken; HOLD itself goes on): **HIDDEN FX OFF**. On each slot the edited settings of the effect it has get
+  the firmware's default (one DT1 each, through the stock builder), so the effects sound as on stock; the FX screen's
+  VALUE is stock's toggle (`+0x1b40 ^= 1` with `+0x1b3f` set, what `0x801479a0` does), VALUE + EXT SOURCE is stock's,
+  and an FxType re-sends nothing. Again: **HIDDEN FX ON**, each slot's edits for its effect sent again. The edits are
+  kept either way. Stock has no HOLD + VALUE (the manual's VALUE chords are VALUE + GATE and SHIFT + VALUE). With note
+  repeat in the same image, a HOLD press while rolls go on also holds them, as it always does.
+- **Saved** in `B:/_fx_hidden.bin`, at the internal drive's root beside stock's own `B:/_emphasis.bin` and
+  `B:/_BackSamplingRec.bin` (stock keeps its system data, the FX parameters it retains included, in QSPI flash, so
+  there is no stock file to join): "FXHS", version 1, the switch, the record count (u16), FNV-1a 32 of the header's
+  first 8 bytes and the records; then a record per edited setting: slot, value, parameter ID (u16). A build whose
+  settings list differs drops IDs it doesn't have instead of putting a value on another setting; values are kept
+  inside the firmware's range. One file for the unit, like stock's retained FX parameters (manual p. 33), not one per
+  project.
+- **Read** once, at the first event TOP's filter sees after the boot (the main screen; the file system is up), or
+  at the first VALUE + EXT SOURCE or HOLD + VALUE if those come first; then, switched on, each slot's edits for the
+  effect it has go to the chip. A missing, short, long or bad file (magic, version, size, sum) changes nothing.
+- **Written** whole (open `0x601`, create and truncate; one write; close, as kits-save writes) on leaving an extra
+  screen after an edit, and on each HOLD + VALUE. Edits made on a screen still open at power-off are lost. A failed
+  open or short write is counted and the edits stay pending for the next leave. A factory reset leaves the file.
+- Guards: the file calls (`0x800dec48..0x800dec74` open and read, `0x800debd8..0x800dec48` close,
+  `0x800dd9b8..0x800dd9f8` write; the same bytes kits-save guards).
+
+Checked in the emulator: 95 checks pass (test 10's 81, and: HOLD + VALUE sends each slot's edited settings' defaults
+slot by slot, takes VALUE's press and release, HOLD as on the parent; off, an FxType sends the parent's frames only,
+VALUE + EXT SOURCE and the FX screen's VALUE are the parent's; on again, the edits sent again and re-sent after an
+FxType; no file: looked for once at the first event, an edit written on leaving with its one record; after a restart
+the first event reads it into RAM and sends it, an FxType re-sends it; off is kept over a restart and nothing is sent;
+bad files ignored; unknown IDs and slots dropped, values clamped; a failed write retried at the next leave).
 
 ## Test 10 (fx-deep-edit-test10): the chord where every key press arrives
 
