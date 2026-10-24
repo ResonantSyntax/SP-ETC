@@ -1,4 +1,4 @@
-"""Checks for FX deep edit test 8 (build_fx_deep_edit.py): on the FX screen REMAIN + FX opens, VALUE through its
+"""Checks for FX deep edit test 10 (build_fx_deep_edit.py): on the FX screen REMAIN + FX opens, VALUE through its
 screens and the effect's extra screens, the input FX's too; an effect without extra settings is stock's; an FX
 button alone as stock.
 
@@ -49,7 +49,7 @@ from unicorn import arm_const as ar
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_fx_deep_edit import GUARDS, Runtime, scatter, decompress, branches_into, DT1, DT1_HEAD, TOGGLE, \
-    TOGGLE_HEAD, EXCLUDED, SUPER_FILTER_OUT  # noqa: E402
+    TOGGLE_HEAD, EXCLUDED, SUPER_FILTER_OUT, HOOKS  # noqa: E402
 
 FLASH, COPY, DECOMPRESS, ZERO = 0x60080000, 0x600800E4, 0x60080088, 0x60080100
 HEAP = 0x32000000
@@ -293,7 +293,8 @@ class Machine:
 
     def state(self):
         b = bytes(self.uc.mem_read(self.sym['fde'], 16))
-        return dict(screen=b[0], bus=b[4], effect=b[5], sent=struct.unpack_from('<I', b, 8)[0],
+        return dict(screen=b[0], input=b[1], ext_held=b[2], value_down=b[3], bus=b[4], effect=b[5],
+                    sent=struct.unpack_from('<I', b, 8)[0],
                     resent=struct.unpack_from('<I', b, 12)[0])
 
 
@@ -339,9 +340,25 @@ def static_checks(out, man, img, parent, fxmap, st):
     vt, dt, tg = file_off(VTABLE_SLOT), file_off(DT1), file_off(TOGGLE)
     diff = [i for i in range(len(parent)) if img[i] != parent[i]]
     allowed = set(range(0x80, 0x88)) | set(range(vt, vt + 4)) | set(range(dt, dt + 10)) | set(range(tg, tg + 10))
+    for site, head, *_ in HOOKS:
+        allowed |= set(range(file_off(site), file_off(site) + len(head)))
     check(set(diff) <= allowed and img[:len(parent)] != parent,
-          f'only the scatter pointer, the TOP vtable slot, the DT1 builder\'s first ten bytes and the FX screen\'s VALUE '
-          f'toggle change inside the parent; its show method (REMAIN held?) is stock ({len(diff)} bytes)')
+          f'only the scatter pointer, the TOP vtable slot, the DT1 builder\'s first ten bytes, the FX screen\'s VALUE '
+          f'toggle and (test10) the UI dispatcher\'s key press, key release and knob handlers\' first bytes change '
+          f'inside the parent; the FX screen\'s show method (REMAIN held?) is stock ({len(diff)} bytes)')
+    e0 = man['entries']
+    good = []
+    for site, head, resume, bridge, fn, what in HOOKS:
+        lo, hi = e0[bridge] & 0xFFFF, e0[bridge] >> 16
+        jump = struct.pack('<5H', 0xF240 | (lo >> 12) | ((lo >> 11) & 1) << 10, ((lo >> 8) & 7) << 12 | 12 << 8 | lo & 0xFF,
+                           0xF2C0 | (hi >> 12) | ((hi >> 11) & 1) << 10, ((hi >> 8) & 7) << 12 | 12 << 8 | hi & 0xFF,
+                           0x4760) + bytes.fromhex('00bf') * ((len(head) - 10) // 2)
+        o = file_off(site)
+        good.append(parent[o:o + len(head)] == head and img[o:o + len(head)] == jump and
+                    not branches_into(Runtime(parent), site + 1, site + len(head)))
+    check(all(good), 'test10: the dispatcher\'s key press, key release and knob handlers start with their stock '
+                     'instructions on the parent and a jump to fde_down_bridge / fde_up_bridge / fde_knob_bridge here; '
+                     'nothing branches into them')
     e = man['entries']
     check(parent[vt:vt + 4] == struct.pack('<I', DOOM_FILTER | 1) and img[vt:vt + 4] == struct.pack('<I', e['fde_filter']),
           'TOP vtable +8: DOOM OS\'s filter on the parent, fde_filter here')
@@ -857,6 +874,101 @@ def passthrough_checks(img, parent, man):
                                                        f'{[q.hex() for q in other]} on MIDI out)')
 
 
+GT_AMP_SIM, KEY_EXT = 23, 0x12
+
+
+def input_text(st, fx, screen, values=None):
+    """An input FX extra screen opened with VALUE + EXT SOURCE (test9): numbered among the extra screens alone."""
+    x = st.by_fx[fx]
+    lines = [f'{st.effect_names[fx]} {screen}/{(len(x) + 2) // 3}']
+    for k, y in enumerate(x[(screen - 1) * 3:screen * 3]):
+        lines.append(f'C{k + 1} {y["name"]} {(values or {}).get(y["name"], y["default"])}')
+    return '\n'.join(lines)
+
+
+def input_machine(image, man, fx_in=GT_AMP_SIM):
+    """The knobs on BUS 1 (Tape Echo), as on the unit, and the input FX as its INPUT FX Setting screen sets it."""
+    m = Machine(image, man['entries'] if man else None)
+    m.set_bus(1, TAPE_ECHO)
+    m.bus_effect(0, fx_in)
+    m.clear()
+    return m
+
+
+def input_checks(img, parent, man, st):
+    e = man['entries']
+    gt = st.by_fx[GT_AMP_SIM]
+    n = (len(gt) + 2) // 3
+    chord = [(EV_KEY, KEY_VALUE), (EV_KEY, KEY_EXT), (EV_KEY_UP, KEY_EXT), (EV_KEY_UP, KEY_VALUE)]
+    m, p = input_machine(img, man), input_machine(parent, None)
+    a, b = run_script(p, chord), run_script(m, chord)
+    first = input_text(st, GT_AMP_SIM, 1)
+    st0 = m.state()
+    check(b[0] == a[0] and b[1][2] == ((first, SCREEN_MS),) and not b[1][3] and not b[1][4] and not b[1][1] and
+          b[2][1:5] == (b'', (), (), ()) and b[3] == a[3] and a[1][3] and st0['input'] == 1 and st0['bus'] == 0 and
+          st0['effect'] == GT_AMP_SIM and st0['screen'] == 1,
+          f'test9: VALUE held + EXT SOURCE opens the input FX\'s first extra screen ({first!r}); the EXT SOURCE press '
+          f'and release are taken (nothing to DOOM OS\'s filter or the chip; the parent passes the press on)')
+    seq = []
+    for k in range(n):
+        out = run_script(m, [(EV_KEY, KEY_VALUE), (EV_KEY_UP, KEY_VALUE)])
+        now = m.state()
+        seq.append((out[0][2], bool(out[0][3]), now['screen'], now['input']))
+    want = [(((input_text(st, GT_AMP_SIM, k + 2), SCREEN_MS),), False, k + 2, 1) for k in range(n - 1)]
+    last = seq[-1]
+    check(seq[:-1] == want and last[1:] == (False, 0, 0) and len(last[0]) == 1 and last[0][0][1] == GONE_MS,
+          f'VALUE steps the input FX\'s screens 2..{n} itself (the press taken) and closes after the last')
+    # The knobs edit slot 0: SP TYPE (screen 3, CTRL 2) to its top, then MIC SET (CTRL 3).
+    m = input_machine(img, man)
+    run_script(m, chord)
+    for _ in range(2):
+        run_script(m, [(EV_KEY, KEY_VALUE), (EV_KEY_UP, KEY_VALUE)])
+    m.clear()
+    m.dispatch(EV_KNOB, 2, 127)
+    sp = [x for x in gt if x['name'] == 'SP TYPE'][0]
+    got, other, ok = m.frames()
+    check(ok and got == [fx_frame(GT_AMP_SIM, 0, sp['aa'], sp['max'])] and not m.doom and
+          m.popups == [(input_text(st, GT_AMP_SIM, 3, {'SP TYPE': sp['max']}), SCREEN_MS)],
+          f'CTRL 2 on the third screen sets the input FX\'s SP TYPE to {sp["max"]} on slot 0 (one DT1; the knob '
+          f'taken) and the screen shows it')
+    gone = run_script(m, [(EV_KEY, KEY_EXIT), (EV_KEY_UP, KEY_EXIT)])
+    st1 = m.state()
+    after = run_script(m, [(EV_KEY, KEY_VALUE), (EV_KEY_UP, KEY_VALUE)])
+    check(st1['screen'] == 0 and st1['input'] == 0 and len(gone[0][2]) == 1 and gone[0][2][0][1] == GONE_MS and
+          gone[0][3] and after[0][3] and not after[0][2],
+          'another button (EXIT) leaves: the screen goes, and VALUE is stock\'s again')
+    # An input FX with no extra settings (Crusher), or none: nothing shows, the EXT SOURCE press is still taken.
+    res = []
+    for fx_in in (CRUSHER, 0):
+        mm = input_machine(img, man, fx_in)
+        out = run_script(mm, chord)
+        res.append((out[1][2], out[1][3], out[1][1], out[2][3], mm.state()['screen'], mm.state()['input']))
+    check(all(r == ((), (), b'', (), 0, 0) for r in res),
+          f'an input FX without extra settings, or none: nothing shown, the input not switched ({res})')
+    # test10: on a page the dispatcher hands nothing to (not TOP), the chord still opens and EXT SOURCE is still taken.
+    mm = input_machine(img, man)
+    mm.uc.mem_write(PAGE_LIVE, struct.pack('<H', 7))
+    out = run_script(mm, chord)
+    check(out[1][2] == ((first, SCREEN_MS),) and not out[1][1] and not out[1][3] and out[2][1:5] == (b'', (), (), ()) and
+          mm.state()['input'] == 1,
+          'test10: with no page taking events (another page than TOP), VALUE + EXT SOURCE still opens the input FX\'s '
+          'first screen and the input is not switched')
+    # test10: VALUE's hold as the dispatcher's handlers saw it is enough (its bit in 0x80592448 cleared by hand).
+    mm = input_machine(img, man)
+    run_script(mm, [(EV_KEY, KEY_VALUE)])
+    keys = bytearray(mm.uc.mem_read(KEYS, 16))
+    keys[KEY_VALUE >> 3] &= ~(1 << (KEY_VALUE & 7)) & 0xFF
+    mm.uc.mem_write(KEYS, bytes(keys))
+    out = run_script(mm, [(EV_KEY, KEY_EXT), (EV_KEY_UP, KEY_EXT), (EV_KEY_UP, KEY_VALUE)])
+    check(out[0][2] == ((first, SCREEN_MS),) and not out[0][1] and mm.state()['value_down'] == 0,
+          'test10: VALUE held per the dispatcher\'s own press and release is enough for the chord, and its release '
+          'ends it')
+    # EXT SOURCE alone (no VALUE): as the parent.
+    x, y = run_script(input_machine(parent, None), [(EV_KEY, KEY_EXT), (EV_KEY_UP, KEY_EXT)]), \
+        run_script(input_machine(img, man), [(EV_KEY, KEY_EXT), (EV_KEY_UP, KEY_EXT)])
+    check(x == y and x[0][3], 'EXT SOURCE alone: as on the parent (it reaches DOOM OS\'s filter and the stock handling)')
+
+
 def main():
     out = Path(sys.argv[1])
     man = json.loads((out / 'manifest.json').read_text(encoding='utf-8'))
@@ -875,6 +987,7 @@ def main():
     resend_checks(img, parent, man, st)
     stop_checks(img, parent, man)
     passthrough_checks(img, parent, man)
+    input_checks(img, parent, man, st)
     print(json.dumps(dict(cases=cases[0])))
     print('ALL PASS' if not fails else f'{len(fails)} FAILED')
     sys.exit(1 if fails else 0)

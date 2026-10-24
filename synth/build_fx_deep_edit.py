@@ -51,7 +51,7 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'fx-deep-edit-test8'
+REVISION = 'fx-deep-edit-test10'
 SLOT = 0x4000                       # reserved: [base, base + SLOT)
 # Settings left out on purpose: (effect, fxmap name) -> why. test6 and test8: users' reports on v9.47 and v9.48.
 SUPER_FILTER_OUT = ('FLT SLOPE', 'FLT GAIN', 'MOD SW', 'MOD WAVE', 'ATTACK', 'LEVEL')
@@ -60,7 +60,18 @@ EXCLUDED = {(28, 'MODE'): 'COMPRESSOR MODE: set to 1 it made the output dangerou
                         'so all six are out (a user\'s report on v9.48)' for n in SUPER_FILTER_OUT}}
 SLOT_CEILING = 0x83FE6000           # the FX probe's slot starts here
 EXPORTS = ('fde_filter', 'fde_dt1', 'fde_dt1_stock', 'fde_dt1_fxtype', 'fde_value', 'fde', 'fde_values',
-           'fde_edited', 'fde_text', 'fde_effect_names', 'fde_first', 'fde_count', 'fde_ids', 'fde_names')
+           'fde_edited', 'fde_text', 'fde_effect_names', 'fde_first', 'fde_count', 'fde_ids', 'fde_names',
+           'fde_key_down', 'fde_key_up', 'fde_knob', 'fde_down_bridge', 'fde_up_bridge', 'fde_knob_bridge')
+# test10: the UI dispatcher's key press, key release and knob handlers (event types 5, 6, 9 from its table at
+# 0x8003b53a): (site, displaced bytes, where the handler goes on, bridge, its C function, what)
+HOOKS = [
+    (0x8003ABD0, bytes.fromhex('f0b581b0b0f902404df21430'), 0x8003ABDC, 'fde_down_bridge', 'fde_key_down',
+     'key press (type 5): push {r4-r7, lr}; sub sp, #4; ldrsh.w r4, [r0, #2]; movw r0, #0xd314'),
+    (0x8003ADA0, bytes.fromhex('b0b5b0f902404df21430'), 0x8003ADAA, 'fde_up_bridge', 'fde_key_up',
+     'key release (type 6): push {r4, r5, r7, lr}; ldrsh.w r4, [r0, #2]; movw r0, #0xd314'),
+    (0x8003A8D8, bytes.fromhex('70b50646b0f90240b0f90450'), 0x8003A8E4, 'fde_knob_bridge', 'fde_knob',
+     'knob (type 9): push {r4, r5, r6, lr}; mov r6, r0; ldrsh.w r4, [r0, #2]; ldrsh.w r5, [r0, #4]'),
+]
 VTABLE_SLOT, DOOM_FILTER = 0x8022CE64, 0x6031C8F9     # TOP page vtable 0x8022ce5c, +8
 DT1, DT1_BODY = 0x800D8118, 0x800D8122                # the builder; where its body goes on after 10 bytes
 DT1_HEAD = bytes.fromhex('2de9f04f83b04ef2c819')      # push.w {r4-r11, lr}; sub sp, #12; movw sb, #0xe1c8
@@ -94,6 +105,15 @@ GUARDS = [
      'VALUE encoder: posts event 7 with encoder 0 and the turn as a signed count'),
     (0x8003B480, 0x8003B4D4, '7bab556d7f43470f51c1a0cfb5d3e4f6de8afadc6d211c228e4a9c93ffcd7247',
      'event 7 post: (type, encoder, turn) into the UI queue'),
+    (0x8003ABD0, 0x8003ACC8, '00fb494c0d4d5c54e5d683b35d0f96d11e00e3670b8202782ab6b5388788241e',
+     'test10: the key press handler: the prefilter 0x8006b258 may take it, else its bit in 0x80592448, the modal '
+     'and key-pair checks, then the page; its first twelve bytes are the four instructions fde_down_bridge runs'),
+    (0x8003ADA0, 0x8003AE58, '8abdd0cc9044dc14b29cd27028aa47d980fb4e704d89487230ff2c5ac10504be',
+     'test10: the key release handler: the prefilter 0x8006b088, then its bit cleared, then the page; its first ten '
+     'bytes are the three instructions fde_up_bridge runs'),
+    (0x8003A8D8, 0x8003A968, 'be745040a3217f3f83def04dbdf33f892fe40a793e5d00e5d89df42fe2ca65de',
+     'test10: the knob handler: the knob table 0x80246948, the prefilter, then the page; its first twelve bytes are '
+     'the four instructions fde_knob_bridge runs'),
     (0x8005EDA8, 0x8005EE4A, 'c20fec979fc3f36e617c845a861d61a6201739654a997ff567b796b9c1dc2a3a',
      'TOP\'s registry handler: the page object [0x80cfd350] with vtable 0x8022ce5c; every event after the '
      'first goes to vtable +8 (page, event) and its result is the page\'s'),
@@ -329,7 +349,7 @@ def compile_module(folder: Path, zig: Path, link_base: int, limit: int, tables_h
     (folder / 'fx_deep_edit.ld').write_text(f'''ENTRY(fde_filter)
 SECTIONS {{
  . = {link_base:#x};
- .text : {{ KEEP(*(.text.fde_filter)) KEEP(*(.text.fde_dt1)) KEEP(*(.text.fde_value)) *(.text*) }}
+ .text : {{ KEEP(*(.text.fde_filter)) KEEP(*(.text.fde_dt1)) KEEP(*(.text.fde_value)) KEEP(*(.text.fde_down_bridge)) KEEP(*(.text.fde_up_bridge)) KEEP(*(.text.fde_knob_bridge)) *(.text*) }}
  .rodata : ALIGN(16) {{ *(.rodata*) }}
  .data : ALIGN(16) {{ *(.data*) }}
  .bss : ALIGN(16) {{ *(.bss*) *(COMMON) }}
@@ -382,6 +402,12 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
         [h for h in refs_into(bytes(img), TOGGLE + 1, TOGGLE + len(TOGGLE_HEAD))]
     if inside:
         raise ValueError(f'something reaches into the VALUE toggle\'s first ten bytes: {inside[:4]}')
+    for site, head, resume, bridge, fn, what in HOOKS:
+        if rt.read(site, len(head)) != head:
+            raise ValueError(f'{site:#x}: expected {what}')
+        inside = branches_into(rt, site + 1, site + len(head)) + refs_into(bytes(img), site + 1, site + len(head))
+        if inside:
+            raise ValueError(f'something reaches into {site:#x}+{len(head)}: {inside[:4]}')
     for load, dst, n, fn in rows:
         if max(dst, base) < min(dst + n, base + SLOT):
             raise ValueError(f'row {dst:#x}+{n:#x} overlaps the slot {base:#x}..{base + SLOT:#x}')
@@ -396,7 +422,8 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
     module, symbols, source_sha, tables_sha = compile_module(folder, zig, base, base + SLOT, tables_h)
     if len(module) > SLOT:
         raise ValueError(f'module ({len(module)} bytes) exceeds the slot')
-    for name in ('fde_filter', 'fde_dt1', 'fde_dt1_stock', 'fde_dt1_fxtype', 'fde_value'):
+    for name in ('fde_filter', 'fde_dt1', 'fde_dt1_stock', 'fde_dt1_fxtype', 'fde_value', 'fde_key_down',
+                 'fde_key_up', 'fde_knob', 'fde_down_bridge', 'fde_up_bridge', 'fde_knob_bridge'):
         if not symbols[name] & 1:
             raise ValueError(f'{name} is not a Thumb function symbol')
     stock = module[(symbols['fde_dt1_stock'] & ~1) - base:][:len(DT1_HEAD) + 10]
@@ -408,6 +435,15 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
     if entry != ['sub.w ip, r1, #0x7e', 'cmp.w ip, #4', f'bhi.w #{symbols["fde_dt1_stock"] & ~1:#x}',
                  f'b.w #{symbols["fde_dt1_fxtype"] & ~1:#x}']:
         raise ValueError(f'fde_dt1 is not the four-instruction switch: {entry}')
+
+    for site, head, resume, bridge, fn, what in HOOKS:
+        at = symbols[bridge] & ~1
+        want = ['push {r0, lr}', f'bl #{symbols[fn] & ~1:#x}', 'mov ip, r0', 'pop.w {r0, lr}', 'cmp.w ip, #0', 'it ne',
+                'bxne lr'] + listing(head, site) + \
+            [f'movw ip, #{(resume | 1) & 0xFFFF:#x}', f'movt ip, #{(resume | 1) >> 16:#x}', 'bx ip']
+        got = listing(module[at - base:at - base + 4 * len(want)], at)[:len(want)]
+        if got != want:
+            raise ValueError(f'{bridge}: expected {want}, got {got}')
 
     patches = []
     off = file_offset(img, VTABLE_SLOT, 4)
@@ -429,6 +465,15 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
     patches.append(dict(address=TOGGLE, size=len(TOGGLE_HEAD), original_hex=TOGGLE_HEAD.hex(),
                         replacement_hex=toggle.hex(), what='the FX screen\'s VALUE toggle: movw / ldrb / cmp / it -> '
                         'movw ip / movt ip / bx ip to fde_value', listing=listing(toggle, TOGGLE)))
+    hooks = []
+    for site, head, resume, bridge, fn, what in HOOKS:
+        off = file_offset(img, site, len(head))
+        jump = movw_movt_bx(12, symbols[bridge]) + bytes.fromhex('00bf') * ((len(head) - 10) // 2)
+        img[off:off + len(head)] = jump
+        hooks.append((site, jump))
+        patches.append(dict(address=site, size=len(head), original_hex=head.hex(), replacement_hex=jump.hex(),
+                            what=f'test10, UI dispatcher {what} -> movw ip / movt ip / bx ip to {bridge}',
+                            listing=listing(jump, site)))
     file_at = (len(img) + 15) & ~15
     img += bytes(file_at - len(img)) + module
     table = (len(img) + 15) & ~15
@@ -437,8 +482,8 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
         img += struct.pack('<4I', *row)
     struct.pack_into('<2I', img, 0x80, table - 0x80, len(img) - 0x80)
     after = Runtime(img)
-    if after.read(base, len(module)) != module or after.read(DT1, len(jump)) != jump or \
-            after.read(TOGGLE, len(toggle)) != toggle:
+    if after.read(base, len(module)) != module or after.read(DT1, 10) != movw_movt_bx(12, symbols['fde_dt1']) or \
+            after.read(TOGGLE, len(toggle)) != toggle or any(after.read(s, len(j)) != j for s, j in hooks):
         raise ValueError('the new image does not reproduce the module and the patches')
 
     out.mkdir(parents=True, exist_ok=True)
@@ -483,7 +528,14 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
                            'min/max (min + ((max - min) x position + 63) / 127); a change is one DT1 (ID, slot = bus)',
                      leave='on an extra screen any button but VALUE and SHIFT leaves it (the popup goes) and goes on '
                            'as usual; pads go on as usual',
-                     popup='"TAPE ECHO 3/5\nC1 SYNC 0\nC2 BASS 15\nC3 TREBLE 15" for 600 s, gone at once on leaving'),
+                     popup='"TAPE ECHO 3/5\nC1 SYNC 0\nC2 BASS 15\nC3 TREBLE 15" for 600 s, gone at once on leaving',
+                     input='test9/test10: the input FX is edited on its own screen (RECORD SETTING, then VALUE: '
+                           'INPUT FX Setting), never the FX screen, so the knob bus is never 0 there on the unit. On '
+                           'any page (test10: caught in the UI dispatcher\'s key and knob handlers, VALUE\'s hold '
+                           'tracked there) VALUE held and EXT SOURCE pressed opens the input FX\'s extra screens (slot 0), '
+                           'numbered among themselves ("GT AMP SIM 1/4"); VALUE steps them and closes after the last; '
+                           'CTRL 1-3 edit them; any other button leaves; the EXT SOURCE press and release are taken '
+                           '(the input is not switched); an input FX without extra settings shows nothing'),
         resend='after the firmware sends FxType 0x7e..0x82 (the input FX, BUS 1-4) = fx, the edited values of '
                'that slot for fx go out again, in table order; nothing else adds a frame',
         settings_total=sum(len(s) for s in settings), effects=effects,

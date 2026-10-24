@@ -10,6 +10,46 @@ firmware's own state is never changed and nothing is saved: values live in RAM, 
 until power-off. Outside the page the build behaves as v9.46, except that an edited value goes to
 the chip again whenever the firmware selects that effect on that bus.
 
+## Test 10 (fx-deep-edit-test10): the chord where every key press arrives
+
+On the unit test 9's VALUE + EXT SOURCE only switched the input off: the EXT SOURCE press never reached TOP's page
+filter as a chord (another page than TOP, or a mode the dispatcher hands keys to before any page; the emulator,
+which runs TOP with no such mode, opened the screens). Now the UI dispatcher's own handlers for a key press (type 5,
+`0x8003abd0`), a key release (type 6, `0x8003ada0`) and a knob (type 9, `0x8003a8d8`) jump to bridges in the module
+(`fde_down_bridge`, `fde_up_bridge`, `fde_knob_bridge`): each hands the event to `fde_key_down` / `fde_key_up` /
+`fde_knob` first and, unless it is taken, runs the displaced instructions and goes on. That is before the key-mode
+prefilter (`0x8006b258`), the key bitmap and any page, so the chord works on any page. VALUE's hold is tracked there
+too (`fde.value_down`), besides its bit in `0x80592448`. The input FX's screens are worked there (VALUE steps, CTRL 1-3,
+any other key leaves); TOP's filter keeps the BUS screens.
+
+- A taken press never sets its bit in the bitmap, and its release (also taken) never clears it, so the bitmap stays
+  right; VALUE's own press and release always go on.
+- Guards: the three handlers' code (`0x8003abd0..0x8003acc8`, `0x8003ada0..0x8003ae58`, `0x8003a8d8..0x8003a968`);
+  nothing branches into the displaced bytes; the builder checks each bridge instruction by instruction.
+
+Checked in the emulator: 81 checks pass (test 9's, every key, VALUE and knob alone as on the parent, and: the chord
+with no page taking events, and with VALUE's bitmap bit cleared by hand).
+
+## Test 9 (fx-deep-edit-test9): VALUE + EXT SOURCE for the input FX
+
+The reference manual (v5.50, p. 36-37) settles how the unit edits the input FX: on its own screen, RECORD SETTING
+in sampling standby then VALUE (INPUT FX Setting: VALUE moves a cursor, CTRL 1-3 edit), and its type also under
+EFX SET > OTHER > Input FX. Never on the FX screen the FX buttons open, so the knob bus (settings 0x3a) is never 0
+where the extra screens live: test 4's input FX screens were reached in the emulator only by setting it there. The
+user asked for a way in.
+
+- **On the main screen, hold VALUE and press EXT SOURCE:** the input FX's extra screens (slot 0, the effect in
+  system 0x27c[0]), numbered among themselves (`GT AMP SIM 1/4`, the Gt Amp Sim's 12 settings on four screens).
+  VALUE steps them and closes after the last; CTRL 1-3 edit them (DT1 on slot 0); any other button leaves and goes
+  on as usual. VALUE + EXT SOURCE is no stock combo (the manual's shortcut lists, p. 160-163).
+- The EXT SOURCE press and its release are taken (TOP's filter returns 1), so the external input is not switched.
+  An input FX without extra settings (or none) shows nothing.
+- `fde.input` keeps `follow()` on slot 0 while those screens are up; leaving clears it.
+
+Checked in the emulator: 78 checks pass (test 8's, and: the chord's first screen with the EXT SOURCE events kept
+from DOOM OS's filter and the chip, VALUE stepping to 4/4 and closing, CTRL 2 on screen 3 sending SP TYPE 15 on
+slot 0, EXIT leaving, Crusher or no input FX showing nothing, EXT SOURCE alone as on the parent).
+
 ## Test 8 (fx-deep-edit-test8): the Super Filter's settings are left out
 
 A user's report on v9.48: on the Super Filter's extra screens CTRL 2 spiked the volume (FLT GAIN, 0-12, is
