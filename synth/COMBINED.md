@@ -321,3 +321,24 @@ in combined-test11, then the fast boot and the kit footer.
 and the kit suites kits, capture, chord, shortcut, midi, restart and hot resample pass. note-repeat-test5 on its own
 parent passes all 107. Not rerun: the other feature suites and the 18 kit bounce runs (their modules are
 combined-test11's byte for byte).
+
+**On the unit:** the popup still came. Page 0x16 is a recording screen, not START/END (see combined-test13).
+
+## 14. combined-test13
+
+From the user's test of combined-test12. Note repeat at `note-repeat-test6`: a key only asks for a page and the
+page change writes it later; START/END asks for page 5, PITCH/SPEED (where ROLL opens Groove) for page 4. The module
+steps aside on those two (ROLL the screen's, a latch kept, ROLL with stock's light: blinking on START/END), page
+0x16 is its own again, and EXIT + pad (stock: the pad's sound stops) also stops that pad's roll, held rolls too.
+Its builder guards six more stock ranges (pages 4 and 5's table entries and registry words, PITCH/SPEED's switch and
+ROLL case, START/END's key release handler), which no other step patches. The rest as in combined-test11, then the
+fast boot and the kit footer.
+
+- **APP1:** `1ef31cb7...7fca`, 3,152,880 bytes, in `analysis/kit_pr1_audit/release/combined-test13`. Every module
+  byte for byte its own test build's; the same 7 reviewed overlaps. Only the note repeat module differs from
+  combined-test11.
+
+**Checked** (Unicorn, `analysis/kit_pr1_audit/dev_combined13/run_suites.py`): on the final APP1,
+`test_note_repeat.py` 109 of 113 (the 4 layout checks every combined image fails; the 7 checks for ROLL's screens and
+the 3 for EXIT + pad pass) and the kit suites kits, capture, chord, shortcut, midi, restart and hot resample pass.
+note-repeat-test6 on its own parent passes all 113.
