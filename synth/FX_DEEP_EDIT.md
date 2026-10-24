@@ -10,6 +10,26 @@ firmware's own state is never changed and nothing is saved: values live in RAM, 
 until power-off. Outside the page the build behaves as v9.46, except that an edited value goes to
 the chip again whenever the firmware selects that effect on that bus.
 
+## Test 9 (fx-deep-edit-test9): VALUE + EXT SOURCE for the input FX
+
+The reference manual (v5.50, p. 36-37) settles how the unit edits the input FX: on its own screen, RECORD SETTING
+in sampling standby then VALUE (INPUT FX Setting: VALUE moves a cursor, CTRL 1-3 edit), and its type also under
+EFX SET > OTHER > Input FX. Never on the FX screen the FX buttons open, so the knob bus (settings 0x3a) is never 0
+where the extra screens live: test 4's input FX screens were reached in the emulator only by setting it there. The
+user asked for a way in.
+
+- **On the main screen, hold VALUE and press EXT SOURCE:** the input FX's extra screens (slot 0, the effect in
+  system 0x27c[0]), numbered among themselves (`GT AMP SIM 1/4`, the Gt Amp Sim's 12 settings on four screens).
+  VALUE steps them and closes after the last; CTRL 1-3 edit them (DT1 on slot 0); any other button leaves and goes
+  on as usual. VALUE + EXT SOURCE is no stock combo (the manual's shortcut lists, p. 160-163).
+- The EXT SOURCE press and its release are taken (TOP's filter returns 1), so the external input is not switched.
+  An input FX without extra settings (or none) shows nothing.
+- `fde.input` keeps `follow()` on slot 0 while those screens are up; leaving clears it.
+
+Checked in the emulator: 78 checks pass (test 8's, and: the chord's first screen with the EXT SOURCE events kept
+from DOOM OS's filter and the chip, VALUE stepping to 4/4 and closing, CTRL 2 on screen 3 sending SP TYPE 15 on
+slot 0, EXIT leaving, Crusher or no input FX showing nothing, EXT SOURCE alone as on the parent).
+
 ## Test 8 (fx-deep-edit-test8): the Super Filter's settings are left out
 
 A user's report on v9.48: on the Super Filter's extra screens CTRL 2 spiked the volume (FLT GAIN, 0-12, is
