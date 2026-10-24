@@ -5,8 +5,9 @@ slice of the pad's voice; here ROLL re-hits the pad through the stock pad note a
 ROLL + pad repeats until ROLL is released, a ROLL tap latches (pads then repeat while held, ROLL lit), VALUE
 steps the division at once (six triplets too, test2: PADCONF reserved byte 0x70 bits 1-3), ROLL + VALUE press
 makes the current pad follow or ignore ROLL (byte 0x70, bit 0), HOLD while rolling holds the rolls (test2).
-LOOP pads without GATE keep the stock ring roll. DJ mode stays stock, and so does ROLL on the START/END screen
-(test5: held, it previews the sample's end; a latch is kept for afterwards).
+LOOP pads without GATE keep the stock ring roll. DJ mode stays stock, and so does ROLL on its own screens (test6:
+START/END, where held it previews the sample's end, and PITCH/SPEED, where it opens Groove; a latch is kept for
+afterwards). EXIT + pad (test6) stops that pad's roll.
 
 Five changes in 5.52 space, each a 10-byte movw ip / movt ip / bx ip at an entry (a nop after it where the
 displaced instructions take 12 bytes); the module runs the displaced instructions and goes on:
@@ -40,7 +41,7 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'note-repeat-test5'
+REVISION = 'note-repeat-test6'
 SLOT = 0x2000                       # reserved: [base, base + SLOT)
 GAP = (0x83FC9000, 0x83FF0000)      # above the fork's rows (end 0x83FC8450), below the end of cacheable SDRAM
 # Every other fork module's reserved RAM (branch, start, end).
@@ -128,7 +129,8 @@ GUARDS = [
      'without SHIFT, a pad goes by stock\'s HOLD (0x801340c8, from 0x800c829e)'),
     (0x800C9788, 0x800CC030, '7eec6950ceb91b89e1170d37f3a869d997c0e55f1c41a69941cf8421e7c4d0fe',
      'generic key handler: ROLL let go without SHIFT or EXIT calls 0x80135d40; VALUE with ROLL held halves or '
-     'doubles the stock rolls; SHIFT + ROLL steps the current pad\'s Roll'),
+     'doubles the stock rolls; SHIFT + ROLL steps the current pad\'s Roll; START/END asks for page 5 and '
+     'PITCH/SPEED for page 4 (0x800da598, the page 0x80245880 gets)'),
     (0x80135D40, 0x80135E30, '67598817d5e9fe6fa56a63f6603d91dcfd51ac3b75944367ee244a472b3fe6f9',
      'ROLL let go: rolls the current pad if it sounds without rolling, turns the note-on\'s rolls off'),
     (0x800D9F2C, 0x800D9F48, '5e68a59ef7e026fd95f0c640c00ad0953b106bf14ec40f7c56406886326c55ab',
@@ -184,10 +186,18 @@ GUARDS = [
      'the UI tick hands the light and draw requests (0x802496f0) to 0x800d5370'),
     (0x800D5370, 0x800D5430, '650eb5b983a8c4fd7d1a7c88f3a3fe6de2366c05c51fbb902ac9abc35ce03709',
      'the light updater (DOOM OS ED5E jumps in first): request bit 2 repaints the pads, 0x10 the keys'),
-    (0x801F90D4, 0x801F90E4, 'a70f16514ce2e23df9b39ac1f7dc846976c9d5dabfe50f021669b0ff09fe5299',
-     'page table, page 0x16: handler table 0x8023b5f8, START/END (key 0x17) lit: the START/END screen'),
-    (0x8023B5F8, 0x8023B5FC, 'f1a545e2b8d6f84bbea5b2185825221e946b61036945b54258fc14053c3310ef',
-     'page 0x16\'s registry handler 0x80060328: the START/END view (ROLL let go ends its preview, 0x80088240)'),
+    (0x801F8FB4, 0x801F8FD4, '83230156825b856ee6d2f837848185b5314b42ebf8003bb8a4709c96f9a9f3ea',
+     'page table, pages 4 and 5: handler tables 0x8023b648 (PITCH/SPEED) and 0x8023b664 (START/END)'),
+    (0x8023B648, 0x8023B64C, '5b26d3b0b9812c7eda1c02f360277e411e0546763af3af8bed5bbae22d1e042a',
+     'page 4\'s registry handler 0x80060a48: the PITCH/SPEED view (vtable 0x8021f0b4)'),
+    (0x8023B664, 0x8023B668, '138083e9e99a70e0707b8bdcd04fa4fd5142ff6e6ee298ab5064c72c076b335b',
+     'page 5\'s registry handler 0x80061f48: the START/END view (vtable 0x80220a4c)'),
+    (0x800F8380, 0x800F83C4, '6791725a35a4f88a89309e0d9d0ef4692c86afe25caf3d4534447802aae130d4',
+     'PITCH/SPEED view, key press (0x800f8358): its switch, ROLL to 0x800f8634'),
+    (0x800F8634, 0x800F8648, '6dce69384f687f7192bc5d7a3c7b5fd39dd3a24480b6664220fb09947c3ff825',
+     'PITCH/SPEED, ROLL: Groove shown or not (0x80591b5c), the page drawn again'),
+    (0x80107960, 0x801079C0, '7b041bf29bafe501f9abc1079128617447974e52d82ce07e8737e89559c40c1c',
+     'START/END view, key let go: ROLL (0x801079b0) ends its preview; ROLL never goes on to the generic key handler'),
 ]
 MD = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB | capstone.CS_MODE_MCLASS)
 
@@ -427,7 +437,8 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
                     'follows or ignores '
                     'ROLL (saved with the pad); HOLD while rolling: held rolls, until the pad is hit again, HOLD '
                     'again or EXIT + ROLL; LOOP pads without GATE keep the stock roll; DJ mode stays stock; '
-                    'ROLL on the START/END screen (test5) is stock\'s preview, a latch kept for afterwards; '
+                    'ROLL on its own screens (test6: START/END\'s preview, PITCH/SPEED\'s Groove) is stock\'s, a '
+                    'latch kept for afterwards; EXIT + pad (test6) stops that pad\'s roll; '
                     'chromatic pads (test4) roll at their own chromatic division, 1/16 until VALUE moves it, at '
                     'the sample\'s tempo, whatever else the pad under the finger holds',
         parent_app1=str(inp), parent_sha256=sha(inp.read_bytes()),
@@ -467,11 +478,14 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
                       'toggles no follow flag; at the tempo of the pad whose sample chromatic mode plays (project '
                       '0xC1), always by re-hits; the pad\'s Roll, LOOP, GATE and follow flag are not read or '
                       'written; latched with VALUE held, a VALUE turn goes on to the page',
-            start_end='(test5) on the START/END screen (page 0x16) the module steps aside: ROLL held previews the '
-                      'sample\'s end and its release goes to stock\'s release handling, pads play once, VALUE and '
-                      'HOLD are the page\'s; rolls stop, a latch is kept (ROLL shows stock\'s light meanwhile, stock '
-                      'asked to repaint the keys) and comes back after; a ROLL press from before the screen opened '
-                      'stays the module\'s until let go',
+            roll_screens='(test6) on ROLL\'s own screens, START/END (page 5: ROLL held previews the sample\'s '
+                         'end) and PITCH/SPEED (page 4: ROLL opens and closes Groove), the module steps aside: ROLL '
+                         'is the screen\'s, pads play once, VALUE and HOLD are the page\'s; rolls stop, a latch is '
+                         'kept (ROLL shows stock\'s light meanwhile, stock asked to repaint the keys) and comes '
+                         'back after; a ROLL press from before the screen opened stays the module\'s until let go. '
+                         'Test5 took page 0x16 (a recording screen) for START/END',
+            exit_pad='(test6) EXIT + pad (stock: the pad\'s sound stops): the rolls that pad started, or of the pad '
+                     'it plays in this bank, stop at once, held rolls too; the others go on',
             stock='SHIFT + ROLL (the Roll popup), EXIT + ROLL (all rolls off), DJ Mixer Mode (all of ROLL and HOLD), '
                   'HOLD with nothing rolling, SHIFT + HOLD, patterns\' recorded rolls, LOOP pads without GATE (the '
                   'stock ring roll, started by the module)'),
