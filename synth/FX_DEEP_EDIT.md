@@ -10,6 +10,26 @@ firmware's own state is never changed and nothing is saved: values live in RAM, 
 until power-off. Outside the page the build behaves as v9.46, except that an edited value goes to
 the chip again whenever the firmware selects that effect on that bus.
 
+## Test 10 (fx-deep-edit-test10): the chord where every key press arrives
+
+On the unit test 9's VALUE + EXT SOURCE only switched the input off: the EXT SOURCE press never reached TOP's page
+filter as a chord (another page than TOP, or a mode the dispatcher hands keys to before any page; the emulator,
+which runs TOP with no such mode, opened the screens). Now the UI dispatcher's own handlers for a key press (type 5,
+`0x8003abd0`), a key release (type 6, `0x8003ada0`) and a knob (type 9, `0x8003a8d8`) jump to bridges in the module
+(`fde_down_bridge`, `fde_up_bridge`, `fde_knob_bridge`): each hands the event to `fde_key_down` / `fde_key_up` /
+`fde_knob` first and, unless it is taken, runs the displaced instructions and goes on. That is before the key-mode
+prefilter (`0x8006b258`), the key bitmap and any page, so the chord works on any page. VALUE's hold is tracked there
+too (`fde.value_down`), besides its bit in `0x80592448`. The input FX's screens are worked there (VALUE steps, CTRL 1-3,
+any other key leaves); TOP's filter keeps the BUS screens.
+
+- A taken press never sets its bit in the bitmap, and its release (also taken) never clears it, so the bitmap stays
+  right; VALUE's own press and release always go on.
+- Guards: the three handlers' code (`0x8003abd0..0x8003acc8`, `0x8003ada0..0x8003ae58`, `0x8003a8d8..0x8003a968`);
+  nothing branches into the displaced bytes; the builder checks each bridge instruction by instruction.
+
+Checked in the emulator: 81 checks pass (test 9's, every key, VALUE and knob alone as on the parent, and: the chord
+with no page taking events, and with VALUE's bitmap bit cleared by hand).
+
 ## Test 9 (fx-deep-edit-test9): VALUE + EXT SOURCE for the input FX
 
 The reference manual (v5.50, p. 36-37) settles how the unit edits the input FX: on its own screen, RECORD SETTING
