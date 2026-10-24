@@ -16,7 +16,8 @@ What the build does, in short:
 | ROLL + VALUE press | VALUE's usual press (no ROLL function) | the current pad follows ROLL or ignores it (saved with the pad) |
 | HOLD while rolling (test2) | holds the pads that are down | the rolls go on after you let go; hit the pad again, HOLD again or EXIT + ROLL to stop |
 | SHIFT + ROLL, EXIT + ROLL | the Roll popup / all rolls off | unchanged |
-| ROLL on the START/END screen (test5) | held, previews the sample's end | unchanged: note repeat steps aside there, a latch waits until you leave |
+| ROLL on START/END, PITCH/SPEED (test6) | held, previews the sample's end / opens Groove | unchanged: note repeat steps aside there, a latch waits until you leave |
+| EXIT + pad (test6) | stops the pad's sound (GATE off) | the same, and that pad's roll stops |
 
 ## 1. How stock ROLL works (5.52; all of it unchanged in v9.46)
 
@@ -166,7 +167,7 @@ notes, and it is what an MPC does. LOOP pads without GATE keep the stock ring ro
   last change.
 - **The stock roll from pad hits** is off while the module runs: the key-held query answers "ROLL not held"
   to the note-on's three roll starts (and only those); ROLL's stock release handling (`0x80135d40`) doesn't
-  run (the module does ROLL's release). Both are stock again in DJ mode, and (test5) on the START/END screen.
+  run (the module does ROLL's release). Both are stock again in DJ mode, and (test6) on START/END and PITCH/SPEED.
 - **Held pads** come from the pad events at the UI dispatcher (pads 1-16 and SUB PAD, whatever the page); the
   pad a press plays comes from the stock pad note's two page calls (`0x800c904a` a pad, `0x800c8d3c` SUB PAD).
   A press whose page doesn't play the pad (a mode, a menu) starts nothing.
@@ -178,7 +179,7 @@ notes, and it is what an MPC does. LOOP pads without GATE keep the stock ring ro
 | `0x8003b530` | UI dispatcher: `ldrsh.w r1, [r0]; subs r1, #5; cmp r1, #0x20; bhi` | jump to `nr_event`: pads, ROLL, VALUE; then the four instructions, on at the `tbb` `0x8003b53a` |
 | `0x800cdbd0` | stock pad note: `push.w; sub sp, #0x18; mov r4, r1; mov r5, r0` | jump to `nr_pad` (which pad a page plays), then the four, on at `0x800cdbda`; the module's repeats enter after the observer |
 | `0x8003c5f0` | UI tick: `push; sub sp, #4; mov r4, r0; movw r0, #0xeebc` | jump to `nr_tick`, then the four, on at `0x8003c5fa` |
-| `0x80135d40` | ROLL let go: `push; movw r4; mov r5, r0; movt r4` (12 bytes) | jump (+ nop) to `nr_release`: stock only in DJ mode and (test5) on START/END |
+| `0x80135d40` | ROLL let go: `push; movw r4; mov r5, r0; movt r4` (12 bytes) | jump (+ nop) to `nr_release`: stock only in DJ mode and (test6) on START/END and PITCH/SPEED |
 | `0x800d9f20` | the kits' jump to their key-query gate `0x83fa5ae5` | jump to `nr_key_gate`, which answers 0 for ROLL from `0x800aee23`, `0x800aef97`, `0x800af06f` while the module runs and goes on to the kits' gate otherwise |
 
 The module (`note_repeat.c`, Zig 0.13.0 `-Os`, 3.7 KB with its state) goes in a new boot copy row in an 8 KB
@@ -441,9 +442,13 @@ preview the end of the sample." The manual (v5.50, START/END): while ROLL is pre
 seconds before the end point. Every ROLL tap there toggled the latch (popup `Roll Latch On`) and pads rolled with
 ROLL held.
 
+**Wrong page:** on the unit the popup still came (combined-test12). Page 0x16 is not the START/END screen but a
+recording screen (the REC SETTING key's path asks for it); section 11 has the real pages. The rest of this section
+is what test5 did.
+
 ### 10.1 What stock does there (run in Unicorn)
 
-The START/END screen is page **0x16** (page table `0x801f8f74` entry: handler table `0x8023b5f8`, whose registry
+The START/END screen was taken to be page **0x16** (page table `0x801f8f74` entry: handler table `0x8023b5f8`, whose registry
 handler `0x80060328` makes the START/END view; the START/END key lit). The dispatcher hands ROLL to the view's key
 handlers (down `0x80088578`, up `0x80088240`, which has a ROLL case: the preview ends) and then to the generic key
 handler, whose release goes to `0x80135d40` as on TOP. A pad pressed with ROLL held plays once on the parent: no
@@ -471,6 +476,58 @@ latched on TOP, then START/END: the module writes no light and asks for the key 
 once; back on TOP ROLL is lit and a held pad repeats; ROLL held on TOP with a pad rolling when START/END opens:
 the roll goes on until ROLL is let go, "not held" for the note-on, no stock release handling, no latch, and the
 next ROLL tap there is stock's.
+
+## 11. Test 6: ROLL's own screens, and EXIT + pad (note-repeat-test6)
+
+From the user's test of combined-test12: "roll latch toggle popup still occurs"; and, with ROLL held, a pad let go
+keeps rolling ("that's ok but maybe exit plus the pad could stop that pad from rolling? i forget how stock
+worked"); and "some pads flash lights in time with roll speed but not others".
+
+### 11.1 The pages (run in Unicorn)
+
+A key doesn't switch pages itself: it asks for one (`0x800da598(page)` writes the request to `0x8024587c` and flags
+`0x80592438`), and the periodic UI event's page change (`0x800d0040`) carries it out, writing the page to
+`0x80245880` and `0x8024587a`. Run with its busy check skipped, it puts **5** there after START/END and **4** after
+PITCH/SPEED. Both requests are in the generic key handler (`0x800ca368`, `0x800caadc`, then `0x800cba20`), which the
+builder already guards. The page table's flag byte that test5 read as a key light isn't one.
+
+- **Page 5, START/END** (registry `0x80061f48`, view vtable `0x80220a4c`): its key press (`0x80107e18`) and release
+  (`0x80107960`) handlers have ROLL cases (the preview; the release case `0x801079b0`) and never hand ROLL on to the
+  generic key handler, so stock's ROLL release handling doesn't run there.
+- **Page 4, PITCH/SPEED** (registry `0x80060a48`, view vtable `0x8021f0b4`): ROLL (`0x800f8634`) flips the Groove
+  screen (`0x80591b5c`, the manual's "Press the [PITCH/SPEED] button. Press the [ROLL] button.") and draws the page
+  again. Every ROLL tap there toggled the latch as well.
+- A scan of every page (each made by its registry handler, then ROLL pressed and let go) shows most pages keep ROLL
+  from the generic key handler without using it (the chromatic page among them), so "keeps ROLL" is no rule; the
+  manual names only these two screens.
+- Stock's light updater paints ROLL **blinking** on START/END (light mode 6), where the module's latch light was.
+
+### 11.2 What it does
+
+- The module steps aside on pages 5 and 4 the way test5 did on 0x16 (now the module's again): ROLL is the screen's,
+  rolls stop, a latch is kept and ROLL shows stock's light (blinking on START/END) until you leave; a ROLL press from
+  before the screen opened stays the module's until it is let go.
+- **EXIT + pad** (stock: "Stop the playback of samples whose GATE is off: Hold down the [EXIT] button and press pads
+  [1]-[16]"): the rolls that pad started, or of the pad it plays in the current bank, stop at once, held rolls (HOLD)
+  too; other pads go on. Stock's EXIT + pad posts no pad note (run on the parent), so nothing starts again. Stock's
+  roll does the same as the module with ROLL held: a pad let go keeps rolling until ROLL is let go.
+- **Pad lights:** the stock pad light follows the pad's voice. A repeat of a sample shorter than the division ends
+  before the next one, so its pad goes dark between hits and flashes in time; a longer sample is still sounding at
+  the next hit, so its pad stays lit; a LOOP pad without GATE keeps the stock ring roll and stays lit. The module
+  doesn't change pad lights (except held rolls' blink).
+- The builder guards pages 4 and 5's page table entries and registry words, PITCH/SPEED's switch and ROLL case, and
+  START/END's key release handler with its ROLL case.
+
+### 11.3 Checked in the emulator
+
+Section `startend` (7 checks), on pages 5 and 4: the DJ-mode script exactly as on the parent with all six ROLL
+presses and releases reaching the screen's own key handlers, no popup; the note-on's roll starts hear "held";
+latched on TOP then START/END: no light from the module, the key repaint asked for, stock's repaint gives ROLL the
+parent's own START/END light, a ROLL press reaches the screen and toggles nothing, a held pad plays once, back on TOP
+ROLL lit and a held pad repeats; a ROLL press from TOP still down when START/END opens stays the module's; page 0x16
+latches again. Section `exitpad` (3 checks): ROLL held with pads 3 and 5 rolling, EXIT + pad 3 stops pad 3 at once
+and pad 5 goes on; a held roll stops on EXIT + its pad, still latched; with nothing rolling EXIT + pad is exactly
+the parent's. All 113 checks pass.
 
 ## Build
 

@@ -3,7 +3,7 @@
 usage: python synth/test_note_repeat.py OUT_DIR [SECTIONS]      (unicorn, keystone, capstone on PYTHONPATH)
 
 SECTIONS: a comma list of static, names, timing, value, triplet, roll, ring, subpad, hold, gate, release, dj,
-startend, recorder, passthrough, chroma.
+startend, exitpad, recorder, passthrough, chroma.
 
 Reads OUT_DIR/manifest.json for the parent APP1. Static checks first: only the header's scatter pointer, the five
 entry jumps and the appended tail differ from the parent; the guards and the recognised call sites hold on the
@@ -53,13 +53,15 @@ Checks:
   runs; every other key query is the kits' answer, as on the parent; ROLL's stock release handling
   (0x80135d40) does not run while the module runs, and does on the parent and in DJ mode;
 - DJ Mixer Mode: ROLL, VALUE, HOLD and pads exactly as on the parent;
-- the START/END screen (test5, page 0x16, its view made by its registry handler): ROLL + pad, VALUE, HOLD, a ROLL
-  tap and ROLL + VALUE press exactly as on the parent, ROLL's release going to stock's release handling; the
-  note-on's roll starts hear "held" as on the parent; latched on TOP, the latch is kept there (no light written,
-  stock asked to repaint the keys), a ROLL tap there toggles nothing and a held pad plays once; back on TOP, ROLL
-  is lit again and a held pad repeats; a ROLL press from TOP still down when the screen opens stays the module's
-  until it is let go (its roll goes on, "not held" for the note-on, no stock release handling), the next one is
-  stock's;
+- ROLL's own screens (test6: START/END, page 5, and PITCH/SPEED, page 4, their views made by their registry
+  handlers): ROLL + pad, VALUE, HOLD, a ROLL tap and ROLL + VALUE press exactly as on the parent, every ROLL press
+  and release reaching the screen's own key handlers; the note-on's roll starts hear "held" as on the parent;
+  latched on TOP, the latch is kept on START/END (no light written, stock asked to repaint the keys), a ROLL tap
+  there toggles nothing and a held pad plays once; back on TOP, ROLL is lit again and a held pad repeats; a ROLL
+  press from TOP still down when the screen opens stays the module's until it is let go (its roll goes on, "not
+  held" for the note-on), the next one is the screen's; page 0x16 (test5's mistake) is the module's again;
+- EXIT + pad (test6): with ROLL held and two pads rolling, it stops that pad's roll at once and the other goes on;
+  it stops a held roll; with nothing rolling it is exactly as on the parent;
 - the pattern recorder: each repeat reaches it (0x80030700) as a note-off and a note-on of that pad, the way a
   real tap of the pad does;
 - every other key and pad path as on the parent: each key alone, with SHIFT, with EXIT and while ROLL is held,
@@ -110,7 +112,8 @@ KEY_ROLL, KEY_EXIT, KEY_SHIFT, KEY_VALUE, KEY_HOLD = 0x21, 0x22, 0x2A, 0x31, 0x1
 P_GATE, P_LOOP, P_ROLL = 0x6A, 0x6B, 0x7B
 P_CHROMATIC, P_SOURCE, PROJECT_SET = 0xBF, 0xC1, 0x800DED18
 CHROMA_PAGE, CHROMA_REGISTRY = 0x18, 0x80062A10       # the chromatic page and its registry handler
-START_END_PAGE, PAGE_TABLE = 0x16, 0x801F8F74          # the START/END screen; pages' handler tables (16 bytes each)
+START_END_PAGE, PITCH_PAGE, PAGE_TABLE = 5, 4, 0x801F8F74   # ROLL's own screens; pages' handler tables (16 bytes)
+ROLL_PAGES = {5: (0x80107E18, 0x80107960), 4: (0x800F8358, 0x800F7B80)}  # their views' key down / key up handlers
 LIGHTS = 0x800D5370                                   # stock's light updater: the requests at 0x802496f0
 BEATS = {1: Fraction(2), 2: Fraction(1), 3: Fraction(1, 2), 4: Fraction(1, 4), 5: Fraction(1, 8), 6: Fraction(1, 16),
          7: Fraction(3, 2), 8: Fraction(3, 4), 9: Fraction(3, 8), 10: Fraction(3, 16),
@@ -1298,14 +1301,18 @@ def dj_checks(img, parent, man):
 
 
 class StartEndMachine(Machine):
-    """On the START/END screen (page 0x16), its view made by its registry handler as on page entry; to_page(1) goes
-    back to TOP, whose page object stays."""
+    """On one of ROLL's own screens (START/END, page 5, or PITCH/SPEED, page 4), its view made by its registry handler
+    as on page entry; to_page(1) goes back to TOP, whose page object stays. The view's own key handlers are logged
+    ('own key')."""
 
-    def __init__(self, img, sym=None, tempo=12000):
+    def __init__(self, img, sym=None, tempo=12000, page=START_END_PAGE):
         super().__init__(img, sym, tempo=tempo)
+        self.roll_page = page
         self.uc.mem_write(EVENT, struct.pack('<6h', 1, 0, 0, 0, 0, 0))
-        self.call(self.r32(self.r32(PAGE_TABLE + 16 * START_END_PAGE)) & ~1, EVENT, count=20_000_000)
-        self.to_page(START_END_PAGE)
+        self.call(self.r32(self.r32(PAGE_TABLE + 16 * page)) & ~1, EVENT, count=20_000_000)
+        for a in ROLL_PAGES[page]:
+            self.uc.hook_add(UC_HOOK_CODE, self._seen, 'own key', begin=a, end=a)
+        self.to_page(page)
         self.clear()
 
     def to_page(self, page):
@@ -1315,29 +1322,40 @@ class StartEndMachine(Machine):
     def release_bodies(self):
         return len([s for s in self.seen if s[1] == 'release body'])
 
+    def own_rolls(self):
+        """ROLL presses and releases the screen's own key handlers got."""
+        return len([s for s in self.seen if s[1] == 'own key' and s[2] == KEY_ROLL])
+
     def roll_starts(self):
         """What the note-on's three roll starts hear from the key-held query."""
         return [s32(self.call(KEY_QUERY, 0x21, until=lr & ~1, lr=lr)) for lr in list(CALLERS)[:3]]
 
 
 def start_end_checks(img, parent, man):
-    """The START/END screen (test5): ROLL is stock's there (held, it previews the sample's end)."""
-    out, bodies, heard = [], [], []
-    for image in (parent, img):
-        m = StartEndMachine(image, man['entries'] if image is img else None)
-        m.set(P_ROLL, 4, 3)
-        run_steps(m, STOCK_SCRIPT + [('r', 5)])
-        out.append(trace(m))
-        bodies.append(m.release_bodies())
-        m.press(KEY_ROLL)
-        heard.append(m.roll_starts())
-        m.let_go(KEY_ROLL)
-    check(out[0] == out[1] and bodies[0] == bodies[1] == 3 and not out[1]['popups'],
-          f'START/END: ROLL + pad, VALUE, HOLD, a ROLL tap, ROLL + VALUE press exactly as on the parent (the pad '
-          f'plays once, no popup; each of the three ROLL releases goes to stock\'s release handling: {bodies})')
-    check(heard[0] == heard[1] == [1, 1, 1],
-          f'START/END, ROLL held: the note-on\'s three roll starts hear "held", as on the parent ({heard})')
+    """ROLL's own screens (test6): START/END (held, ROLL previews the sample's end) and PITCH/SPEED (ROLL opens and
+    closes Groove). The module steps aside there."""
+    for page, name in ((START_END_PAGE, 'START/END'), (PITCH_PAGE, 'PITCH/SPEED')):
+        out, own, heard = [], [], []
+        for image in (parent, img):
+            m = StartEndMachine(image, man['entries'] if image is img else None, page=page)
+            m.set(P_ROLL, 4, 3)
+            run_steps(m, STOCK_SCRIPT + [('r', 5)])
+            out.append(trace(m))
+            own.append(m.own_rolls())
+            m.press(KEY_ROLL)
+            heard.append(m.roll_starts())
+            m.let_go(KEY_ROLL)
+        check(out[0] == out[1] and own[0] == own[1] == 6 and not out[1]['popups'],
+              f'{name} (page {page}): ROLL + pad, VALUE, HOLD, a ROLL tap, ROLL + VALUE press exactly as on the parent '
+              f'(the pad plays once, no popup; the screen\'s own key handlers get all six ROLL presses and releases: '
+              f'{own})')
+        check(heard[0] == heard[1] == [1, 1, 1],
+              f'{name}, ROLL held: the note-on\'s three roll starts hear "held", as on the parent ({heard})')
     # latched on TOP: kept on START/END, stock's light meanwhile, a tap there toggles nothing; lit again back on TOP
+    x = StartEndMachine(parent)
+    x.uc.mem_write(REPAINT, struct.pack('<H', 0x10))
+    x.call(LIGHTS, REPAINT, count=20_000_000)
+    want = x.leds()[-1:]                                 # ROLL's light on START/END as stock paints it
     m = StartEndMachine(img, man['entries'])
     m.set(P_ROLL, 4, 3)
     m.to_page(1)
@@ -1360,7 +1378,7 @@ def start_end_checks(img, parent, man):
     m.run(400)
     m.pad_up(3)
     m.run(5)
-    on_se = (m.state()['latched'], m.popups, m.ons(3, since=t), m.release_bodies(), m.leds())
+    on_se = (m.state()['latched'], m.popups, m.ons(3, since=t), m.own_rolls(), m.leds())
     m.to_page(1)
     m.run(2)
     back = m.leds()
@@ -1370,13 +1388,14 @@ def start_end_checks(img, parent, man):
     m.pad_up(3)
     m.run(5)
     rep = [x - t1 for x, _, _ in m.ons(3, since=t1)]
-    check(lit == [LED_LIT] and asked == 0x10 and not written and stock == [LED_DIM] and
-          on_se[:4] == (1, [], [(t, 3, 100)], 1) and not on_se[4] and back == [LED_LIT] and
+    check(lit == [LED_LIT] and asked == 0x10 and not written and want and stock[-1:] == want and
+          want[0] != LED_LIT and on_se[:4] == (1, [], [(t, 3, 100)], 2) and not on_se[4] and back == [LED_LIT] and
           rep == [0, 125, 250, 375] and m.state()['latched'] == 1,
           f'latched on TOP, then START/END: stock asked to repaint the keys, ROLL not written by the module ({asked:#x}, '
-          f'{[x.hex() for x in written]}), stock\'s repaint dims it ({[x.hex() for x in stock]}); a ROLL press there '
-          f'previews (stock\'s release handling, no popup) and toggles nothing, a held pad plays once ({on_se}); back '
-          f'on TOP ROLL is lit again ({[x.hex() for x in back]}) and a held pad repeats ({rep})')
+          f'{[q.hex() for q in written]}), stock\'s repaint gives it START/END\'s own light, as on the parent '
+          f'({[q.hex() for q in stock]}, {[q.hex() for q in want]}); a ROLL press there goes to the screen (its '
+          f'preview) and toggles nothing, no popup, a held pad plays once ({on_se}); back on TOP ROLL is lit again '
+          f'({[q.hex() for q in back]}) and a held pad repeats ({rep})')
     # ROLL down on TOP, rolling; START/END opens: that press is still the module's until let go
     m = StartEndMachine(img, man['entries'])
     m.set(P_ROLL, 4, 3)
@@ -1392,14 +1411,81 @@ def start_end_checks(img, parent, man):
     m.let_go(KEY_ROLL)
     m.run(300)
     got = [x - t for x, _, _ in m.ons(3, since=t)]
-    first = (got, heard, m.release_bodies(), m.rolls, m.state(), [p for p in m.popups if 'Latch' in p[1]])
+    first = (got, heard, m.rolls, m.state(), [p for p in m.popups if 'Latch' in p[1]])
+    m.clear()
     m.tap(KEY_ROLL)
     m.run(5)
-    check(first == ([0, 125, 250, 375], [0, 0, 0], 0, [], dict(held=0, latched=0, tap=0, led=0, active=0), []) and
-          m.release_bodies() == 1 and not m.popups and m.state()['latched'] == 0,
+    check(first == ([0, 125, 250, 375], [0, 0, 0], [], dict(held=0, latched=0, tap=0, led=0, active=0), []) and
+          m.own_rolls() == 2 and not m.popups and m.state()['latched'] == 0,
           f'ROLL held on TOP with a pad rolling, then START/END: the roll goes on until ROLL is let go, the note-on '
-          f'hears "not held", the release is the module\'s (no stock release handling, no stock roll, no latch) '
-          f'({first}); the next ROLL tap there is stock\'s ({m.release_bodies()}, {m.popups})')
+          f'hears "not held", the release is the module\'s (no stock roll, no latch) ({first}); the next ROLL tap '
+          f'there is the screen\'s ({m.own_rolls()}, {m.popups})')
+    # test5's page 0x16 (a recording screen whose view hands ROLL on to the generic key handler): the module runs there
+    m = Machine(img, man['entries'])
+    m.uc.mem_write(EVENT, struct.pack('<6h', 1, 0, 0, 0, 0, 0))
+    m.call(m.r32(m.r32(PAGE_TABLE + 16 * 0x16)) & ~1, EVENT, count=20_000_000)
+    m.uc.mem_write(PAGE_ID, struct.pack('<H', 0x16))
+    m.uc.mem_write(PAGE_LIVE, struct.pack('<H', 0x16))
+    m.clear()
+    m.tap(KEY_ROLL)
+    m.run(2)
+    check(m.state()['latched'] == 1 and m.popups[-1][1] == 'Roll Latch On',
+          f'page 0x16 (test5 took it for START/END) is the module\'s again: a ROLL tap latches ({m.popups})')
+
+
+def exit_pad_checks(img, parent, man):
+    """EXIT + pad (test6): that pad's rolls stop; stock's EXIT + pad (its sound stops) runs as on the parent."""
+    m = Machine(img, man['entries'], tempo=12000)
+    m.set(P_ROLL, 4, 3)
+    m.set(P_ROLL, 4, 5)
+    m.press(KEY_ROLL)
+    t0 = m.ms
+    m.pad(3)
+    m.pad(5)
+    m.run(200)
+    m.pad_up(3)
+    m.pad_up(5)
+    m.run(100)
+    m.press(KEY_EXIT)
+    t1 = m.ms
+    m.pad(3)
+    m.pad_up(3)
+    m.let_go(KEY_EXIT)
+    m.run(300)
+    m.let_go(KEY_ROLL)
+    m.run(200)
+    ons3 = [t - t0 for t, _, _ in m.ons(3)]
+    ons5 = [t - t0 for t, _, _ in m.ons(5)]
+    check(ons3 == [0, 125, 250] and ons5 == [0, 125, 250, 375, 500] and m.state()['active'] == 0 and not m.popups,
+          f'ROLL held, pads 3 and 5 rolling: EXIT + pad 3 (at {t1 - t0} ms) stops pad 3 at once, pad 5 goes on until '
+          f'ROLL is let go ({ons3}, {ons5})')
+    # a held roll (HOLD), latched: EXIT + its pad stops it too
+    m = Machine(img, man['entries'], tempo=12000)
+    m.set(P_ROLL, 4, 3)
+    m.tap(KEY_ROLL)
+    m.pad(3)
+    m.run(150)
+    m.tap(KEY_HOLD)
+    m.pad_up(3)
+    m.run(200)
+    before = m.repeats()
+    m.press(KEY_EXIT)
+    t1 = m.ms
+    m.pad(3)
+    m.pad_up(3)
+    m.let_go(KEY_EXIT)
+    m.run(300)
+    check(before == [(3, 1)] and not m.repeats() and not m.ons(3, since=t1 + 1) and m.state()['latched'] == 1,
+          f'latched, a held roll (HOLD): EXIT + its pad stops it; still latched ({before}, {m.repeats()})')
+    # nothing rolling: EXIT + pad exactly as on the parent
+    script = [('k', KEY_EXIT), ('p', 3), ('r', 5), ('u', 3), ('K', KEY_EXIT), ('r', 5)]
+    out = []
+    for image in (parent, img):
+        x = Machine(image, man['entries'] if image is img else None, tempo=12000)
+        run_steps(x, script)
+        out.append(trace(x))
+    diff = [k for k in out[0] if out[0][k] != out[1][k]]
+    check(not diff, f'EXIT + pad with nothing rolling: as on the parent {diff}')
 
 
 def run_steps(m, script):
@@ -1699,6 +1785,7 @@ def main():
                            ('subpad', subpad_checks, (img, man)), ('hold', hold_checks, (img, parent, man)),
                            ('gate', gate_checks, (img, parent, man)), ('release', release_checks, (img, parent, man)),
                            ('dj', dj_checks, (img, parent, man)), ('startend', start_end_checks, (img, parent, man)),
+                           ('exitpad', exit_pad_checks, (img, parent, man)),
                            ('recorder', recorder_checks, (img, man)),
                            ('passthrough', passthrough_checks, (img, parent, man)),
                            ('chroma', chroma_checks, (img, man))):
