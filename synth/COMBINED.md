@@ -282,3 +282,22 @@ input is not switched. The rest as in combined-test9, then the fast boot and the
 suites kits, capture, chord, shortcut, midi, restart and hot resample pass. Not rerun: the other feature suites and
 the 18 kit bounce runs (their modules are combined-test7's byte for byte). The IR diagnostic test 2
 (`claude/ir-diag`) is this build plus the CPU meter and the test echo.
+
+## 12. combined-test11
+
+From the user's test of IR diagnostic test 2 (combined-test10 inside): VALUE + EXT SOURCE only switched the input off,
+so the EXT SOURCE press never reached TOP's page filter as a chord. FX deep edit at `fx-deep-edit-test10`: the UI
+dispatcher's key press, key release and knob handlers (`0x8003abd0`, `0x8003ada0`, `0x8003a8d8`) hand every event
+to the module first, on any page and before the key-mode prefilter, with VALUE's hold tracked there. No other step
+patches or guards those handlers. The rest as in combined-test10, then the fast boot and the kit footer.
+
+- **APP1:** `b7662d50...31c5`, 3,152,672 bytes, in `analysis/kit_pr1_audit/release/combined-test11` (the combined
+  build `1545410f...bca9`, after the fast boot `5984039b...36b1`). Every module byte for byte its own test build's;
+  the same 7 reviewed overlaps. Only the FX deep edit module (and its three new hook sites) differs from
+  combined-test10.
+
+**Checked** (Unicorn, `analysis/kit_pr1_audit/dev_combined11/run_suites.py`): on the final APP1,
+`test_fx_deep_edit.py` 78 of 81 (the same 2 layout checks and ROLL's key; every test10 check passes) and the kit
+suites kits, capture, chord, shortcut, midi, restart and hot resample pass. Not rerun: the other feature suites and
+the 18 kit bounce runs (their modules are combined-test7's byte for byte). IR diagnostic test 3 (`claude/ir-diag`)
+is this build plus the CPU meter and the test echo.
