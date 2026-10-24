@@ -264,3 +264,21 @@ then the fast boot and the kit footer.
 no extra settings) and the kit suites kits, capture, chord, shortcut, midi, restart and hot resample pass. Not
 rerun: the other feature suites and the 18 kit bounce runs (their modules are combined-test7's byte for byte). The
 patcher test passes with v9.49 = combined-test9.
+
+## 11. combined-test10
+
+The reference manual (v5.50, p. 36-37) shows the unit edits the input FX on its own screen (RECORD SETTING, then
+VALUE), never the FX screen, so FX deep edit's input FX screens (test 4) never came on the unit. FX deep edit at
+`fx-deep-edit-test9`: on the main screen, hold VALUE and press EXT SOURCE for the input FX's extra screens (the Gt
+Amp Sim's 12 settings on four), VALUE to step them, CTRL 1-3 to edit them; the EXT SOURCE press is taken, so the
+input is not switched. The rest as in combined-test9, then the fast boot and the kit footer.
+
+- **APP1:** `f85d62c5...4e85`, 3,152,368 bytes, in `analysis/kit_pr1_audit/release/combined-test10` (the combined
+  build `0d81ab9c...9efb`, after the fast boot `a00a4505...32cd`). Every module byte for byte its own test build's; the
+  same 7 reviewed overlaps. Only the FX deep edit module differs from combined-test9.
+
+**Checked** (Unicorn, `analysis/kit_pr1_audit/dev_combined10/run_suites.py`): on the final APP1,
+`test_fx_deep_edit.py` 75 of 78 (the same 2 layout checks and ROLL's key; every test9 check passes) and the kit
+suites kits, capture, chord, shortcut, midi, restart and hot resample pass. Not rerun: the other feature suites and
+the 18 kit bounce runs (their modules are combined-test7's byte for byte). The IR diagnostic test 2
+(`claude/ir-diag`) is this build plus the CPU meter and the test echo.
