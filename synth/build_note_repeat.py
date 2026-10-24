@@ -5,7 +5,8 @@ slice of the pad's voice; here ROLL re-hits the pad through the stock pad note a
 ROLL + pad repeats until ROLL is released, a ROLL tap latches (pads then repeat while held, ROLL lit), VALUE
 steps the division at once (six triplets too, test2: PADCONF reserved byte 0x70 bits 1-3), ROLL + VALUE press
 makes the current pad follow or ignore ROLL (byte 0x70, bit 0), HOLD while rolling holds the rolls (test2).
-LOOP pads without GATE keep the stock ring roll. DJ mode stays stock.
+LOOP pads without GATE keep the stock ring roll. DJ mode stays stock, and so does ROLL on the START/END screen
+(test5: held, it previews the sample's end; a latch is kept for afterwards).
 
 Five changes in 5.52 space, each a 10-byte movw ip / movt ip / bx ip at an entry (a nop after it where the
 displaced instructions take 12 bytes); the module runs the displaced instructions and goes on:
@@ -39,7 +40,7 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'note-repeat-test4'
+REVISION = 'note-repeat-test5'
 SLOT = 0x2000                       # reserved: [base, base + SLOT)
 GAP = (0x83FC9000, 0x83FF0000)      # above the fork's rows (end 0x83FC8450), below the end of cacheable SDRAM
 # Every other fork module's reserved RAM (branch, start, end).
@@ -183,6 +184,10 @@ GUARDS = [
      'the UI tick hands the light and draw requests (0x802496f0) to 0x800d5370'),
     (0x800D5370, 0x800D5430, '650eb5b983a8c4fd7d1a7c88f3a3fe6de2366c05c51fbb902ac9abc35ce03709',
      'the light updater (DOOM OS ED5E jumps in first): request bit 2 repaints the pads, 0x10 the keys'),
+    (0x801F90D4, 0x801F90E4, 'a70f16514ce2e23df9b39ac1f7dc846976c9d5dabfe50f021669b0ff09fe5299',
+     'page table, page 0x16: handler table 0x8023b5f8, START/END (key 0x17) lit: the START/END screen'),
+    (0x8023B5F8, 0x8023B5FC, 'f1a545e2b8d6f84bbea5b2185825221e946b61036945b54258fc14053c3310ef',
+     'page 0x16\'s registry handler 0x80060328: the START/END view (ROLL let go ends its preview, 0x80088240)'),
 ]
 MD = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB | capstone.CS_MODE_MCLASS)
 
@@ -422,6 +427,7 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
                     'follows or ignores '
                     'ROLL (saved with the pad); HOLD while rolling: held rolls, until the pad is hit again, HOLD '
                     'again or EXIT + ROLL; LOOP pads without GATE keep the stock roll; DJ mode stays stock; '
+                    'ROLL on the START/END screen (test5) is stock\'s preview, a latch kept for afterwards; '
                     'chromatic pads (test4) roll at their own chromatic division, 1/16 until VALUE moves it, at '
                     'the sample\'s tempo, whatever else the pad under the finger holds',
         parent_app1=str(inp), parent_sha256=sha(inp.read_bytes()),
@@ -461,6 +467,11 @@ def build(inp: Path, out: Path, zig: Path, base: int, build_dir: Path = None):
                       'toggles no follow flag; at the tempo of the pad whose sample chromatic mode plays (project '
                       '0xC1), always by re-hits; the pad\'s Roll, LOOP, GATE and follow flag are not read or '
                       'written; latched with VALUE held, a VALUE turn goes on to the page',
+            start_end='(test5) on the START/END screen (page 0x16) the module steps aside: ROLL held previews the '
+                      'sample\'s end and its release goes to stock\'s release handling, pads play once, VALUE and '
+                      'HOLD are the page\'s; rolls stop, a latch is kept (ROLL shows stock\'s light meanwhile, stock '
+                      'asked to repaint the keys) and comes back after; a ROLL press from before the screen opened '
+                      'stays the module\'s until let go',
             stock='SHIFT + ROLL (the Roll popup), EXIT + ROLL (all rolls off), DJ Mixer Mode (all of ROLL and HOLD), '
                   'HOLD with nothing rolling, SHIFT + HOLD, patterns\' recorded rolls, LOOP pads without GATE (the '
                   'stock ring roll, started by the module)'),
