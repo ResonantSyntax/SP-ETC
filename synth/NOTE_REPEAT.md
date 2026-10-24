@@ -16,6 +16,7 @@ What the build does, in short:
 | ROLL + VALUE press | VALUE's usual press (no ROLL function) | the current pad follows ROLL or ignores it (saved with the pad) |
 | HOLD while rolling (test2) | holds the pads that are down | the rolls go on after you let go; hit the pad again, HOLD again or EXIT + ROLL to stop |
 | SHIFT + ROLL, EXIT + ROLL | the Roll popup / all rolls off | unchanged |
+| ROLL on the START/END screen (test5) | held, previews the sample's end | unchanged: note repeat steps aside there, a latch waits until you leave |
 
 ## 1. How stock ROLL works (5.52; all of it unchanged in v9.46)
 
@@ -165,7 +166,7 @@ notes, and it is what an MPC does. LOOP pads without GATE keep the stock ring ro
   last change.
 - **The stock roll from pad hits** is off while the module runs: the key-held query answers "ROLL not held"
   to the note-on's three roll starts (and only those); ROLL's stock release handling (`0x80135d40`) doesn't
-  run (the module does ROLL's release). Both are stock again in DJ mode.
+  run (the module does ROLL's release). Both are stock again in DJ mode, and (test5) on the START/END screen.
 - **Held pads** come from the pad events at the UI dispatcher (pads 1-16 and SUB PAD, whatever the page); the
   pad a press plays comes from the stock pad note's two page calls (`0x800c904a` a pad, `0x800c8d3c` SUB PAD).
   A press whose page doesn't play the pad (a mode, a menu) starts nothing.
@@ -177,7 +178,7 @@ notes, and it is what an MPC does. LOOP pads without GATE keep the stock ring ro
 | `0x8003b530` | UI dispatcher: `ldrsh.w r1, [r0]; subs r1, #5; cmp r1, #0x20; bhi` | jump to `nr_event`: pads, ROLL, VALUE; then the four instructions, on at the `tbb` `0x8003b53a` |
 | `0x800cdbd0` | stock pad note: `push.w; sub sp, #0x18; mov r4, r1; mov r5, r0` | jump to `nr_pad` (which pad a page plays), then the four, on at `0x800cdbda`; the module's repeats enter after the observer |
 | `0x8003c5f0` | UI tick: `push; sub sp, #4; mov r4, r0; movw r0, #0xeebc` | jump to `nr_tick`, then the four, on at `0x8003c5fa` |
-| `0x80135d40` | ROLL let go: `push; movw r4; mov r5, r0; movt r4` (12 bytes) | jump (+ nop) to `nr_release`: stock only in DJ mode |
+| `0x80135d40` | ROLL let go: `push; movw r4; mov r5, r0; movt r4` (12 bytes) | jump (+ nop) to `nr_release`: stock only in DJ mode and (test5) on START/END |
 | `0x800d9f20` | the kits' jump to their key-query gate `0x83fa5ae5` | jump to `nr_key_gate`, which answers 0 for ROLL from `0x800aee23`, `0x800aef97`, `0x800af06f` while the module runs and goes on to the kits' gate otherwise |
 
 The module (`note_repeat.c`, Zig 0.13.0 `-Os`, 3.7 KB with its state) goes in a new boot copy row in an 8 KB
@@ -432,6 +433,44 @@ case as in test 3; VALUE while two pads roll moves each to 3/64 at once, kept in
 edited, the save a second after the rolls end, a third pad still at 1/16, the moved pad at 3/64 next time; VALUE
 while one pad rolls moves only that pad; ROLL + VALUE press shows the last pad's division, and with nothing
 repeating ROLL + VALUE steps it; latched, a turn with VALUE held is the page's. All 103 checks pass.
+
+## 10. Test 5: ROLL on the START/END screen (note-repeat-test5)
+
+From the user's test of v9.50: "It seems out of place to see the roll latch toggle when using the roll button to
+preview the end of the sample." The manual (v5.50, START/END): while ROLL is pressed you hear the sound a few
+seconds before the end point. Every ROLL tap there toggled the latch (popup `Roll Latch On`) and pads rolled with
+ROLL held.
+
+### 10.1 What stock does there (run in Unicorn)
+
+The START/END screen is page **0x16** (page table `0x801f8f74` entry: handler table `0x8023b5f8`, whose registry
+handler `0x80060328` makes the START/END view; the START/END key lit). The dispatcher hands ROLL to the view's key
+handlers (down `0x80088578`, up `0x80088240`, which has a ROLL case: the preview ends) and then to the generic key
+handler, whose release goes to `0x80135d40` as on TOP. A pad pressed with ROLL held plays once on the parent: no
+stock roll.
+
+### 10.2 What it does
+
+- On page 0x16 the module is off, as in DJ mode: ROLL, VALUE, HOLD and pads are stock's, ROLL's release reaches
+  stock's release handling, the note-on hears "ROLL held" as on the parent. Rolls stop at the next tick.
+- A latch is kept (DJ mode still ends it): ROLL's light goes back to stock's (stock is asked to repaint the keys,
+  `0x802496f0` bit 0x10, and dims it) and the module lights it again once you leave the screen.
+- A ROLL press made before the screen opened stays the module's until it is let go (the module stays on while
+  `nr.held`): its rolls go on and its release is the module's, so stock's release handling doesn't roll a pad
+  the module was re-hitting.
+- The builder guards the page table entry and the handler table's first word, so page 0x16 is the START/END
+  screen in the input.
+
+### 10.3 Checked in the emulator
+
+Section `startend` (4 checks, the START/END view made by its registry handler as on page entry): the DJ-mode
+script (ROLL + pad, VALUE, HOLD, a ROLL tap, ROLL + VALUE press) exactly as on the parent, all three ROLL releases
+through stock's release handling, no popup; ROLL held: the note-on's roll starts hear "held" as on the parent;
+latched on TOP, then START/END: the module writes no light and asks for the key repaint, stock's light updater
+(`0x800d5370`) dims ROLL, a ROLL press toggles nothing and goes to stock's release handling, a held pad plays
+once; back on TOP ROLL is lit and a held pad repeats; ROLL held on TOP with a pad rolling when START/END opens:
+the roll goes on until ROLL is let go, "not held" for the note-on, no stock release handling, no latch, and the
+next ROLL tap there is stock's.
 
 ## Build
 
