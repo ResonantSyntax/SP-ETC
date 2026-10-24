@@ -355,7 +355,7 @@ image, HOLD's press still reaches note repeat first (held rolls) and VALUE goes 
 held. The rest as in combined-test13, then the fast boot and the kit footer.
 
 - **APP1:** `77ade9a5...ac48`, 3,156,832 bytes, in `analysis/kit_pr1_audit/release/combined-test14` (the combined
-  build `012085f0...fcfa`, after the fast boot `7757f6f9...90b8`). Every module byte for byte its own test build's;
+  build `012085f0...cfca`, after the fast boot `7757f6f9...90b8`). Every module byte for byte its own test build's;
   the same 7 reviewed overlaps. Only the FX deep edit module differs from combined-test13.
 
 **Checked** (Unicorn, `analysis/kit_pr1_audit/dev_combined14/run_suites.py`): on the final APP1,
