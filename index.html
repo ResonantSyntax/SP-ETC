@@ -81,13 +81,15 @@ ol.steps { margin: 14px 0 0; padding-left: 22px; display: flex; flex-direction: 
 .parts { margin: 18px 0 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 24px; }
 .parts > div { padding-top: 10px; border-top: 2px solid var(--ink); }
 .parts p { margin: 6px 0 0; font-size: 15.5px; line-height: 1.55; color: var(--text); }
-details.guide { margin-top: 0; border-bottom: 1px solid var(--rule); }
-details.guide:first-of-type { margin-top: 22px; border-top: 1px solid var(--rule); }
+.guides-head { margin: 30px 0 0; padding-bottom: 6px; border-bottom: 2px solid var(--ink); font-size: 18px; }
+details.guide { border-bottom: 1px solid var(--rule); }
 details.guide summary { padding: 12px 0; cursor: pointer; font-size: 16.5px; font-weight: 700; }
 details.guide[open] summary { padding-bottom: 4px; }
-details.guide > p, details.guide > ul { max-width: 66ch; font-size: 16px; line-height: 1.6; color: var(--text); }
+details.guide > p, details.guide > ul, details.guide > ol { max-width: 66ch; font-size: 16px; line-height: 1.6; color: var(--text); }
 details.guide > p { margin: 8px 0 0; }
-details.guide > ul { margin: 8px 0 0; padding-left: 22px; }
+details.guide > ul, details.guide > ol { margin: 8px 0 0; padding-left: 22px; }
+details.guide ul.fx { columns: 2; column-gap: 28px; max-width: none; font-size: 15px; }
+details.guide ul.fx li { break-inside: avoid; margin-bottom: 4px; }
 details.guide > :last-child { margin-bottom: 16px; }
 
 /* the patcher (drawn by doomos-patcher.js) */
@@ -142,6 +144,7 @@ footer.site .note { font-size: 13px; }
   h2 { font-size: 22px; }
   .feats { grid-template-columns: 1fr; }
   .parts { grid-template-columns: 1fr; row-gap: 18px; }
+  details.guide ul.fx { columns: 1; }
   .state { margin-left: 0; flex-basis: 100%; }
 }
 </style>
@@ -168,7 +171,7 @@ footer.site .note { font-size: 13px; }
             <p class="how"><kbd>SHIFT</kbd> + <kbd>RECORD SETTING</kbd></p></li>
           <li><h4>Drum kits</h4>
             <p>13 drum machines, synthesized on the SP: TR-808, TR-909, CR-78, TR-707 and more.</p>
-            <p class="how">In the Sound Generator: <kbd>SHIFT</kbd> + <kbd>PATTERN EDIT</kbd></p></li>
+            <p class="how"><kbd>SHIFT</kbd> + <kbd>PATTERN EDIT</kbd></p></li>
           <li><h4>MIDI</h4>
             <p>Play the synth and the kits from a sequencer. Notes 36&ndash;51 play pads 1&ndash;16; CCs reach every knob.</p>
             <p class="how">Set the channel with M.CH in the <kbd>VALUE</kbd> menu</p></li>
@@ -240,6 +243,8 @@ footer.site .note { font-size: 13px; }
         <p>Yes. Patch the file as above, then run the normal update on your SP. Whatever your SP runs now (the original firmware, DOOM OS or an older version of this mod), the update replaces it.</p>
         <h3>Which file do I need?</h3>
         <p>Roland&rsquo;s original firmware 5.52 update, on your computer: <code>SP404MKII_APP1.bin</code> and <code>SP404MKII_APP0.bin</code>. Load the APP1 file into the patcher. It won&rsquo;t take a file that is already patched, or another firmware version. Your SP doesn&rsquo;t need the original firmware installed first.</p>
+        <h3>How do I go back to the original firmware?</h3>
+        <p>Run the same update with Roland&rsquo;s original 5.52 files (<code>SP404MKII_APP1.bin</code> and <code>SP404MKII_APP0.bin</code>). Your projects and samples stay.</p>
         <h3>Will I lose my work?</h3>
         <p>No. Updating the firmware doesn&rsquo;t erase your projects or samples, but back up before any update anyway. Projects you make with this firmware still open on the original firmware or DOOM OS; the extra settings are just ignored there. If you have a newer DOOM OS than 0.6.1, this takes you back to DOOM OS 0.6.1: your projects and samples stay, but settings or patterns from the newer DOOM OS might not carry over.</p>
       </div>
@@ -256,33 +261,7 @@ footer.site .note { font-size: 13px; }
           <p>Klangfeld Labs' pattern sequencer: step and piano-roll editing, a mixer and automation. Included unchanged (0.6.1, build ED5E); see the <a href="manual/">DOOM OS quickstart</a>.</p></div>
       </div>
 
-      <details class="guide">
-        <summary>Drum kits</summary>
-        <p>SHIFT + PATTERN EDIT opens drum mode with the last kit you used; SHIFT + RECORD SETTING returns to the melodic Sound Generator. The 13 kits are TR808, DR110, KPR77, UDS, FM, TR909, TR606, SDS-V, MP-7, CR78, CR8K, TR707 and TR727. Every sound is synthesized on the SP; no samples are used.</p>
-        <ul>
-          <li><strong>Pads:</strong> each kit fills all 16 pads. Pads beyond a machine's own voices hold tuned or reshaped variants, shown with a + after the sound name. Strike a pad to select it for editing.</li>
-          <li><strong>Knobs:</strong> CTRL1 Tune (&plusmn;12 semitones), CTRL2 Decay, CTRL3 Tone. Tap SHIFT for Sweep, Noise and Attack; tap again to go back. Tune at 0 and the others at 50 play the machine's own sound.</li>
-          <li><strong>Change a pad's sound:</strong> hold the pad and turn VALUE to step through that machine's sounds.</li>
-          <li><strong>VALUE menu:</strong> ARP, RATE, HOLD and BPM (a readout), then KIT, PAD, SOUND and LEVEL (0&ndash;127), then M.CH (the MIDI channel) and BOUNC. KIT steps through the 13 machines.</li>
-          <li><strong>REC:</strong> play, press REC, choose a pad (it blinks), then press REC again. It records the last pad you hit plus up to three others hit within 100 ms before it, each with its own timing and velocity. The recording runs until the last drum has rung out (at least 21 ms, at most 10 s).</li>
-          <li><strong>BOUNC (the kit into a sample bank):</strong> turn VALUE to BOUNC, press VALUE, turn to a bank (A&ndash;J), press VALUE. An empty bank fills at once with the kit's 16 pads. A bank with samples asks once: FILL keeps them and fills the empty pads, OVER replaces them all; then SURE? (NO or YES). EXIT stops it.</li>
-          <li><strong>Resample and looper:</strong> on the RESAMPLE screen (take armed) or the LOOPER screen, SHIFT + PATTERN EDIT opens the kits. With the looper on, REC on the Sound Generator screen records the loop.</li>
-        </ul>
-        <p>The arpeggiator also runs in drum mode and steps through the held pads; A.OCT applies only to melodic mode. Kit edits are saved with the project.</p>
-      </details>
-      <details class="guide">
-        <summary>MIDI</summary>
-        <p>It works while the Sound Generator is open, in drum (kits) or melodic mode, and stops when you leave that screen.</p>
-        <ul>
-          <li><strong>Channel:</strong> M.CH, in the VALUE menu of both modes (1&ndash;16, default 16), is the channel the Sound Generator plays. Channel 16 is also the SP's control channel, so for sequencing a free channel such as 11&ndash;15 avoids triggering SP functions when you leave the Sound Generator.</li>
-          <li><strong>Drum notes:</strong> 36&ndash;51 play pads 1&ndash;16 (36 = pad 1, the kick in most kits); other notes are ignored.</li>
-          <li><strong>Drum CCs:</strong> three per pad, in the order Tune, Decay, Level. Pads 1&ndash;4 use CC 20&ndash;31, pads 5&ndash;12 use 40&ndash;63 and pads 13&ndash;16 use 102&ndash;113. The last pad heard takes Tone 114, Sweep 115, Noise 116 and Attack 117. CC 64 is the knob centre.</li>
-          <li><strong>Synth CCs:</strong> TYPE 70, FREQ 71, LEVEL 72, DUTY 73, BALANCE 74, ENV 75, TUNE 76.</li>
-          <li><strong>Arpeggiator CCs:</strong> ARP 33, RATE 34, A.OCT 35 (melodic only), HOLD 36.</li>
-          <li><strong>Panic:</strong> CC 123 releases notes held by MIDI and stops the arp. CC 120 also fades out every Sound Generator voice.</li>
-        </ul>
-        <p>CC changes are saved with the project. Full chart: <a href="https://github.com/tracelistener/SP-ETC/blob/main/synth/KITS_MIDI.md">KITS_MIDI.md</a>.</p>
-      </details>
+      <h3 class="guides-head">Sound Generator and drum kits</h3>
       <details class="guide">
         <summary>Envelope presets (ENV)</summary>
         <p>In the Sound Generator, choose ENV, then play a new note to hear the selected preset. Each voice takes its envelope when the note starts.</p>
@@ -311,6 +290,124 @@ footer.site .note { font-size: 13px; }
           <li><strong>BPM:</strong> read-only, the tempo the arp plays at.</li>
         </ul>
         <p>With ARP on, pads and MIDI IN feed the arp instead of playing directly. Drum mode and melodic mode each keep their own arpeggiator settings.</p>
+      </details>
+      <details class="guide">
+        <summary>Drum kits</summary>
+        <p>SHIFT + PATTERN EDIT, on the main screen or in the Sound Generator, opens drum mode with the last kit you used; SHIFT + RECORD SETTING returns to the melodic Sound Generator. The 13 kits are TR808, DR110, KPR77, UDS, FM, TR909, TR606, SDS-V, MP-7, CR78, CR8K, TR707 and TR727. Every sound is synthesized on the SP; no samples are used.</p>
+        <ul>
+          <li><strong>Pads:</strong> each kit fills all 16 pads. Pads beyond a machine's own voices hold tuned or reshaped variants, shown with a + after the sound name. Strike a pad to select it for editing.</li>
+          <li><strong>Knobs:</strong> CTRL1 Tune (&plusmn;12 semitones), CTRL2 Decay, CTRL3 Tone. Tap SHIFT for Sweep, Noise and Attack; tap again to go back. Tune at 0 and the others at 50 play the machine's own sound.</li>
+          <li><strong>Change a pad's sound:</strong> hold the pad and turn VALUE to step through that machine's sounds.</li>
+          <li><strong>VALUE menu:</strong> ARP, RATE, HOLD and BPM (a readout), then KIT, PAD, SOUND and LEVEL (0&ndash;127), then M.CH (the MIDI channel) and BOUNC. KIT steps through the 13 machines.</li>
+          <li><strong>REC:</strong> play, press REC, choose a pad (it blinks), then press REC again. It records the last pad you hit plus up to three others hit within 100 ms before it, each with its own timing and velocity. The recording runs until the last drum has rung out (at least 21 ms, at most 10 s).</li>
+          <li><strong>BOUNC (the kit into a sample bank):</strong> turn VALUE to BOUNC, press VALUE, turn to a bank (A&ndash;J), press VALUE. An empty bank fills at once with the kit's 16 pads. A bank with samples asks once: FILL keeps them and fills the empty pads, OVER replaces them all; then SURE? (NO or YES). EXIT stops it.</li>
+          <li><strong>Resample and looper:</strong> on the RESAMPLE screen (take armed) or the LOOPER screen, SHIFT + PATTERN EDIT opens the kits. With the looper on, REC on the Sound Generator screen records the loop.</li>
+        </ul>
+        <p>The arpeggiator also runs in drum mode and steps through the held pads; A.OCT applies only to melodic mode. Kit edits are saved with the project.</p>
+      </details>
+      <details class="guide">
+        <summary>MIDI</summary>
+        <p>It works while the Sound Generator is open, in drum (kits) or melodic mode, and stops when you leave that screen.</p>
+        <ul>
+          <li><strong>Channel:</strong> M.CH, in the VALUE menu of both modes (1&ndash;16, default 16), is the channel the Sound Generator plays. Channel 16 is also the SP's control channel, so for sequencing a free channel such as 11&ndash;15 avoids triggering SP functions when you leave the Sound Generator.</li>
+          <li><strong>Drum notes:</strong> 36&ndash;51 play pads 1&ndash;16 (36 = pad 1, the kick in most kits); other notes are ignored.</li>
+          <li><strong>Drum CCs:</strong> three per pad, in the order Tune, Decay, Level. Pads 1&ndash;4 use CC 20&ndash;31, pads 5&ndash;12 use 40&ndash;63 and pads 13&ndash;16 use 102&ndash;113. The last pad heard takes Tone 114, Sweep 115, Noise 116 and Attack 117. CC 64 is the knob centre.</li>
+          <li><strong>Synth CCs:</strong> TYPE 70, FREQ 71, LEVEL 72, DUTY 73, BALANCE 74, ENV 75, TUNE 76.</li>
+          <li><strong>Arpeggiator CCs:</strong> ARP 33, RATE 34, A.OCT 35 (melodic only), HOLD 36.</li>
+          <li><strong>Panic:</strong> CC 123 releases notes held by MIDI and stops the arp. CC 120 also fades out every Sound Generator voice.</li>
+        </ul>
+        <p>CC changes are saved with the project. Full chart: <a href="https://github.com/tracelistener/SP-ETC/blob/main/synth/KITS_MIDI.md">KITS_MIDI.md</a>.</p>
+      </details>
+
+      <h3 class="guides-head">Pads</h3>
+      <details class="guide">
+        <summary>Bounce in place</summary>
+        <ol>
+          <li>Hold RESAMPLE and tap the pad.</li>
+          <li>Tap where the new sample goes: the same pad to replace it (the original moves to an empty pad), or an empty pad to put the new sample there. The pad you picked lights up. A pad that already has a sample says PAD NOT EMPTY.</li>
+          <li>Turn VALUE to choose NO TAIL (stop when the sound ends) or TAIL (keep the echo or reverb until it fades out).</li>
+          <li>Press RESAMPLE to record.</li>
+        </ol>
+        <p>To undo a replace: hold RESAMPLE, tap that pad, press VALUE, then press RESAMPLE.</p>
+      </details>
+      <details class="guide">
+        <summary>Pad envelopes</summary>
+        <p>SHIFT + PITCH/SPEED opens them. Turn VALUE (or tap SHIFT) for the next page; CTRL 1&ndash;3 change the three settings on it. Each pad keeps its own. Hold COPY while you turn to change the pad's whole mute group, or REMAIN for the whole bank. To put a pad back to normal, press DEL on these pages, then VALUE.</p>
+        <ul>
+          <li><strong>1 AMP:</strong> ATTACK, HOLD, RELEASE. Press VALUE here for finer timing (FINE).</li>
+          <li><strong>2 SHAPE:</strong> the attack and release curves: LIN, EXP, LOG or S.</li>
+          <li><strong>3 DECAY:</strong> DECAY time, SUSTAIN level and the decay's curve.</li>
+          <li><strong>4 MODE:</strong> LOOP (shape every pass of a looping pad, or only the first), RETRIG (CUT, or a fade so a re-hit doesn't click) and REVERSE (MIRROR or TIME).</li>
+          <li><strong>5 PITCH:</strong> a pitch sweep: DEPTH (&plusmn;24 semitones), ATTACK, DECAY.</li>
+          <li><strong>6 FILTER:</strong> TYPE (off, low-pass, band-pass or high-pass), CUTOFF, RESO.</li>
+          <li><strong>7 F-ENV:</strong> the filter's sweep: AMOUNT (&plusmn;9.9 octaves), ATTACK, DECAY.</li>
+          <li><strong>8 CURVES:</strong> the pitch and filter sweeps' curves.</li>
+        </ul>
+      </details>
+      <details class="guide">
+        <summary>Note repeat (rolls)</summary>
+        <ul>
+          <li><strong>Roll:</strong> hold ROLL and a pad, and the pad repeats in time with the tempo.</li>
+          <li><strong>Speed:</strong> turn VALUE while you hold ROLL (or while a latched pad repeats). It steps through 1/2, 3/8, 1/2T, 1/4, 3/16, 1/4T, 1/8, 3/32, 1/8T, 1/16, 3/64, 1/16T, 1/32, 1/32T, 1/64 and 1/64T. The new speed starts at once, and the screen shows it, for example Roll 1/16T.</li>
+          <li><strong>Latch:</strong> tap ROLL on its own. ROLL lights, and any pad you hold repeats. Tap ROLL again to switch it off.</li>
+          <li><strong>Keep rolling:</strong> press HOLD while pads roll, and they keep going after you let go. Hit the pad again, press HOLD again or press EXIT + ROLL to stop.</li>
+          <li><strong>Stop everything:</strong> EXIT + ROLL.</li>
+          <li><strong>Chromatic mode:</strong> each pad keeps its own speed (1/16 to start).</li>
+        </ul>
+      </details>
+      <details class="guide">
+        <summary>Chromatic mode</summary>
+        <ul>
+          <li><strong>Scale:</strong> hold VALUE and turn it to choose one of the Sound Generator's 34 scales. A quick press steps to the next one. The screen names each.</li>
+          <li><strong>Key:</strong> hold SHIFT as well and turn VALUE.</li>
+          <li><strong>Pads:</strong> every pad plays the next note of the scale, and the range reaches an octave higher than stock (up to +27 semitones).</li>
+          <li><strong>Rolls:</strong> each pad keeps its own roll speed.</li>
+          <li><strong>Clicks:</strong> if a pad clicks when it plays again over itself (rolls, fast notes), give that pad a short RETRIG fade (pad envelopes, page 4).</li>
+        </ul>
+      </details>
+
+      <h3 class="guides-head">Effects</h3>
+      <details class="guide">
+        <summary>Hidden effect settings: the full list</summary>
+        <p>On BUS 1&ndash;4: press an FX button, then VALUE. The effect screen stays up, and each VALUE press shows the next page. For the input FX: hold VALUE and press EXT SOURCE, then press VALUE for each page. CTRL 1&ndash;3 change the three settings on a page; any button except VALUE and SHIFT closes it. The values reset when you turn the SP off. Gains, EQ boosts, feedback and resonance can make the sound loud, so keep your volume low.</p>
+        <ul class="fx">
+          <li><strong>303 VinylSim:</strong> BALANCE</li>
+          <li><strong>404 VinylSim:</strong> DIST, DISC TYPE, BALANCE</li>
+          <li><strong>Back Spin:</strong> MODE, FLT MOD, SYNC, RESONANCE, AMP MOD</li>
+          <li><strong>Cassette Sim:</strong> BALANCE</li>
+          <li><strong>Chromatic PS:</strong> FINE1, LEVEL1, FINE2, LEVEL2, EQ LOW, EQ HIGH, LEVEL</li>
+          <li><strong>DJFX Delay:</strong> HIGH CUT, HIGH DAMP, H DAMP F, LOW DAMP, L DAMP F</li>
+          <li><strong>DJFX Looper:</strong> LEVEL</li>
+          <li><strong>Equalizer:</strong> MID Q, MID2 FREQ, MID2 GAIN, MID2 Q, LEVEL, BALANCE</li>
+          <li><strong>Filter+Drive:</strong> LEVEL</li>
+          <li><strong>Flanger:</strong> LOW CUT F, MODE</li>
+          <li><strong>Gt Amp Sim (input FX only):</strong> AMP SW, AMP TYPE, MASTER, GAIN, PRESENCE, BRIGHT, SP SW, SP TYPE, MIC SET, MIC LEVEL, DIRECT, PAN</li>
+          <li><strong>Ha-Dou:</strong> DENSITY</li>
+          <li><strong>Hyper-Reso:</strong> BALANCE, LOW CUT F</li>
+          <li><strong>Isolator:</strong> BALANCE</li>
+          <li><strong>JUNO Chorus:</strong> LEVEL</li>
+          <li><strong>Ko-Da-Ma:</strong> LEVEL, TAP, HIGH CUT, HIGH DAMP, LOW DAMP</li>
+          <li><strong>Lo-fi:</strong> POST FILT</li>
+          <li><strong>Phaser:</strong> TYPE</li>
+          <li><strong>Resonator:</strong> BALANCE, LOW CUT F</li>
+          <li><strong>Reverb:</strong> DENSITY</li>
+          <li><strong>Ring Mod:</strong> LEVEL</li>
+          <li><strong>Scatter:</strong> BALANCE</li>
+          <li><strong>Slicer:</strong> ATTACK, RESET SW, RESET THR, LEVEL</li>
+          <li><strong>Stopper:</strong> HOLD</li>
+          <li><strong>SX Delay:</strong> SYNC, PHASE, FBK ROUTE, HF DAMP, MOD SW, MOD RATE, MOD DEPTH, EQ LOW, EQ HIGH, LEVEL</li>
+          <li><strong>SX Reverb:</strong> TYPE, PRE DELAY, LEVEL</li>
+          <li><strong>Sync Delay:</strong> HIGH CUT, HIGH DAMP, LOW DAMP</li>
+          <li><strong>Tape Echo:</strong> SYNC, BASS, TREBLE, PAN S, PAN M, PAN L, TAPE DIST</li>
+          <li><strong>TimeCtrlDly:</strong> HIGH CUT, HIGH DAMP, LOW DAMP</li>
+          <li><strong>To-Gu-Ro:</strong> HOLD</li>
+          <li><strong>Tremolo/Pan:</strong> EQ LOW, EQ HIGH, LEVEL, PHASE</li>
+          <li><strong>Vocoder (input FX only):</strong> COLOR, LEVEL</li>
+          <li><strong>Wah:</strong> BALANCE, EQ LOW, EQ HIGH, LEVEL</li>
+          <li><strong>WrmSaturator:</strong> LOW FREQ, LOW GAIN, HI SLOPE, HI FREQ, PRE1 TYPE, PRE1 FREQ, PRE1 GAIN, PST1 TYPE, PST1 FREQ, PST2 TYPE, PST2 FREQ, PST3 TYPE, PST3 FREQ, PST3 GAIN, PST3 Q, SENSE, POST GAIN, BALANCE</li>
+          <li><strong>Zan-Zou:</strong> M D LEVEL, M D MODE, M D SYNC, M D TIME, M D FBK, M HF DAMP, M D PAN1, M D PAN2, M D PAN3, M D PAN4, S D PAN1, S D PAN2, S D PAN3, S D PAN4</li>
+        </ul>
+        <p>Effects not listed have no hidden settings. The Compressor's and the Super Filter's were removed because they could make the sound suddenly very loud.</p>
       </details>
     </section>
   </main>

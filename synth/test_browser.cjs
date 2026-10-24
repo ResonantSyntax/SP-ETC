@@ -178,9 +178,17 @@ async function download(page) {
   // The three parts and the guides come after the features and the install steps.
   const more = html.indexOf('id="more"');
   assert.ok(more > html.indexOf('id="install"') && more > html.indexOf('id="features"'), 'the details are lower down');
-  for (const guide of ['Drum kits', 'MIDI', 'Envelope presets (ENV)', 'Scales and MIDI IN', 'Arpeggiator']) {
+  for (const guide of ['Drum kits', 'MIDI', 'Envelope presets (ENV)', 'Scales and MIDI IN', 'Arpeggiator',
+                       'Bounce in place', 'Pad envelopes', 'Note repeat (rolls)', 'Chromatic mode',
+                       'Hidden effect settings: the full list']) {
     assert.ok(html.includes('<summary>' + guide + '</summary>'), 'the page has the guide ' + guide);
   }
+  for (const fx of ['<strong>Tape Echo:</strong> SYNC, BASS, TREBLE', '<strong>Gt Amp Sim (input FX only):</strong> AMP SW',
+                    '<strong>Vocoder (input FX only):</strong> COLOR, LEVEL']) {
+    assert.ok(html.includes(fx), 'the hidden settings list has ' + fx);
+  }
+  assert.ok(!/<strong>(Compressor|Super Filter)[^<]*:<\/strong>/.test(html), 'no Compressor or Super Filter settings listed');
+  assert.ok(html.includes('How do I go back to the original firmware?'), 'the page says how to go back');
   assert.match(readme, /Sound Generator envelopes \(v9\.9\.3\)/);
   assert.match(readme, /## Scale pads \(v9\.9\.3\)/);
   assert.match(readme, /## Arpeggiator \(v9\.9\.3\)/);
