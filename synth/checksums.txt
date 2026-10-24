@@ -50,3 +50,6 @@ DOOM-SoundGenerator-Kits-v9.48  fbcff60613e96a054bd6a480824cc3a9b2bc43c8e7a69d39
 # left out after a user's report that CTRL 2 on them spiked the volume). Every other module is v9.47's byte for
 # byte. Replaces v9.48.
 DOOM-SoundGenerator-Kits-v9.49  8f285b018ed7c540fed81f0b39128331edc6039900eed95e1a4ce8e762644750  3152144
+# v9.50 (combined-test11), in the patcher: v9.49 with FX deep edit test10 (hold VALUE and press EXT SOURCE, on any
+# screen, for the input FX's hidden settings). Every other module is v9.47's byte for byte. Replaces v9.49.
+DOOM-SoundGenerator-Kits-v9.50  b7662d504f90b878dbf078d8af3ab77f139a638faf18d684e93e2896efd531c5  3152672

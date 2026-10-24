@@ -2,7 +2,7 @@
 
 **[Open the patcher](https://tracelistener.github.io/SP-ETC/)**
 
-The patcher builds **Sound Generator + Kits v9.49** for the SP-404MKII:
+The patcher builds **Sound Generator + Kits v9.50** for the SP-404MKII:
 Sound Generator **v9.9.3** (four live voices, 17 new waveforms, nine
 volume/filter-envelope presets, 34 scale choices and an arpeggiator) plus
 thirteen synthesized machine kits. It also adds bounce in place, pad
@@ -21,13 +21,21 @@ reproduction and validation](synth/KITS.md).
 > your speakers. Turn the volume down first, especially on headphones. The
 > Compressor and Super Filter settings that did this in v9.47 and v9.48 are
 > removed.
-> If you installed v9.47 or v9.48, patch again with v9.49.
+> If you installed v9.47 or v9.48, patch again with v9.50.
+
+## New in v9.50
+
+- **Input FX hidden settings:** hold VALUE and press EXT SOURCE, on any screen,
+  to open the hidden settings of the input FX. For the Gt Amp Sim that includes
+  AMP TYPE (14 steps; its standard screen has 6 amps), SP TYPE (16 cabinets) and
+  the mic position. Each VALUE press shows the next page, CTRL 1-3 change the
+  settings, and any other button closes them. This doesn't switch EXT SOURCE on
+  or off. **Turn your volume down before you try them.**
 
 ## New in v9.49
 
 - **Safety fix:** the Super Filter's hidden settings are gone: one of them
   could make the sound suddenly, dangerously loud.
-  If you installed v9.47 or v9.48, patch again with v9.49.
 
 ## New in v9.48
 
@@ -274,7 +282,7 @@ You can also download this repository as a ZIP file (under the Code button), unz
 ### Manual installation
 
 1. Download the 5.52 system update from [Roland's support page](https://www.roland.com/global/support/by_product/sp-404mk2/updates_drivers/) and unzip it.
-2. Open [our patcher](https://tracelistener.github.io/SP-ETC/), load the stock `SP404MKII_APP1.bin` and press Patch firmware. It builds Sound Generator + Kits v9.49. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
+2. Open [our patcher](https://tracelistener.github.io/SP-ETC/), load the stock `SP404MKII_APP1.bin` and press Patch firmware. It builds Sound Generator + Kits v9.50. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
 3. Download the patched `SP404MKII_APP1.bin` and use it with the unchanged official 5.52 `SP404MKII_APP0.bin` for your test update. Back up first and keep your known-good update for rollback.
 4. Insert the card, hold **SHIFT** while you turn the SP on, and press the **VALUE** knob when the update menu appears.
 5. When the update is done, turn the SP off and on again.
@@ -301,6 +309,14 @@ to DOOM OS 0.6.1: your projects and samples stay, but settings or patterns from
 the newer DOOM OS might not carry over.
 
 ## Status
+
+**v9.50** (2026-10-24) is combined-test11: v9.49 with FX deep edit test10. Hold
+VALUE and press EXT SOURCE, on any screen, for the input FX's hidden settings
+(the SP edits the input FX on its own screen, where the hidden pages never came).
+The combo is caught where every key press arrives, before any screen. Its APP1
+SHA-256 is `b7662d50…31c5`. Only the FX deep edit module differs from v9.49; it was
+tried on an SP-404MKII in a test build before this release.
+[COMBINED.md](synth/COMBINED.md), [FX_DEEP_EDIT.md](synth/FX_DEEP_EDIT.md).
 
 **v9.49** (2026-10-23) is combined-test9: v9.48 with FX deep edit test8. A user
 reported that CTRL 2 on the Super Filter's hidden settings spiked the volume,
