@@ -136,52 +136,60 @@ async function download(page) {
   assert.match(html, /doomos-patcher\.js\?v=kits-v9-50-doom-os/);
   assert.doesNotMatch(html, /synth-data\.js|waves-data\.js|kits-midi-data|MIDI test guide|v9\.43|v9\.44/);
   assert.doesNotMatch(html, /[Tt]ick one|unticked|Pick one of/);
-  assert.match(html, /What's new in v9\.50/);
-  assert.match(html, /What's new in v9\.49/);
-  assert.match(html, /What's new in v9\.48/);
-  assert.match(html, /What's new in v9\.47/);
-  // The volume warning (a user's report on v9.47: the Compressor's MODE was dangerously loud), and no
-  // NO EXTRA SETTINGS note.
+  // The page is the patcher and what it gives: no version header and no version history (that is on GitHub).
+  assert.doesNotMatch(html, /What's new|class="facts"|<dl|class="builds"|v9\.4\d|v9\.50/);
+  assert.match(html, /href="https:\/\/github\.com\/tracelistener\/SP-ETC\/blob\/main\/CHANGELOG\.md">Version history/);
+  // The volume note below the patcher (a user's report on v9.47: the Compressor's MODE was dangerously loud; then the
+  // Super Filter), and no NO EXTRA SETTINGS note.
+  const note = html.indexOf('class="volume-note"');
+  assert.ok(note > html.indexOf('id="doomos-patcher"') && note < html.indexOf('id="features"'), 'the volume note is right below the patcher');
+  assert.ok(/Compressor's MODE and the Super Filter's settings\. Both are removed\. Still, keep your volume low/.test(html),
+            'the volume note: the Compressor and the Super Filter, removed; keep the volume low');
+  assert.ok(readme.includes('Keep your volume low when you try the hidden effect settings'), 'the README warning');
+  assert.ok(readme.includes('If you installed v9.47 or v9.48, patch again with v9.50'), 'patch again after v9.47 or v9.48');
   for (const text of [html, readme]) {
-    assert.ok(text.includes('Keep your volume low when you try the hidden effect settings'), 'the volume warning');
-    assert.ok(text.includes('If you installed v9.47 or v9.48, patch again with v9.50'), 'patch again after v9.47 or v9.48');
     assert.ok(!text.includes('patch again with v9.48') && !text.includes('patch again with v9.49'), 'no older patch-again line');
     assert.doesNotMatch(text, /says NO EXTRA SETTINGS|some can get loud/);
   }
-  assert.ok(html.includes('<strong>Safety fix:</strong>') && readme.includes('**Safety fix:**'), 'v9.48 lists the fix');
-  assert.ok(html.includes('the Super Filter&rsquo;s hidden settings are gone') &&
-            readme.includes('the Super Filter\'s hidden settings are gone'), 'v9.49 lists the Super Filter fix');
-  assert.ok(html.includes('<strong>Input FX hidden settings:</strong> hold VALUE and press EXT SOURCE') &&
-            readme.includes('**Input FX hidden settings:** hold VALUE and press EXT SOURCE'), 'v9.50 lists the input FX combo');
+  assert.ok(readme.includes('**Safety fix:**') && readme.includes('the Super Filter\'s hidden settings are gone') &&
+            readme.includes('**Input FX hidden settings:** hold VALUE and press EXT SOURCE'), 'the README keeps the history');
   for (const q of ['I already have DOOM OS, or an older version of this mod', 'Which file do I need?',
                    'Will I lose my work?']) {
     assert.ok(html.includes(q) && readme.includes(q), 'the page and README answer: ' + q);
   }
+  // Every feature, in the cheat sheet below the patcher, with how to reach it.
+  const feats = html.slice(html.indexOf('id="features"'), html.indexOf('id="install"'));
+  for (const feature of ['Sound Generator', 'Drum kits', 'MIDI', 'Kit to sample bank', 'Bounce in place', 'Pad envelopes',
+                         'Note repeat', 'Chromatic scales', 'SUB PAD on the Sound Generator', 'Hidden effect settings',
+                         'Input FX hidden settings', 'DOOM OS', 'Saved with the project', 'Faster start-up',
+                         'Cleaner resampling']) {
+    assert.ok(feats.includes('<h4>' + feature + '</h4>'), 'the page lists ' + feature);
+  }
+  assert.ok(feats.includes('Hold <kbd>VALUE</kbd> and press <kbd>EXT SOURCE</kbd>') &&
+            feats.includes('Hold <kbd>REMAIN</kbd> and press <kbd>SUB PAD</kbd>'), 'the cheat sheet gives the buttons');
   for (const feature of ['DOOM OS included', 'Bounce in place', 'Pad envelopes', 'Note repeat', 'Chromatic scales',
                          'Saved with the project', 'SUB PAD on the Sound Generator', 'Hidden effect settings',
                          'Faster start-up', 'Cleaner resampling']) {
-    assert.ok(html.includes('<strong>' + feature + ':</strong>'), 'page lists ' + feature);
     assert.ok(readme.includes('**' + feature + ':**'), 'README lists ' + feature);
   }
   assert.doesNotMatch(html + readme, /reset at power-on|are not saved|returns to 16 at power-on/);
   assert.match(html + readme, /THIRD-PARTY-NOTICES\.md/);
   assert.ok(fs.existsSync(path.join(root, 'THIRD-PARTY-NOTICES.md')), 'the DM-404 notice is in the repository');
-  assert.match(html, /What's new in Kits v9\.46/);
-  assert.match(html, /Drum kit guide \(v9\.46\)/);
-  assert.match(html, /MIDI guide \(Kits v9\.46\)/);
-  assert.match(html, /Envelope preset guide \(ENV\)/);
-  assert.match(html, /34 scales and MIDI IN \(v9\.6\)/);
-  assert.match(html, /Arpeggiator guide \(v9\.9\.3\)/);
+  // The three parts and the guides come after the features and the install steps.
+  const more = html.indexOf('id="more"');
+  assert.ok(more > html.indexOf('id="install"') && more > html.indexOf('id="features"'), 'the details are lower down');
+  for (const guide of ['Drum kits', 'MIDI', 'Envelope presets (ENV)', 'Scales and MIDI IN', 'Arpeggiator']) {
+    assert.ok(html.includes('<summary>' + guide + '</summary>'), 'the page has the guide ' + guide);
+  }
   assert.match(readme, /Sound Generator envelopes \(v9\.9\.3\)/);
   assert.match(readme, /## Scale pads \(v9\.9\.3\)/);
   assert.match(readme, /## Arpeggiator \(v9\.9\.3\)/);
   assert.match(readme, /### Using the kits \(v9\.46\)/);
   assert.doesNotMatch(readme, /Pattern sequencer with a graphical interface|## Main controls|## Upstream plans|## Improvements/);
   assert.doesNotMatch(html, /Base released|data-doomos="version"|data-doomos="build"/);
-  // The page says the build includes DOOM OS and links its quickstart.
-  assert.match(html, /builds Sound Generator \+ Kits v9\.50 on DOOM OS 0\.6\.1, so your firmware includes DOOM OS/);
-  assert.match(html, /<h2>DOOM OS<span class="v">0\.6\.1<\/span><\/h2>/);
-  assert.match(html, /<dt>DOOM OS<\/dt><dd>0\.6\.1<\/dd>/);
+  // The page says the firmware includes DOOM OS and links its quickstart.
+  assert.match(html, /DOOM OS is included/);
+  assert.match(html, /Included unchanged \(0\.6\.1, build ED5E\)/);
   assert.match(html, /href="manual\/">DOOM OS quickstart/);
   assert.ok(fs.existsSync(path.join(root, 'manual', 'index.html')), 'DOOM OS quickstart is in the repository');
   assert.match(readme, /built on, and includes, \*\*DOOM OS 0\.6\.1\*\*/);
@@ -192,5 +200,5 @@ async function download(page) {
   assert.doesNotMatch(html, /For V8, start at modest LEVEL|Uncheck Wave Lab|Expected Wave Lab V8 APP1/);
   assert.doesNotMatch(readme, /<img[^>]*doom-os-512/);
   assert.doesNotMatch(html, /<img[^>]*doom-os/);
-  console.log('PASS: one build, no selector: stock 5.52 gives exactly Sound Generator + Kits v9.50 (combined-test11), repeatably; overlay metadata, wrong-input and corruption rejection, no corrupt download, DOOM OS base without kit data; page and README text.');
+  console.log('PASS: one build, no selector: stock 5.52 gives exactly Sound Generator + Kits v9.50 (combined-test11), repeatably; overlay metadata, wrong-input and corruption rejection, no corrupt download, DOOM OS base without kit data; page (patcher first, no version history) and README text.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
