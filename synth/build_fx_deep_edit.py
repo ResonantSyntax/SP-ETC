@@ -51,7 +51,7 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'fx-deep-edit-test8'
+REVISION = 'fx-deep-edit-test9'
 SLOT = 0x4000                       # reserved: [base, base + SLOT)
 # Settings left out on purpose: (effect, fxmap name) -> why. test6 and test8: users' reports on v9.47 and v9.48.
 SUPER_FILTER_OUT = ('FLT SLOPE', 'FLT GAIN', 'MOD SW', 'MOD WAVE', 'ATTACK', 'LEVEL')
@@ -483,7 +483,13 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
                            'min/max (min + ((max - min) x position + 63) / 127); a change is one DT1 (ID, slot = bus)',
                      leave='on an extra screen any button but VALUE and SHIFT leaves it (the popup goes) and goes on '
                            'as usual; pads go on as usual',
-                     popup='"TAPE ECHO 3/5\nC1 SYNC 0\nC2 BASS 15\nC3 TREBLE 15" for 600 s, gone at once on leaving'),
+                     popup='"TAPE ECHO 3/5\nC1 SYNC 0\nC2 BASS 15\nC3 TREBLE 15" for 600 s, gone at once on leaving',
+                     input='test9: the input FX is edited on its own screen (RECORD SETTING, then VALUE: INPUT FX '
+                           'Setting), never the FX screen, so the knob bus is never 0 there on the unit. On the main '
+                           'screen VALUE held and EXT SOURCE pressed opens the input FX\'s extra screens (slot 0), '
+                           'numbered among themselves ("GT AMP SIM 1/4"); VALUE steps them and closes after the last; '
+                           'CTRL 1-3 edit them; any other button leaves; the EXT SOURCE press and release are taken '
+                           '(the input is not switched); an input FX without extra settings shows nothing'),
         resend='after the firmware sends FxType 0x7e..0x82 (the input FX, BUS 1-4) = fx, the edited values of '
                'that slot for fx go out again, in table order; nothing else adds a frame',
         settings_total=sum(len(s) for s in settings), effects=effects,
