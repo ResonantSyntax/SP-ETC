@@ -342,3 +342,23 @@ fast boot and the kit footer.
 `test_note_repeat.py` 109 of 113 (the 4 layout checks every combined image fails; the 7 checks for ROLL's screens and
 the 3 for EXIT + pad pass) and the kit suites kits, capture, chord, shortcut, midi, restart and hot resample pass.
 note-repeat-test6 on its own parent passes all 113.
+
+## 15. combined-test14
+
+The user asked for a way to switch the hidden FX settings off ("could hold+value knob work"; off undoes the edits too,
+an A/B) and for the edits to be kept over a restart. FX deep edit at `fx-deep-edit-test11`: HOLD + VALUE, on any page,
+is HIDDEN FX OFF (each slot's edited settings of its effect back to the firmware's defaults, the FX screen's VALUE and
+VALUE + EXT SOURCE stock's, no re-sends after an FxType) and HIDDEN FX ON again; the edits and the switch are kept in
+`B:/_fx_hidden.bin` (read at TOP's first event after the boot, written on leaving an extra screen after an edit and on
+each switch). Its new guards are the file calls kits-save guards too (no step patches them). With note repeat in the
+image, HOLD's press still reaches note repeat first (held rolls) and VALUE goes on to FX deep edit unless ROLL is
+held. The rest as in combined-test13, then the fast boot and the kit footer.
+
+- **APP1:** `77ade9a5...ac48`, 3,156,832 bytes, in `analysis/kit_pr1_audit/release/combined-test14` (the combined
+  build `012085f0...fcfa`, after the fast boot `7757f6f9...90b8`). Every module byte for byte its own test build's;
+  the same 7 reviewed overlaps. Only the FX deep edit module differs from combined-test13.
+
+**Checked** (Unicorn, `analysis/kit_pr1_audit/dev_combined14/run_suites.py`): on the final APP1,
+`test_fx_deep_edit.py` 92 of 95 (the same 2 layout checks and ROLL's key; the 6 switch checks and the 8 saved-file
+checks pass), `test_note_repeat.py` 109 of 113 (the 4 layout checks) and the kit suites kits, capture, chord,
+shortcut, midi, restart and hot resample pass. fx-deep-edit-test11 on its own parent passes all 95.
