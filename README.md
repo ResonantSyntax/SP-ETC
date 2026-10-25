@@ -2,7 +2,7 @@
 
 **[Open the patcher](https://tracelistener.github.io/SP-ETC/)**
 
-The patcher builds **Sound Generator + Kits v9.50** for the SP-404MKII:
+The patcher builds **Sound Generator + Kits v9.51** for the SP-404MKII:
 Sound Generator **v9.9.3** (four live voices, 17 new waveforms, nine
 volume/filter-envelope presets, 34 scale choices and an arpeggiator) plus
 thirteen synthesized machine kits. It also adds bounce in place, pad
@@ -21,7 +21,16 @@ reproduction and validation](synth/KITS.md).
 > your speakers. Turn the volume down first, especially on headphones. The
 > Compressor and Super Filter settings that did this in v9.47 and v9.48 are
 > removed.
-> If you installed v9.47 or v9.48, patch again with v9.50.
+> If you installed v9.47 or v9.48, patch again with v9.51.
+
+## New in v9.51
+
+- **ROLL on START/END and PITCH/SPEED:** ROLL does its usual job on those
+  screens again: on START/END, hold it to hear the end of the sample; on
+  PITCH/SPEED it opens Groove. It no longer switches the roll latch on or off
+  there. If the latch is on, it waits until you leave the screen.
+- **Stop one roll:** hold EXIT and press a rolling pad to stop just that pad.
+  The other pads keep rolling.
 
 ## New in v9.50
 
@@ -70,8 +79,9 @@ reproduction and validation](synth/KITS.md).
 - **Note repeat:** hold ROLL and a pad, and the pad repeats in time with the
   tempo. Turn VALUE while holding ROLL to make the repeats faster or slower
   (triplets included). Tap ROLL to keep repeat switched on. Press HOLD to keep a
-  pad repeating after you let go. In chromatic mode each pad remembers its own
-  speed. [NOTE_REPEAT.md](synth/NOTE_REPEAT.md)
+  pad repeating after you let go. Hold EXIT and press a rolling pad to stop just
+  that one. In chromatic mode each pad remembers its own speed.
+  [NOTE_REPEAT.md](synth/NOTE_REPEAT.md)
 - **Chromatic scales:** in chromatic mode, hold VALUE and turn it to choose one
   of 34 scales (a quick press steps to the next one). Hold SHIFT as well to
   change the key. The pads now reach an octave higher.
@@ -282,7 +292,7 @@ You can also download this repository as a ZIP file (under the Code button), unz
 ### Manual installation
 
 1. Download the 5.52 system update from [Roland's support page](https://www.roland.com/global/support/by_product/sp-404mk2/updates_drivers/) and unzip it.
-2. Open [our patcher](https://tracelistener.github.io/SP-ETC/), load the stock `SP404MKII_APP1.bin` and press Patch firmware. It builds Sound Generator + Kits v9.50. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
+2. Open [our patcher](https://tracelistener.github.io/SP-ETC/), load the stock `SP404MKII_APP1.bin` and press Patch firmware. It builds Sound Generator + Kits v9.51. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
 3. Download the patched `SP404MKII_APP1.bin` and use it with the unchanged official 5.52 `SP404MKII_APP0.bin` for your test update. Back up first and keep your known-good update for rollback.
 4. Insert the card, hold **SHIFT** while you turn the SP on, and press the **VALUE** knob when the update menu appears.
 5. When the update is done, turn the SP off and on again.
@@ -309,6 +319,13 @@ to DOOM OS 0.6.1: your projects and samples stay, but settings or patterns from
 the newer DOOM OS might not carry over.
 
 ## Status
+
+**v9.51** (2026-10-24) is combined-test13: v9.50 with note repeat test6. On
+START/END and PITCH/SPEED, ROLL does its stock job again (previewing the end of
+the sample, opening Groove) instead of switching the roll latch, and EXIT + pad
+stops that pad's roll. Its APP1 SHA-256 is `1ef31cb7…7fca`. Only the note repeat
+module differs from v9.50; it was tried on an SP-404MKII in test builds before
+this release. [COMBINED.md](synth/COMBINED.md), [NOTE_REPEAT.md](synth/NOTE_REPEAT.md).
 
 **v9.50** (2026-10-24) is combined-test11: v9.49 with FX deep edit test10. Hold
 VALUE and press EXT SOURCE, on any screen, for the input FX's hidden settings

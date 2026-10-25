@@ -11,8 +11,8 @@ const input = process.argv[2];
 if (!input) throw new Error('Usage: node synth/test_browser.cjs /path/to/stock/SP404MKII_APP1.bin');
 const stock = new Uint8Array(fs.readFileSync(input));
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
-const KITS_SHA = 'b7662d504f90b878dbf078d8af3ab77f139a638faf18d684e93e2896efd531c5';
-const KITS_SIZE = 3152672;
+const KITS_SHA = '1ef31cb79a6e7a41328295770304eb155ef763aabb94d3e691eb78c579c07fca';
+const KITS_SIZE = 3152880;
 
 function load(includeKits = true) {
   const elements = new Map();
@@ -63,7 +63,7 @@ async function download(page) {
   }
   assert.equal(api.hex(api.sha256(stock)), digest(stock), 'browser SHA matches Node');
 
-  // The overlays: DOOM OS base from stock 5.52, then v9.50 (combined-test11: the combined feature build + fast boot + kit footer).
+  // The overlays: DOOM OS base from stock 5.52, then v9.51 (combined-test13: the combined feature build + fast boot + kit footer).
   const kits = page.context.window.DOOMOS_KITS;
   const doom = api.applyPatch(api.fromBase64(page.context.window.DOOMOS_PATCH), stock);
   assert.equal(doom.digest, kits.base_sha256);
@@ -73,10 +73,10 @@ async function download(page) {
   assert.equal(kitResult.bytes.length, KITS_SIZE);
   assert.equal(kits.sha256, KITS_SHA);
   assert.equal(kits.size, KITS_SIZE);
-  assert.equal(kits.release, 'v9.50');
-  assert.equal(kits.revision, 'combined-test11');
+  assert.equal(kits.release, 'v9.51');
+  assert.equal(kits.revision, 'combined-test13');
   assert.equal(kits.start_fix, 'resample-startfix-3');
-  assert.equal(kits.combined_sha256, '1545410fdabf0f8d32f2d9b7503ad4e90ba46ceff1f9b33e4444c1e56e7abca9');
+  assert.equal(kits.combined_sha256, '95d6e9af0c55acd56bba5717d42be9298befcaf2a59c0fe8633a660195ebe227');
   assert.equal(kits.kit_stage_sha256, '88384c3c9760559e721c1a14973ef3a2ced6abf016572b0a73c5dfb0cef492ba');
   assert.equal(kits.features.length, 11);
   assert.equal(kits.hardware_verified, false);
@@ -87,16 +87,16 @@ async function download(page) {
   const badKit = kitOverlay.slice(); badKit[badKit.length - 1] ^= 1;
   assert.throws(() => api.applyPatch(badKit, doom.bytes), /came out wrong/);
 
-  // One build, no selector: drop in stock, press Patch, get v9.50.
+  // One build, no selector: drop in stock, press Patch, get v9.51.
   const panel = page.get('doomos-patcher').innerHTML;
   assert.equal((panel.match(/type="checkbox"/g) || []).length, 0, 'no build selector');
-  assert.match(panel, /Builds Sound Generator \+ Kits v9\.50 on DOOM OS 0\.6\.1 \(ED5E\)/);
+  assert.match(panel, /Builds Sound Generator \+ Kits v9\.51 on DOOM OS 0\.6\.1 \(ED5E\)/);
   await choose(page, stock);
   assert.equal(page.get('patch').disabled, false);
   await page.get('patch').listeners.click();
   assert.equal(page.get('download').hidden, false);
   assert.equal(await download(page), KITS_SHA);
-  assert.match(page.get('status').textContent, /Sound Generator \+ Kits v9\.50 with DOOM OS 0\.6\.1 has been patched into firmware 5\.52\+kits-v9\.50/);
+  assert.match(page.get('status').textContent, /Sound Generator \+ Kits v9\.51 with DOOM OS 0\.6\.1 has been patched into firmware 5\.52\+kits-v9\.51/);
 
   page.get('reset').listeners.click();
   assert.equal(page.get('download').hidden, true);
@@ -132,12 +132,12 @@ async function download(page) {
   // The page and README.
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
-  assert.match(html, /kits-data\.js\?v=kits-v9-50-b7662d50/);
-  assert.match(html, /doomos-patcher\.js\?v=kits-v9-50-doom-os/);
+  assert.match(html, /kits-data\.js\?v=kits-v9-51-1ef31cb7/);
+  assert.match(html, /doomos-patcher\.js\?v=kits-v9-51-doom-os/);
   assert.doesNotMatch(html, /synth-data\.js|waves-data\.js|kits-midi-data|MIDI test guide|v9\.43|v9\.44/);
   assert.doesNotMatch(html, /[Tt]ick one|unticked|Pick one of/);
   // The page is the patcher and what it gives: no version header and no version history (that is on GitHub).
-  assert.doesNotMatch(html, /What's new|class="facts"|<dl|class="builds"|v9\.4\d|v9\.50/);
+  assert.doesNotMatch(html, /What's new|class="facts"|<dl|class="builds"|v9\.4\d|v9\.5\d/);
   assert.match(html, /href="https:\/\/github\.com\/tracelistener\/SP-ETC\/blob\/main\/CHANGELOG\.md">Version history/);
   // The volume note below the patcher (a user's report on v9.47: the Compressor's MODE was dangerously loud; then the
   // Super Filter), and no NO EXTRA SETTINGS note.
@@ -146,13 +146,19 @@ async function download(page) {
   assert.ok(/Compressor's MODE and the Super Filter's settings\. Both are removed\. Still, keep your volume low/.test(html),
             'the volume note: the Compressor and the Super Filter, removed; keep the volume low');
   assert.ok(readme.includes('Keep your volume low when you try the hidden effect settings'), 'the README warning');
-  assert.ok(readme.includes('If you installed v9.47 or v9.48, patch again with v9.50'), 'patch again after v9.47 or v9.48');
+  assert.ok(readme.includes('If you installed v9.47 or v9.48, patch again with v9.51'), 'patch again after v9.47 or v9.48');
   for (const text of [html, readme]) {
-    assert.ok(!text.includes('patch again with v9.48') && !text.includes('patch again with v9.49'), 'no older patch-again line');
+    assert.ok(!text.includes('patch again with v9.48') && !text.includes('patch again with v9.49') &&
+              !text.includes('patch again with v9.50'), 'no older patch-again line');
     assert.doesNotMatch(text, /says NO EXTRA SETTINGS|some can get loud/);
   }
   assert.ok(readme.includes('**Safety fix:**') && readme.includes('the Super Filter\'s hidden settings are gone') &&
-            readme.includes('**Input FX hidden settings:** hold VALUE and press EXT SOURCE'), 'the README keeps the history');
+            readme.includes('**Input FX hidden settings:** hold VALUE and press EXT SOURCE') &&
+            readme.includes('**ROLL on START/END and PITCH/SPEED:**') && readme.includes('**Stop one roll:**'),
+            'the README keeps the history');
+  assert.ok(html.includes('<strong>Stop one pad:</strong> hold EXIT and press a rolling pad') &&
+            html.includes('<strong>START/END and PITCH/SPEED:</strong> ROLL works as it normally does there'),
+            'the page explains EXIT + pad and ROLL on START/END and PITCH/SPEED');
   for (const q of ['I already have DOOM OS, or an older version of this mod', 'Which file do I need?',
                    'Will I lose my work?']) {
     assert.ok(html.includes(q) && readme.includes(q), 'the page and README answer: ' + q);
@@ -208,5 +214,5 @@ async function download(page) {
   assert.doesNotMatch(html, /For V8, start at modest LEVEL|Uncheck Wave Lab|Expected Wave Lab V8 APP1/);
   assert.doesNotMatch(readme, /<img[^>]*doom-os-512/);
   assert.doesNotMatch(html, /<img[^>]*doom-os/);
-  console.log('PASS: one build, no selector: stock 5.52 gives exactly Sound Generator + Kits v9.50 (combined-test11), repeatably; overlay metadata, wrong-input and corruption rejection, no corrupt download, DOOM OS base without kit data; page (patcher first, no version history) and README text.');
+  console.log('PASS: one build, no selector: stock 5.52 gives exactly Sound Generator + Kits v9.51 (combined-test13), repeatably; overlay metadata, wrong-input and corruption rejection, no corrupt download, DOOM OS base without kit data; page (patcher first, no version history) and README text.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
