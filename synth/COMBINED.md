@@ -362,3 +362,23 @@ held. The rest as in combined-test13, then the fast boot and the kit footer.
 `test_fx_deep_edit.py` 92 of 95 (the same 2 layout checks and ROLL's key; the 6 switch checks and the 8 saved-file
 checks pass), `test_note_repeat.py` 109 of 113 (the 4 layout checks) and the kit suites kits, capture, chord,
 shortcut, midi, restart and hot resample pass. fx-deep-edit-test11 on its own parent passes all 95.
+
+**On the unit:** REMAIN + an FX button locks the screen without switching the effect on (stock). With the effect on and
+the screen locked, HOLD + VALUE sometimes sent the display back to the main screen, at first and then no longer.
+
+## 16. combined-test15
+
+FX deep edit at `fx-deep-edit-test12`: the hidden settings' file is written at a key's release once no FX screen and
+no extra screen is up (test 11 wrote it right on the FX screen, from the UI task, the first time creating it), never
+on a pad; HOLD + VALUE holds an FX screen that is up, found as the generic key handler finds it for VALUE
+(`[0x8059259c]` among TOP's views). New guards `0x800a01c0..0x800a01d8` and `0x800cab96..0x800cabd4`, which no step
+patches. The rest as in combined-test14, then the fast boot and the kit footer.
+
+- **APP1:** `5ed02968...f997`, 3,156,880 bytes, in `analysis/kit_pr1_audit/release/combined-test15` (the combined
+  build `590fb95c...79a1`, after the fast boot `8f7c5fd5...934e`). Every module byte for byte its own test build's;
+  the same 7 reviewed overlaps. Only the FX deep edit module differs from combined-test14.
+
+**Checked** (Unicorn, `analysis/kit_pr1_audit/dev_combined15/run_suites.py`): on the final APP1,
+`test_fx_deep_edit.py` 94 of 97 (the same 2 layout checks and ROLL's key), `test_note_repeat.py` 109 of 113 (the 4
+layout checks) and the kit suites pass. fx-deep-edit-test12 on its own parent passes all 97. Not known: whether the
+write was what sent the screen back (the emulator draws nothing).
