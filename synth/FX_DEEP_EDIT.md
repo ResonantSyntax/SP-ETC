@@ -10,6 +10,35 @@ firmware's own state is never changed. Values live in RAM, per bus and effect, a
 module's own. Outside the page the build behaves as v9.46, except that an edited value goes to
 the chip again whenever the firmware selects that effect on that bus.
 
+## Test 13 (fx-deep-edit-test13): the FX screen drawn again after the switch; edits to the chip's effect
+
+On the unit (combined-test15): "after switching it again on different fx (one with no hidden fx) when i went to try
+again on another fx it goes off again"; and "when u start machine, press delay then remain delay, no hidden
+parameters until u turn delay on and off".
+
+- **The screen.** In the emulator the locked FX screen survives HOLD + VALUE in every order, on the parent and on
+  test 12 alike (no lock cleared, no close, no pop), so what went wrong is in what the emulator doesn't do: drawing.
+  The FX screen's update (`0x80146598`, its vtable +0x28, every 50 ms through the view tick `0x80073b58`) only
+  draws on a change (screen 2 against `0x8059232c`, the CTRL values); when a popup ends the stock draws the page
+  under it. The extra screens' popups go with a change of the FX screen (VALUE steps it), so they never showed it;
+  the switch's 1.5 s popup ends on its own and the main screen showed while the FX screen was still up and locked
+  (its button lit; pressing it twice gave it back). Now the vtable slot points at `fde_fx_update`, which calls the
+  stock update and, after a HOLD + VALUE with an FX screen up, once 1.6 s have passed on the audio clock
+  (`0x8059226c`, 24 a ms) and no popup is on the screen (`[0x805922b4]` < 1: the popup tick past bounce's hook), sets
+  `0x8059232c` to -1: the update takes the screen as changed and draws it all (`+0x1b15`). Not proven on the unit.
+- **The chip's effect.** The saved edits went to the effect `0x27c` names on each slot, read at the main screen's
+  first event: when that event is an FX button stock hasn't handled yet, `0x27c` names the old effect, and the chip
+  (Delay since the boot) gets nothing until an FxType, as off and on gives. The module now notes every FxType it
+  sees (`fde_chip`), and the load and the switch send the edits for the effect the chip has.
+- Guards: the view tick `0x80073b58..0x80073b7c`, the popup tick `0x8006b95c..0x8006b9e8` (bounce hooks its first 12
+  bytes), the popup start `0x8006bc88..0x8006bca4` (its ms into `0x805922b4`), the clock step `0x80004f70..0x80004fae`;
+  the slot `0x802269e8` must hold `0x80146599`, the only place that does.
+
+Checked in the emulator: 100 checks pass (test 12's 97, and: after a restart a saved edit goes to the effect the
+chip has on BUS 1 while `0x27c` names another; through the vtable slot 3 s of updates leave the FX screen and its
+globals as the stock update does; after HOLD + VALUE on the FX screen no redraw while the popup's 1.6 s run or a popup
+is up, and the first update after both sets `0x8059232c` to -1, takes the screen as changed and asks to draw it, once).
+
 ## Test 12 (fx-deep-edit-test12): no file write while an FX screen is up
 
 On the unit (combined-test14): "turn delay on, press remain delay, screen locked now, press hold+value to toggle

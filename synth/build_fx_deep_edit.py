@@ -12,7 +12,8 @@ which kept MFX's effect choice away: an FX button alone is stock again.) Test11:
 settings off (each slot's edits back to the firmware's defaults, VALUE and VALUE + EXT SOURCE stock's) and on again;
 the edits and the switch are kept over a restart in B:/_fx_hidden.bin. Test12: the file is written at a key's
 release once no FX screen is up (on the unit the FX screen went away when it was written there), and HOLD + VALUE
-holds an FX screen that is up.
+holds an FX screen that is up. Test13: the FX screen's update (its vtable +0x28) goes through the module, which has
+the screen draw itself again once HOLD + VALUE's popup is gone; the edits go to the effect the chip has (its FxTypes).
 
 The settings of an effect are the parameters that are not in its six-ID knob record (0x802e5b40) and that
 DM-404's fxmap.json (MIT, bases from a boot capture) gives no boot value. IDs come from the firmware's name
@@ -55,7 +56,7 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'fx-deep-edit-test12'
+REVISION = 'fx-deep-edit-test13'
 SLOT = 0x4000                       # reserved: [base, base + SLOT)
 # Settings left out on purpose: (effect, fxmap name) -> why. test6 and test8: users' reports on v9.47 and v9.48.
 SUPER_FILTER_OUT = ('FLT SLOPE', 'FLT GAIN', 'MOD SW', 'MOD WAVE', 'ATTACK', 'LEVEL')
@@ -66,7 +67,7 @@ SLOT_CEILING = 0x83FE6000           # the FX probe's slot starts here
 EXPORTS = ('fde_filter', 'fde_dt1', 'fde_dt1_stock', 'fde_dt1_fxtype', 'fde_value', 'fde', 'fde_values',
            'fde_edited', 'fde_text', 'fde_effect_names', 'fde_first', 'fde_count', 'fde_ids', 'fde_names',
            'fde_key_down', 'fde_key_up', 'fde_knob', 'fde_down_bridge', 'fde_up_bridge', 'fde_knob_bridge',
-           'fde_path', 'fde_file')
+           'fde_path', 'fde_file', 'fde_fx_update', 'fde_chip')
 # test10: the UI dispatcher's key press, key release and knob handlers (event types 5, 6, 9 from its table at
 # 0x8003b53a): (site, displaced bytes, where the handler goes on, bridge, its C function, what)
 HOOKS = [
@@ -78,6 +79,7 @@ HOOKS = [
      'knob (type 9): push {r4, r5, r6, lr}; mov r6, r0; ldrsh.w r4, [r0, #2]; ldrsh.w r5, [r0, #4]'),
 ]
 VTABLE_SLOT, DOOM_FILTER = 0x8022CE64, 0x6031C8F9     # TOP page vtable 0x8022ce5c, +8
+FX_UPDATE_SLOT, FX_UPDATE = 0x802269E8, 0x80146599     # test13: the FX screen's vtable 0x802269c0, +0x28
 DT1, DT1_BODY = 0x800D8118, 0x800D8122                # the builder; where its body goes on after 10 bytes
 DT1_HEAD = bytes.fromhex('2de9f04f83b04ef2c819')      # push.w {r4-r11, lr}; sub sp, #12; movw sb, #0xe1c8
 TOGGLE, TOGGLE_HEAD = 0x801479A0, bytes.fromhex('41f63f31425c002a08bf')   # movw r1, #0x1b3f; ldrb; cmp; it eq
@@ -178,6 +180,16 @@ GUARDS = [
     (0x800CAB96, 0x800CABD4, '7fc9c627cb29612f8c95292a3882483ba00d61b01b544e38cfbbbf4aeb85f5e0',
      'test12: the generic key handler\'s VALUE: [0x8059259c] (the FX screen) if it is among the page\'s first '
      '0x200 views, then 0x800cba44'),
+    # test13: the FX screen drawn again after the switch's popup
+    (0x80073B58, 0x80073B7C, 'a10428722c5b9615df82c553bf2a17e77bdf7236cdaa7dd278c08388660e5208',
+     'test13: a view\'s tick: every [view + 0x50] ms its vtable +0x28 (the FX screen\'s update 0x80146598)'),
+    (0x8006B95C, 0x8006B9E8, 'dda5d9d7d82c5a411d5495abca3adda27df92bc3fcab938505ed038d173d3531',
+     'test13: the popup tick past its first 12 bytes (bounce\'s): [0x805922b4] ms left counts down, -1 when the '
+     'popup goes'),
+    (0x8006BC88, 0x8006BCA4, '434f99ef27fb249a58a3ef8eedf8eb4206de5a1009d3ac90be1827e971f98b21',
+     'test13: a popup drawn: its ms into [0x805922b4]'),
+    (0x80004F70, 0x80004FAE, 'acd6d5acdf0b4623f02909decb5047d875c0d041332b91135c7e475d412c75e1',
+     'test13: clock step: 0x8059226c += 32 every 64-frame block'),
 ]
 MD = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB | capstone.CS_MODE_MCLASS)
 
@@ -367,7 +379,7 @@ def compile_module(folder: Path, zig: Path, link_base: int, limit: int, tables_h
     (folder / 'fx_deep_edit.ld').write_text(f'''ENTRY(fde_filter)
 SECTIONS {{
  . = {link_base:#x};
- .text : {{ KEEP(*(.text.fde_filter)) KEEP(*(.text.fde_dt1)) KEEP(*(.text.fde_value)) KEEP(*(.text.fde_down_bridge)) KEEP(*(.text.fde_up_bridge)) KEEP(*(.text.fde_knob_bridge)) *(.text*) }}
+ .text : {{ KEEP(*(.text.fde_filter)) KEEP(*(.text.fde_dt1)) KEEP(*(.text.fde_value)) KEEP(*(.text.fde_down_bridge)) KEEP(*(.text.fde_up_bridge)) KEEP(*(.text.fde_knob_bridge)) KEEP(*(.text.fde_fx_update)) *(.text*) }}
  .rodata : ALIGN(16) {{ *(.rodata*) }}
  .data : ALIGN(16) {{ *(.data*) }}
  .bss : ALIGN(16) {{ *(.bss*) *(COMMON) }}
@@ -409,6 +421,12 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
             raise ValueError(f'{start:#x}..{end:#x} differs from stock 5.52 ({what})')
     if struct.unpack('<I', rt.read(VTABLE_SLOT, 4))[0] != DOOM_FILTER:
         raise ValueError(f'{VTABLE_SLOT:#x}: expected DOOM OS\'s page filter {DOOM_FILTER:#x}')
+    if struct.unpack('<I', rt.read(FX_UPDATE_SLOT, 4))[0] != FX_UPDATE:
+        raise ValueError(f'{FX_UPDATE_SLOT:#x}: expected the FX screen\'s update {FX_UPDATE:#x}')
+    held = [a for dst, code in rt.code_rows() for a in range(dst, dst + len(code) - 3, 4)
+            if code[a - dst:a - dst + 4] == struct.pack('<I', FX_UPDATE)]
+    if held != [FX_UPDATE_SLOT]:
+        raise ValueError(f'the FX screen\'s update is held elsewhere too: {[hex(a) for a in held]}')
     if rt.read(DT1, len(DT1_HEAD)) != DT1_HEAD:
         raise ValueError(f'{DT1:#x}: expected the stock builder\'s first ten bytes')
     inside = branches_into(rt, DT1 + 1, DT1 + len(DT1_HEAD)) + refs_into(bytes(img), DT1 + 1, DT1 + len(DT1_HEAD))
@@ -441,7 +459,7 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
     if len(module) > SLOT:
         raise ValueError(f'module ({len(module)} bytes) exceeds the slot')
     for name in ('fde_filter', 'fde_dt1', 'fde_dt1_stock', 'fde_dt1_fxtype', 'fde_value', 'fde_key_down',
-                 'fde_key_up', 'fde_knob', 'fde_down_bridge', 'fde_up_bridge', 'fde_knob_bridge'):
+                 'fde_key_up', 'fde_knob', 'fde_down_bridge', 'fde_up_bridge', 'fde_knob_bridge', 'fde_fx_update'):
         if not symbols[name] & 1:
             raise ValueError(f'{name} is not a Thumb function symbol')
     stock = module[(symbols['fde_dt1_stock'] & ~1) - base:][:len(DT1_HEAD) + 10]
@@ -470,6 +488,13 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
     img[off:off + 4] = replacement
     patches.append(dict(address=VTABLE_SLOT, size=4, original_hex=original.hex(), replacement_hex=replacement.hex(),
                         what='TOP page vtable 0x8022ce5c +8: DOOM OS\'s filter -> fde_filter (which passes on to it)'))
+    off = file_offset(img, FX_UPDATE_SLOT, 4)
+    original = bytes(img[off:off + 4])
+    replacement = struct.pack('<I', symbols['fde_fx_update'])
+    img[off:off + 4] = replacement
+    patches.append(dict(address=FX_UPDATE_SLOT, size=4, original_hex=original.hex(), replacement_hex=replacement.hex(),
+                        what='test13: the FX screen\'s vtable 0x802269c0 +0x28: its update 0x80146599 -> fde_fx_update '
+                             '(which calls it)'))
     off = file_offset(img, DT1, len(DT1_HEAD))
     jump = movw_movt_bx(12, symbols['fde_dt1'])
     img[off:off + len(DT1_HEAD)] = jump
@@ -561,7 +586,11 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
                'slot\'s edited settings of the effect it has get the firmware\'s default (one DT1 each), the FX '
                'screen\'s VALUE is stock\'s toggle (+0x1b40 ^= 1 with +0x1b3f set), VALUE + EXT SOURCE is stock\'s, '
                'an FxType re-sends nothing; again: HIDDEN FX ON and the edits sent again. The edits are kept. '
-               'test12: an FX screen up (0x8059259c, on TOP\'s view list) is held (+0x1b3f, 0x80592320) so it stays',
+               'test12: an FX screen up (0x8059259c, on TOP\'s view list) is held (+0x1b3f, 0x80592320) so it stays; '
+               'test13: and once the popup\'s 1.5 s (+ 0.1 s, on the audio clock 0x8059226c) are over and no popup '
+               'is up ([0x805922b4] < 1), its next update finds 0x8059232c (screen 2 as last drawn) at -1 and draws '
+               'the whole screen again. The DT1s go to the effect the chip has on each slot: what its last FxType '
+               '(through fde_dt1) selected',
         saved='test11: B:/_fx_hidden.bin (beside stock\'s B:/_emphasis.bin): "FXHS", version 1, the switch, the '
               'record count (u16), FNV-1a 32 of the header\'s first 8 bytes and the records; a record per edited '
               'setting: slot, value, parameter ID (u16). Read once, at TOP\'s first event after the boot (or the '

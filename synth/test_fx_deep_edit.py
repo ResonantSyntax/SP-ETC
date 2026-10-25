@@ -292,12 +292,13 @@ class Machine:
         self.uc.mem_write(SYSPRM + 0xC4 + 2 * bus, struct.pack('<h', fx))
 
     def state(self):
-        b = bytes(self.uc.mem_read(self.sym['fde'], 36))
+        b = bytes(self.uc.mem_read(self.sym['fde'], 44))
         return dict(screen=b[0], input=b[1], ext_held=b[2], value_down=b[3], bus=b[4], effect=b[5], off=b[6],
                     value_taken=b[7], sent=struct.unpack_from('<I', b, 8)[0],
-                    resent=struct.unpack_from('<I', b, 12)[0], loaded=b[16], dirty=b[17],
+                    resent=struct.unpack_from('<I', b, 12)[0], loaded=b[16], dirty=b[17], redraw=b[18],
                     loads=struct.unpack_from('<I', b, 20)[0], bad_files=struct.unpack_from('<I', b, 24)[0],
-                    saves=struct.unpack_from('<I', b, 28)[0], save_errors=struct.unpack_from('<I', b, 32)[0])
+                    saves=struct.unpack_from('<I', b, 28)[0], save_errors=struct.unpack_from('<I', b, 32)[0],
+                    redraw_at=struct.unpack_from('<I', b, 36)[0], redraws=struct.unpack_from('<I', b, 40)[0])
 
 
 class Settings:
@@ -339,15 +340,17 @@ def static_checks(out, man, img, parent, fxmap, st):
 
     def file_off(addr):
         return [load - FLASH + addr - dst for load, dst, n, fn in prow if fn == COPY and load and dst <= addr < dst + n][0]
-    vt, dt, tg = file_off(VTABLE_SLOT), file_off(DT1), file_off(TOGGLE)
+    vt, dt, tg, fu = file_off(VTABLE_SLOT), file_off(DT1), file_off(TOGGLE), file_off(0x802269E8)
     diff = [i for i in range(len(parent)) if img[i] != parent[i]]
-    allowed = set(range(0x80, 0x88)) | set(range(vt, vt + 4)) | set(range(dt, dt + 10)) | set(range(tg, tg + 10))
+    allowed = set(range(0x80, 0x88)) | set(range(vt, vt + 4)) | set(range(dt, dt + 10)) | set(range(tg, tg + 10)) | \
+        set(range(fu, fu + 4))
     for site, head, *_ in HOOKS:
         allowed |= set(range(file_off(site), file_off(site) + len(head)))
     check(set(diff) <= allowed and img[:len(parent)] != parent,
           f'only the scatter pointer, the TOP vtable slot, the DT1 builder\'s first ten bytes, the FX screen\'s VALUE '
-          f'toggle and (test10) the UI dispatcher\'s key press, key release and knob handlers\' first bytes change '
-          f'inside the parent; the FX screen\'s show method (REMAIN held?) is stock ({len(diff)} bytes)')
+          f'toggle, (test10) the UI dispatcher\'s key press, key release and knob handlers\' first bytes and (test13) the '
+          f'FX screen\'s update slot change inside the parent; the FX screen\'s show method (REMAIN held?) is stock '
+          f'({len(diff)} bytes)')
     e0 = man['entries']
     good = []
     for site, head, resume, bridge, fn, what in HOOKS:
@@ -1073,6 +1076,7 @@ def toggle_checks(img, parent, man, st):
         mm.set_bus(1, TAPE_ECHO)
         mm.set_bus(2, TAPE_ECHO, knobs=False)
         mm.bus_effect(0, TAPE_ECHO)
+        mm.call(DT1, 0x80B62F09, 0x7E, 0, TAPE_ECHO)    # the input FX's FxType, as its own screen sends it
         if ours:
             first = mm.r32(e['fde_first'] + TAPE_ECHO) & 0xFF
             for (bus, name), v in edits.items():
@@ -1151,6 +1155,7 @@ def saved_checks(img, man, st):
         m = FileMachine(img, e, files)
         m.set_bus(1, TAPE_ECHO)
         m.bus_effect(0, GT_AMP_SIM)
+        m.call(DT1, 0x80B62F09, 0x7E, 0, GT_AMP_SIM)    # the boot gives the chip the input FX
         m.clear()
         return m
 
@@ -1285,6 +1290,73 @@ def screen_stay_checks(img, parent, man, st):
           f'pending), nor on the next key press; the next key release after the screen is gone writes both ({got})')
 
 
+FX_UPDATE_SLOT, DRAWN_SCREEN2, POPUP_LEFT, CLOCK = 0x802269E8, 0x8059232C, 0x805922B4, 0x8059226C
+
+
+def chip_redraw_checks(img, parent, man, st):
+    """Test13: the effect the chip has (its FxTypes) gets the edits; the FX screen draws again after the popup."""
+    e = man['entries']
+    # the chip's effect, not 0x27c: after a restart the first event can be an FX button stock hasn't handled yet
+    x0 = st.by_fx[TAPE_ECHO][0]
+    good = saved_file([(1, x0['max'], x0['id'])])
+    m = FileMachine(img, e, {SAVED: good})
+    m.set_bus(1, TAPE_ECHO)                             # the boot: Tape Echo on BUS 1, on the chip
+    chip = m.uc.mem_read(e['fde_chip'], 5)
+    m.bus_effect(1, REVERB)                             # 0x27c[1] says otherwise for now
+    m.clear()
+    m.dispatch(EV_KEY, KEY_SHIFT)
+    got = m.frames()[0]
+    m.dispatch(EV_KEY_UP, KEY_SHIFT)
+    check(chip[1] == TAPE_ECHO and got == [fx_frame(TAPE_ECHO, 1, x0['aa'], x0['max'])],
+          f'test13: the module notes each FxType as the chip\'s effect ({list(chip)}); after a restart the saved edit '
+          f'goes to the effect the chip has on BUS 1 (Tape Echo), while 0x27c[1] says Reverb ({len(got)} DT1)')
+    # through the FX screen's vtable slot the update is stock's
+    out = []
+    for image, sym in ((parent, None), (img, e)):
+        mm, ss = fx_machine(image, {'entries': sym} if sym else None)
+        ss.open()
+        mm.bus_effect(1, TAPE_ECHO)
+        v = ss.view()
+        fn = mm.r32(FX_UPDATE_SLOT)
+        for _ in range(60):
+            mm.call(fn & ~1, v, count=20_000_000)
+        out.append((fn, bytes(mm.uc.mem_read(v + 0x1B10, 0x40)), bytes(mm.uc.mem_read(0x80592320, 0x40)),
+                    bool([c for c in mm.closes if c == v])))
+    check(out[0][0] == 0x80146599 and out[1][0] == e['fde_fx_update'] and out[0][1:] == out[1][1:],
+          f'the FX screen\'s vtable +0x28 is fde_fx_update ({out[1][0]:#x}); 3 s of its updates through it leave the '
+          f'screen and its globals as the stock update does')
+    # HOLD + VALUE on it: the screen draws again once the popup's time is over and no popup is up
+    m, sc = fx_machine(img, man)
+    sc.open()
+    m.bus_effect(1, TAPE_ECHO)
+    v = sc.view()
+    fn = m.r32(FX_UPDATE_SLOT) & ~1
+    for _ in range(3):
+        m.call(fn, v, count=20_000_000)
+    m.w32(CLOCK, 1000)
+    hold_value(m)
+    writes = []
+    m.uc.hook_add(UC_HOOK_MEM_WRITE, lambda uc, acc, a, size, value, _: writes.append((a, value)), None,
+                  begin=DRAWN_SCREEN2, end=DRAWN_SCREEN2)
+    m.uc.hook_add(UC_HOOK_MEM_WRITE, lambda uc, acc, a, size, value, _: writes.append((a, value)), None,
+                  begin=v + 0x1B15, end=v + 0x1B15)
+    seq = []
+    for clock, left in ((1000, 1500), (1000 + 24 * 900, 600), (1000 + 24 * 1700, 200), (1000 + 24 * 1700, -1),
+                        (1000 + 24 * 1800, -1)):
+        m.w32(CLOCK, clock)
+        m.w32(POPUP_LEFT, left)
+        del writes[:]
+        m.call(fn, v, count=20_000_000)
+        drawn = [x for a, x in writes if a == DRAWN_SCREEN2]
+        flag = [x for a, x in writes if a == v + 0x1B15]
+        seq.append((m.state()['redraws'], len(drawn) == 2 and drawn[0] == 0xFFFFFFFF and drawn[1] in (0, 1),
+                    1 in flag))
+    check(seq == [(0, False, False)] * 3 + [(1, True, True), (1, False, False)],
+          f'after HOLD + VALUE on the FX screen: no redraw while the popup\'s 1.6 s run or a popup is still up; the '
+          f'first update after both takes its screen as changed (0x8059232c set to -1, then back to what it draws) and '
+          f'asks to draw it (+0x1b15 = 1), once ({seq})')
+
+
 def main():
     out = Path(sys.argv[1])
     man = json.loads((out / 'manifest.json').read_text(encoding='utf-8'))
@@ -1307,6 +1379,7 @@ def main():
     toggle_checks(img, parent, man, st)
     saved_checks(img, man, st)
     screen_stay_checks(img, parent, man, st)
+    chip_redraw_checks(img, parent, man, st)
     print(json.dumps(dict(cases=cases[0])))
     print('ALL PASS' if not fails else f'{len(fails)} FAILED')
     sys.exit(1 if fails else 0)
