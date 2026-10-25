@@ -119,6 +119,16 @@ typedef unsigned char u8;
 #define FILE_RECORDS (SLOTS * FDE_PARAMS)
 #define FNV 2166136261u
 
+/* Test13: the FX screen drawn again after HOLD + VALUE's popup. Stock draws the page under a popup that ends, and the FX
+ * screen draws only on a change, so on the unit the main screen showed while the FX screen was still up (its effect lit).
+ * The FX screen's update (its vtable +0x28, every 50 ms, through fde_fx_update) takes a screen 2 value it never draws as
+ * a change and draws the whole screen. */
+#define FX_VIEW_UPDATE ((void (*)(u8 *))0x80146599u)       /* the stock update */
+#define DRAWN_SCREEN2 ((volatile s32 *)0x8059232Cu)        /* screen 2 as the update last drew it: 0 or 1 */
+#define POPUP_LEFT ((const volatile s32 *)0x805922B4u)      /* the popup on the screen: ms left, < 1 with none */
+#define CLOCK ((const volatile u32 *)0x8059226Cu)           /* the audio clock: + 32 a 64-frame block, 24 a ms */
+#define CLOCK_MS 24u
+
 #include "fx_deep_edit_tables.h"
 
 struct fde_state {
@@ -133,11 +143,15 @@ struct fde_state {
     u32 resent;          /* values sent again after an FxType, since boot */
     u8 loaded;           /* test11: the file was looked for */
     u8 dirty;            /* an edit not in the file yet */
-    u8 spare[2];
+    u8 redraw;           /* test13: the FX screen draws again once the switch's popup is gone ... */
+    u8 spare;
     u32 loads, bad_files, saves, save_errors;
+    u32 redraw_at;       /* ... at this audio clock or later */
+    u32 redraws;
 };
 
 EXPORT volatile struct fde_state fde;
+EXPORT u8 fde_chip[SLOTS];                              /* test13: the effect each slot's last FxType gave the chip */
 EXPORT u8 fde_values[SLOTS][FDE_PARAMS];                /* by slot and setting */
 EXPORT u8 fde_edited[SLOTS][FDE_PARAMS];
 EXPORT char fde_text[40];
@@ -173,9 +187,10 @@ static void resend(u32 bus, s32 fx) {
 }
 
 /* An FxType for the input FX or BUS 1-4: the frame, then that slot's edited values for the effect it selects
- * (none while the hidden settings are off). */
+ * (none while the hidden settings are off). Test13: the effect is noted as the chip's for that slot. */
 EXPORT u32 fde_dt1_fxtype(u32 link, s32 id, s32 slot, s32 value) {
     u32 r = fde_dt1_stock(link, id, slot, value);
+    fde_chip[id - FXTYPE0] = (u8)value;
     if (!fde.off)
         resend(id - FXTYPE0, value);
     return r;
@@ -251,7 +266,8 @@ static void load(void) {
     fde.off = fde_file[5] & 1;
     if (!fde.off)
         for (u32 bus = 0; bus < SLOTS; bus++)
-            resend(bus, SYS_GET(SYSPRM, BUS_EFFECT, (s32)bus));
+            resend(bus, fde_chip[bus]);                /* test13: the chip's effect, not 0x27c (the boot's first */
+                                                       /* event can be an FX button stock hasn't handled yet) */
     fde.loads++;
 }
 
@@ -474,9 +490,10 @@ static u32 value_held(void) {
     return fde.value_down || ((KEYS[KEY_VALUE >> 3] >> (KEY_VALUE & 7)) & 1);
 }
 
-/* HOLD + VALUE (test11): the hidden settings off, or on again. Each slot's edited settings of the effect it has get
- * the firmware's default (off) or the edit (on) again, one DT1 each. An FX screen up stays, held as a VALUE press
- * there holds it. The switch goes to the file with the edits, later (fde_key_up). */
+/* HOLD + VALUE (test11): the hidden settings off, or on again. Each slot's edited settings of the effect the chip has
+ * there get the firmware's default (off) or the edit (on) again, one DT1 each. An FX screen up stays, held as a VALUE
+ * press there holds it, and draws again once the popup is gone (test13). The switch goes to the file with the edits,
+ * later (fde_key_up). */
 static void toggle(void) {
     ready();
     if (fde.screen)
@@ -485,11 +502,13 @@ static void toggle(void) {
     if (v) {
         v[VIEW_REMAIN] = 1;
         *REMAIN_MODE = 1;
+        fde.redraw = 1;
+        fde.redraw_at = *CLOCK + (TOGGLE_MS + 100) * CLOCK_MS;
     }
     fde.off ^= 1;
     fde.dirty = 1;
     for (u32 bus = 0; bus < SLOTS; bus++) {
-        s32 fx = SYS_GET(SYSPRM, BUS_EFFECT, (s32)bus);
+        s32 fx = fde_chip[bus];
         if ((u32)fx >= EFFECTS)
             continue;
         for (u32 i = fde_first[fx], end = i + fde_count[fx]; i < end; i++) {
@@ -626,6 +645,17 @@ __attribute__((naked)) EXPORT void fde_knob_bridge(void) {
 /* TOP's page filter (vtable 0x8022ce5c +0x08): on an extra screen CTRL 1-3 are its settings', and any button
  * but VALUE and SHIFT leaves it and then does what it always does. Everything else goes on to DOOM OS's filter
  * as before. (The input FX's screens are worked in the dispatcher's handlers above, before any page.) */
+/* The FX screen's update (its vtable +0x28 points here; test13): after HOLD + VALUE on it, once the popup's time is
+ * over and no popup is on the screen, the screen draws itself again; then the stock update. */
+EXPORT void fde_fx_update(u8 *view) {
+    if (fde.redraw && (s32)(*CLOCK - fde.redraw_at) >= 0 && *POPUP_LEFT < 1) {
+        fde.redraw = 0;
+        *DRAWN_SCREEN2 = -1;
+        fde.redraws++;
+    }
+    FX_VIEW_UPDATE(view);
+}
+
 EXPORT s32 fde_filter(void *page, const s16 *ev) {
     s32 type = ev[0], what = ev[1];
     ready();                                           /* test11: the saved edits, at the main screen's first event */
