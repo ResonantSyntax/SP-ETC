@@ -56,3 +56,7 @@ DOOM-SoundGenerator-Kits-v9.50  b7662d504f90b878dbf078d8af3ab77f139a638faf18d684
 # v9.51 (combined-test13), in the patcher: v9.50 with note repeat test6 (ROLL is stock's on START/END and
 # PITCH/SPEED; EXIT + pad stops that pad's roll). Every other module is v9.50's byte for byte. Replaces v9.50.
 DOOM-SoundGenerator-Kits-v9.51  1ef31cb79a6e7a41328295770304eb155ef763aabb94d3e691eb78c579c07fca  3152880
+# v9.52 (combined-test17), in the patcher: v9.51 with FX deep edit test14 (HOLD + VALUE switches the hidden
+# settings off and on; the edits are saved; the hidden settings come after any screen). Every other module is
+# v9.51's byte for byte. Replaces v9.51.
+DOOM-SoundGenerator-Kits-v9.52  e7b754211f58ed0a46a5dc517ba777118943460998d11479c648726df117be79  3157104

@@ -2,7 +2,7 @@
 
 **[Open the patcher](https://tracelistener.github.io/SP-ETC/)**
 
-The patcher builds **Sound Generator + Kits v9.51** for the SP-404MKII:
+The patcher builds **Sound Generator + Kits v9.52** for the SP-404MKII:
 Sound Generator **v9.9.3** (four live voices, 17 new waveforms, nine
 volume/filter-envelope presets, 34 scale choices and an arpeggiator) plus
 thirteen synthesized machine kits. It also adds bounce in place, pad
@@ -21,7 +21,20 @@ reproduction and validation](synth/KITS.md).
 > your speakers. Turn the volume down first, especially on headphones. The
 > Compressor and Super Filter settings that did this in v9.47 and v9.48 are
 > removed.
-> If you installed v9.47 or v9.48, patch again with v9.51.
+> If you installed v9.47 or v9.48, patch again with v9.52.
+
+## New in v9.52
+
+- **Hidden settings on and off:** hold HOLD and press VALUE, on any screen, to
+  switch all hidden effect settings off (the effects sound as they do on a
+  stock SP) and on again (your edits come back). The SP shows HIDDEN FX OFF or
+  HIDDEN FX ON. While they are off, VALUE on the effect screen does its usual
+  job.
+- **Edits kept:** your hidden effect settings, and whether they are on or off,
+  are saved and come back after you turn the SP off and on.
+- **Always there:** the hidden settings now come up every time you press VALUE
+  on the effect screen, also after you have been on other screens. Before, they
+  sometimes stayed away until you switched the effect off and on.
 
 ## New in v9.51
 
@@ -96,8 +109,9 @@ reproduction and validation](synth/KITS.md).
   stays up, and each VALUE press shows the next page, including extra settings
   the SP normally keeps hidden (for example Tape Echo's tape distortion). Turn
   CTRL 1-3 to change them. **Turn your volume down before you try them:** some
-  can make the sound suddenly very loud. These settings reset when you turn the
-  SP off.
+  can make the sound suddenly very loud. Your edits are kept when you turn the
+  SP off. Hold HOLD and press VALUE to switch them all off (the stock sound) and
+  on again.
   [FX_DEEP_EDIT.md](synth/FX_DEEP_EDIT.md)
 - **Faster start-up:** once the project has loaded, the SP goes straight to the
   main screen and skips DOOM OS's start-up animation (about 4 seconds faster).
@@ -292,7 +306,7 @@ You can also download this repository as a ZIP file (under the Code button), unz
 ### Manual installation
 
 1. Download the 5.52 system update from [Roland's support page](https://www.roland.com/global/support/by_product/sp-404mk2/updates_drivers/) and unzip it.
-2. Open [our patcher](https://tracelistener.github.io/SP-ETC/), load the stock `SP404MKII_APP1.bin` and press Patch firmware. It builds Sound Generator + Kits v9.51. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
+2. Open [our patcher](https://tracelistener.github.io/SP-ETC/), load the stock `SP404MKII_APP1.bin` and press Patch firmware. It builds Sound Generator + Kits v9.52. The patcher only accepts official 5.52 and checks the result against [the fork's checksums](synth/checksums.txt).
 3. Download the patched `SP404MKII_APP1.bin` and use it with the unchanged official 5.52 `SP404MKII_APP0.bin` for your test update. Back up first and keep your known-good update for rollback.
 4. Insert the card, hold **SHIFT** while you turn the SP on, and press the **VALUE** knob when the update menu appears.
 5. When the update is done, turn the SP off and on again.
@@ -319,6 +333,14 @@ to DOOM OS 0.6.1: your projects and samples stay, but settings or patterns from
 the newer DOOM OS might not carry over.
 
 ## Status
+
+**v9.52** (2026-10-24) is combined-test17: v9.51 with FX deep edit test14. Hold
+HOLD and press VALUE to switch the hidden effect settings off and on; the edits
+and the switch are saved and come back after a restart; and the hidden settings
+come up every time, also after other screens. Its APP1 SHA-256 is
+`e7b75421…be79`. Only the FX deep edit module differs from v9.51; this exact
+firmware was tried on an SP-404MKII as combined-test17 before this release.
+[COMBINED.md](synth/COMBINED.md), [FX_DEEP_EDIT.md](synth/FX_DEEP_EDIT.md).
 
 **v9.51** (2026-10-24) is combined-test13: v9.50 with note repeat test6. On
 START/END and PITCH/SPEED, ROLL does its stock job again (previewing the end of
