@@ -382,3 +382,25 @@ patches. The rest as in combined-test14, then the fast boot and the kit footer.
 `test_fx_deep_edit.py` 94 of 97 (the same 2 layout checks and ROLL's key), `test_note_repeat.py` 109 of 113 (the 4
 layout checks) and the kit suites pass. fx-deep-edit-test12 on its own parent passes all 97. Not known: whether the
 write was what sent the screen back (the emulator draws nothing).
+
+**On the unit:** it still went to the main screen at times (after HOLD + VALUE on an effect without hidden settings,
+then on another); and after a restart the saved edits weren't heard until the effect was switched off and on.
+
+## 17. combined-test16
+
+FX deep edit at `fx-deep-edit-test13`: the FX screen's update (its vtable `0x802269c0` +0x28, the slot `0x802269e8`)
+goes through `fde_fx_update`, which, after a HOLD + VALUE with an FX screen up, once the popup's 1.6 s are over and no
+popup is on the screen, makes the screen draw itself again (stock draws the page under a popup that ends; the FX
+screen draws only on a change); and the module notes every FxType, so the saved edits and the switch go to the effect
+the chip has, not to what `0x27c` names at the main screen's first event. Its new guards are the view tick, the
+popup tick past bounce's 12 bytes, the popup start and the clock step; no other step patches them (bounce's popup
+tick hook ends at `0x8006b95c`). The rest as in combined-test15, then the fast boot and the kit footer.
+
+- **APP1:** `9fb45ab8...900c`, 3,156,960 bytes, in `analysis/kit_pr1_audit/release/combined-test16` (the combined
+  build `4920a9fe...ea97`, after the fast boot `011fd2c8...4312`). Every module byte for byte its own test build's;
+  the same 7 reviewed overlaps. Only the FX deep edit module (and its new slot) differs from combined-test15.
+
+**Checked** (Unicorn, `analysis/kit_pr1_audit/dev_combined16/run_suites.py`): on the final APP1,
+`test_fx_deep_edit.py` 97 of 100 (the same 2 layout checks and ROLL's key), `test_note_repeat.py` 109 of 113 (the 4
+layout checks) and the kit suites pass. fx-deep-edit-test13 on its own parent passes all 100. Not proven on the unit:
+that the redraw is what was missing.
