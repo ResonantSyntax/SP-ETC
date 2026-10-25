@@ -10,6 +10,27 @@ firmware's own state is never changed. Values live in RAM, per bus and effect, a
 module's own. Outside the page the build behaves as v9.46, except that an edited value goes to
 the chip again whenever the firmware selects that effect on that bus.
 
+## Test 12 (fx-deep-edit-test12): no file write while an FX screen is up
+
+On the unit (combined-test14): "turn delay on, press remain delay, screen locked now, press hold+value to toggle
+hidden, screen goes to bpm with fx still lit. then later it stopped doing that". In the emulator the locked screen
+stays through HOLD + VALUE (no close request), but the emulator neither draws nor models the storage; what test 11
+newly did there was write `B:/_fx_hidden.bin` from the UI task with the FX screen up, the first time creating it
+(and "later it stopped" fits a first, slow creation). So:
+
+- The file is written at a key's release (`fde_key_up`), once no FX screen and no extra screen is up, after an edit
+  or a switch: on leaving the FX screen that is usually EXIT's release. Never while a screen is up, never on a pad.
+- HOLD + VALUE holds an FX screen that is up, as a VALUE press there does (`+0x1b3f`, `0x80592320`): one opened with
+  the FX button alone would otherwise close after its 2 s. The FX screen is found as the generic key handler finds
+  it for VALUE: `[0x8059259c]`, only if it is among TOP's views (`0x800a01c0(TOP + 0x38, i)`; the pointer stays after
+  the screen goes).
+- Guards: `0x800a01c0..0x800a01d8` and the generic key handler's VALUE lookup `0x800cab96..0x800cabd4`.
+
+Checked in the emulator: 97 checks pass (test 11's 95, and: with the FX screen opened by its button alone, HOLD + VALUE
+holds it and it stays past 2 s, where on the parent it goes; an edit on the FX screen and HOLD + VALUE there write
+nothing while the FX screen is up, nor on the next key press, and the next key release after it is gone writes both).
+Not known: whether the file write really was what sent the screen back; the emulator draws nothing.
+
 ## Test 11 (fx-deep-edit-test11): a switch, and the edits kept over a restart
 
 From the user's test of v9.50: "Maybe an option to toggle the hidden effects too. could hold+value knob work", then
