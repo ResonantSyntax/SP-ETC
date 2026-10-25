@@ -292,10 +292,14 @@ class Machine:
         self.uc.mem_write(SYSPRM + 0xC4 + 2 * bus, struct.pack('<h', fx))
 
     def state(self):
-        b = bytes(self.uc.mem_read(self.sym['fde'], 16))
-        return dict(screen=b[0], input=b[1], ext_held=b[2], value_down=b[3], bus=b[4], effect=b[5],
-                    sent=struct.unpack_from('<I', b, 8)[0],
-                    resent=struct.unpack_from('<I', b, 12)[0])
+        b = bytes(self.uc.mem_read(self.sym['fde'], 48))
+        return dict(screen=b[0], input=b[1], ext_held=b[2], value_down=b[3], bus=b[4], effect=b[5], off=b[6],
+                    value_taken=b[7], sent=struct.unpack_from('<I', b, 8)[0],
+                    resent=struct.unpack_from('<I', b, 12)[0], loaded=b[16], dirty=b[17], redraw=b[18],
+                    loads=struct.unpack_from('<I', b, 20)[0], bad_files=struct.unpack_from('<I', b, 24)[0],
+                    saves=struct.unpack_from('<I', b, 28)[0], save_errors=struct.unpack_from('<I', b, 32)[0],
+                    redraw_at=struct.unpack_from('<I', b, 36)[0], redraws=struct.unpack_from('<I', b, 40)[0],
+                    repairs=struct.unpack_from('<I', b, 44)[0])
 
 
 class Settings:
@@ -337,15 +341,17 @@ def static_checks(out, man, img, parent, fxmap, st):
 
     def file_off(addr):
         return [load - FLASH + addr - dst for load, dst, n, fn in prow if fn == COPY and load and dst <= addr < dst + n][0]
-    vt, dt, tg = file_off(VTABLE_SLOT), file_off(DT1), file_off(TOGGLE)
+    vt, dt, tg, fu = file_off(VTABLE_SLOT), file_off(DT1), file_off(TOGGLE), file_off(0x802269E8)
     diff = [i for i in range(len(parent)) if img[i] != parent[i]]
-    allowed = set(range(0x80, 0x88)) | set(range(vt, vt + 4)) | set(range(dt, dt + 10)) | set(range(tg, tg + 10))
+    allowed = set(range(0x80, 0x88)) | set(range(vt, vt + 4)) | set(range(dt, dt + 10)) | set(range(tg, tg + 10)) | \
+        set(range(fu, fu + 4))
     for site, head, *_ in HOOKS:
         allowed |= set(range(file_off(site), file_off(site) + len(head)))
     check(set(diff) <= allowed and img[:len(parent)] != parent,
           f'only the scatter pointer, the TOP vtable slot, the DT1 builder\'s first ten bytes, the FX screen\'s VALUE '
-          f'toggle and (test10) the UI dispatcher\'s key press, key release and knob handlers\' first bytes change '
-          f'inside the parent; the FX screen\'s show method (REMAIN held?) is stock ({len(diff)} bytes)')
+          f'toggle, (test10) the UI dispatcher\'s key press, key release and knob handlers\' first bytes and (test13) the '
+          f'FX screen\'s update slot change inside the parent; the FX screen\'s show method (REMAIN held?) is stock '
+          f'({len(diff)} bytes)')
     e0 = man['entries']
     good = []
     for site, head, resume, bridge, fn, what in HOOKS:
@@ -969,6 +975,423 @@ def input_checks(img, parent, man, st):
     check(x == y and x[0][3], 'EXT SOURCE alone: as on the parent (it reaches DOOM OS\'s filter and the stock handling)')
 
 
+# ---- test11: HOLD + VALUE, and the edits kept over a restart ----
+FILE = dict(open=0x800DEC60, read=0x800DEC48, write=0x800DD9B8, close=0x800DEBD8)
+SAVED, TOGGLE_MS = 'B:/_fx_hidden.bin', 1500
+
+
+class FileMachine(Machine):
+    """The internal storage as files in a dict: open 0 reads (a missing file fails), 0x601 creates or truncates
+    (fails while fail_open); short makes a write one byte short."""
+
+    def __init__(self, img, symbols=None, files=None):
+        self.files = {k: bytearray(v) for k, v in (files or {}).items()}
+        self.fds, self.fs, self.fail_open, self.short = {}, [], False, False
+        super().__init__(img, symbols)
+        for name, fn in (('read', self._rd), ('write', self._wr), ('close', self._cl)):
+            self.uc.hook_add(UC_HOOK_CODE, fn, None, begin=FILE[name], end=FILE[name])
+
+    def _args(self, n):
+        return [self.uc.reg_read(getattr(ar, f'UC_ARM_REG_R{k}')) for k in range(n)]
+
+    def _open(self, uc, a, size, _):
+        path = bytes(uc.mem_read(uc.reg_read(ar.UC_ARM_REG_R0), 96)).split(b'\0')[0].decode('latin-1')
+        flags = uc.reg_read(ar.UC_ARM_REG_R1)
+        self.opened.append(path)
+        self.fs.append(('open', path, flags))
+        if (flags == 0 and path not in self.files) or (flags == 0x601 and self.fail_open):
+            return self._ret(-1)
+        if flags == 0x601:
+            self.files[path] = bytearray()
+        fd = 3
+        while fd in self.fds:
+            fd += 1
+        self.fds[fd] = [path, 0]
+        self._ret(fd)
+
+    def _rd(self, uc, a, size, _):
+        fd, buf, n = self._args(3)
+        path, pos = self.fds[fd]
+        data = bytes(self.files[path][pos:pos + n])
+        uc.mem_write(buf, data)
+        self.fds[fd][1] += len(data)
+        self._ret(len(data))
+
+    def _wr(self, uc, a, size, _):
+        fd, buf, n = self._args(3)
+        path, pos = self.fds[fd]
+        n -= int(self.short)
+        self.files[path][pos:pos + n] = bytes(uc.mem_read(buf, n))
+        self.fds[fd][1] += n
+        self.fs.append(('write', path, n))
+        self._ret(n)
+
+    def _cl(self, uc, a, size, _):
+        self.fs.append(('close', self.fds.pop(self._args(1)[0])[0]))
+        self._ret(0)
+
+
+def fnv(b, h=2166136261):
+    for x in b:
+        h = ((h ^ x) * 16777619) & 0xFFFFFFFF
+    return h
+
+
+def saved_file(records, off=0, magic=b'FXHS', version=1):
+    """The file as the module writes it: magic, version, the switch, the count, FNV-1a, (slot, value, ID) records."""
+    body = b''.join(struct.pack('<BBH', bus, v, i) for bus, v, i in records)
+    head = magic + bytes([version, off]) + struct.pack('<H', len(records))
+    return head + struct.pack('<I', fnv(body, fnv(head))) + body
+
+
+def read_saved(b):
+    """(the switch, [(slot, value, ID)]) of a valid file, else None."""
+    b = bytes(b or b'')
+    if len(b) < 12 or b[:4] != b'FXHS' or b[4] != 1:
+        return None
+    n = struct.unpack_from('<H', b, 6)[0]
+    if len(b) != 12 + 4 * n or struct.unpack_from('<I', b, 8)[0] != fnv(b[12:], fnv(b[:8])):
+        return None
+    return b[5], [struct.unpack_from('<BBH', b, 12 + 4 * k) for k in range(n)]
+
+
+def hold_value(m):
+    """HOLD down, VALUE pressed and let go, HOLD let go; the VALUE press's frames, popups and filter calls."""
+    m.dispatch(EV_KEY, KEY_HOLD)
+    m.clear()
+    m.dispatch(EV_KEY, KEY_VALUE)
+    got = (m.frames(), list(m.popups), list(m.doom))
+    m.clear()
+    m.dispatch(EV_KEY_UP, KEY_VALUE)
+    up = list(m.doom)
+    m.dispatch(EV_KEY_UP, KEY_HOLD)
+    return got + (up,)
+
+
+def toggle_checks(img, parent, man, st):
+    e = man['entries']
+    te = {x['name']: (i, x) for i, x in enumerate(st.by_fx[TAPE_ECHO])}
+    edits = {(1, 'TAPE DIST'): 2, (1, 'BASS'): 10, (2, 'TREBLE'): 19, (0, 'BASS'): 7}
+
+    def setup(mm, ours):
+        mm.set_bus(1, TAPE_ECHO)
+        mm.set_bus(2, TAPE_ECHO, knobs=False)
+        mm.bus_effect(0, TAPE_ECHO)
+        mm.call(DT1, 0x80B62F09, 0x7E, 0, TAPE_ECHO)    # the input FX's FxType, as its own screen sends it
+        if ours:
+            first = mm.r32(e['fde_first'] + TAPE_ECHO) & 0xFF
+            for (bus, name), v in edits.items():
+                i = first + te[name][0]
+                mm.uc.mem_write(e['fde_values'] + bus * 135 + i, bytes([v]))
+                mm.uc.mem_write(e['fde_edited'] + bus * 135 + i, bytes([1]))
+        mm.clear()
+
+    def sent(value):
+        return [fx_frame(TAPE_ECHO, bus, te[name][1]['aa'], value(bus, name)) for bus in range(5)
+                for name in sorted((n for b, n in edits if b == bus), key=lambda n: te[n][0])]
+
+    m, p = Machine(img, e), Machine(parent)
+    setup(m, True)
+    setup(p, False)
+    held = [run_script(x, [(EV_KEY, KEY_HOLD)]) for x in (p, m)]
+    for x in (p, m):
+        x.dispatch(EV_KEY_UP, KEY_HOLD)
+    (got, other, ok), pops, doom, up = hold_value(m)
+    want = sent(lambda bus, name: te[name][1]['default'])
+    check(held[0] == held[1] and ok and got == want and pops == [('HIDDEN FX OFF', TOGGLE_MS)] and not doom and
+          not up and m.state()['off'] == 1 and m.state()['value_taken'] == 0,
+          f'test11: HOLD + VALUE: HIDDEN FX OFF, each slot\'s edited Tape Echo settings back to their defaults '
+          f'({len(want)} DT1s, slot by slot in table order); the VALUE press and release taken; HOLD alone as on '
+          f'the parent')
+    out = []
+    for mm in (p, m):
+        mm.clear()
+        mm.set_bus(1, REVERB)
+        mm.set_bus(1, TAPE_ECHO)
+        out.append(mm.frames())
+    check(out[0] == out[1] and out[0][2], 'off: BUS 1 back to Tape Echo sends the parent\'s frames only (no edits)')
+    chord = [(EV_KEY, KEY_VALUE), (EV_KEY, KEY_EXT), (EV_KEY_UP, KEY_EXT), (EV_KEY_UP, KEY_VALUE)]
+    a, b = run_script(p, chord), run_script(m, chord)
+    check(a == b and m.state()['input'] == 0, 'off: VALUE + EXT SOURCE as on the parent (the input FX\'s screens '
+                                              'don\'t open, EXT SOURCE is stock\'s)')
+    seqs = []
+    for image, man_ in ((parent, None), (img, man)):
+        mm, ss = fx_machine(image, man_)
+        if man_:
+            hold_value(mm)
+        ss.open()
+        mm.bus_effect(1, TAPE_ECHO)
+        seq = []
+        for k in range(3):
+            mm.clear()
+            ss.value()
+            seq.append((ss.flag(VIEW_REMAIN), ss.flag(VIEW_SCREEN2), mm.popups))
+        seqs.append(seq)
+    check(seqs[0] == seqs[1], f'off: on the FX screen (REMAIN + FX) VALUE is stock\'s toggle of screens 1 and 2, no '
+                              f'extra screens ({seqs[1]})')
+    (got, other, ok), pops, doom, up = hold_value(m)
+    want = sent(lambda bus, name: edits[(bus, name)])
+    check(ok and got == want and pops == [('HIDDEN FX ON', TOGGLE_MS)] and m.state()['off'] == 0,
+          f'HOLD + VALUE again: HIDDEN FX ON and the edits sent again ({len(want)} DT1s)')
+    out = []
+    for mm in (p, m):
+        mm.clear()
+        mm.set_bus(1, REVERB)
+        mm.set_bus(1, TAPE_ECHO)
+        out.append(mm.frames()[0])
+    ours = sent(lambda bus, name: edits[(bus, name)])[1:3]          # BUS 1's two
+    tail = [f for f in out[1] if f not in out[0]]
+    check(tail == ours, 'on again: BUS 1 back to Tape Echo re-sends its edits after the FxType, as before')
+
+
+def saved_checks(img, man, st):
+    e = man['entries']
+    x0 = st.by_fx[GT_AMP_SIM][0]                        # the input FX's first extra screen, CTRL 1
+    raw, other_raw = (0, 127) if x0['default'] != x0['min'] else (127, 0)
+    tv, ov = (x0['min'], x0['max']) if raw == 0 else (x0['max'], x0['min'])     # a turn that changes it, and back
+    chord = [(EV_KEY, KEY_VALUE), (EV_KEY, KEY_EXT), (EV_KEY_UP, KEY_EXT), (EV_KEY_UP, KEY_VALUE)]
+    leave = [(EV_KEY, KEY_EXIT), (EV_KEY_UP, KEY_EXIT)]
+
+    def fresh(files=None):
+        m = FileMachine(img, e, files)
+        m.set_bus(1, TAPE_ECHO)
+        m.bus_effect(0, GT_AMP_SIM)
+        m.call(DT1, 0x80B62F09, 0x7E, 0, GT_AMP_SIM)    # the boot gives the chip the input FX
+        m.clear()
+        return m
+
+    def first_event(m):
+        """SHIFT pressed and let go on TOP: the frames its press sent."""
+        m.clear()
+        m.dispatch(EV_KEY, KEY_SHIFT)
+        got = m.frames()
+        m.dispatch(EV_KEY_UP, KEY_SHIFT)
+        return got
+
+    def ours(m, kind=None):
+        """The module's file calls (DOOM OS opens B:/DOOMOS.CFG on its own)."""
+        return [f for f in m.fs if f[1] == SAVED and (kind is None or f[0] == kind)]
+
+    def edit(m, r):
+        run_script(m, chord)
+        m.dispatch(EV_KNOB, 1, r)
+
+    # no file yet: the main screen's first event looks for it; an edit is written when its screen is left
+    m = fresh()
+    sent0 = first_event(m)[0]
+    looked = ours(m)
+    edit(m, raw)
+    early = ours(m, 'write')
+    run_script(m, leave)
+    data = bytes(m.files.get(SAVED, b''))
+    st_ = m.state()
+    check(looked == [('open', SAVED, 0)] and not sent0 and not early and
+          read_saved(data) == (0, [(0, tv, x0['id'])]) and st_['saves'] == 1 and st_['dirty'] == 0 and
+          st_['loads'] == 0 and st_['bad_files'] == 0,
+          f'test11: no file: the main screen\'s first event looks for {SAVED} once and sends nothing; an edit (the '
+          f'input FX\'s {x0["name"]} to {tv}) is written when its screen is left: one record (slot 0, {tv}, ID '
+          f'{x0["id"]})')
+    # a restart: the file read at the first event, the edit sent for the effect the slot has
+    m = fresh({SAVED: data})
+    got, other, ok = first_event(m)
+    first = m.r32(e['fde_first'] + GT_AMP_SIM) & 0xFF
+    kept = (m.uc.mem_read(e['fde_values'] + first, 1)[0], m.uc.mem_read(e['fde_edited'] + first, 1)[0])
+    check(ok and got == [fx_frame(GT_AMP_SIM, 0, x0['aa'], tv)] and kept == (tv, 1) and m.state()['loads'] == 1 and
+          not ours(m, 'write'),
+          'after a restart the first event reads it: the edit is back in RAM and sent to the input FX (one DT1), '
+          'nothing written')
+    m.clear()
+    m.call(DT1, 0x80B62F09, 0x7E, 0, GT_AMP_SIM)
+    check(fx_frame(GT_AMP_SIM, 0, x0['aa'], tv) in m.frames()[0],
+          'and an FxType for the input FX re-sends it, as an edit made since boot')
+    # switched off: kept too; after a restart nothing is sent
+    hold_value(m)
+    off_file = bytes(m.files[SAVED])
+    m2 = fresh({SAVED: off_file})
+    sent2 = first_event(m2)[0]
+    check(read_saved(off_file) == (1, [(0, tv, x0['id'])]) and m2.state()['off'] == 1 and not sent2 and
+          m2.state()['loads'] == 1,
+          'HOLD + VALUE writes the switch: switched off, a restart sends nothing and stays off')
+    (got2, _, ok2), pops, _, _ = hold_value(m2)
+    check(ok2 and got2 == [fx_frame(GT_AMP_SIM, 0, x0['aa'], tv)] and pops == [('HIDDEN FX ON', TOGGLE_MS)] and
+          read_saved(m2.files[SAVED]) == (0, [(0, tv, x0['id'])]),
+          'switched on again there: the edit is sent and the file says on')
+    # bad files change nothing; unknown settings are dropped and values kept in range
+    good = saved_file([(0, tv, x0['id'])])
+    bad = {'magic': b'FXHT' + good[4:], 'version': good[:4] + b'\x02' + good[5:], 'short': good[:-1],
+           'long': good + b'\0', 'sum': good[:12] + bytes([good[12] ^ 1]) + good[13:]}
+    res = {}
+    for label, b in bad.items():
+        mm = fresh({SAVED: b})
+        sent_b = first_event(mm)[0]
+        res[label] = (mm.state()['bad_files'], mm.state()['loads'], bool(sent_b),
+                      mm.uc.mem_read(e['fde_edited'] + first, 1)[0])
+    check(all(r == (1, 0, False, 0) for r in res.values()), f'a bad file (wrong magic, version, size or sum) is '
+                                                              f'ignored: nothing applied or sent ({res})')
+    mm = fresh({SAVED: saved_file([(0, 255, x0['id']), (0, 5, 9999), (7, 5, x0['id'])])})
+    sent_c = first_event(mm)[0]
+    v = mm.uc.mem_read(e['fde_values'] + first, 1)[0]
+    check(v == min(255, x0['max']) and sent_c == [fx_frame(GT_AMP_SIM, 0, x0['aa'], v)] and
+          mm.state()['loads'] == 1,
+          f'a record for an ID this build lacks, or a slot past 4, is dropped; a value past the firmware\'s range is '
+          f'kept inside it ({v})')
+    # a failed write: counted, the edit stays pending and goes at the next leave
+    mm = fresh()
+    mm.fail_open = True
+    edit(mm, raw)
+    run_script(mm, leave)
+    first_try = (mm.state()['save_errors'], mm.state()['dirty'], SAVED in mm.files)
+    mm.fail_open = False
+    edit(mm, other_raw)
+    run_script(mm, leave)
+    check(first_try == (1, 1, False) and read_saved(mm.files[SAVED]) == (0, [(0, ov, x0['id'])]) and
+          mm.state()['dirty'] == 0,
+          f'a write that can\'t open is counted and the edits stay pending; the next leave writes them ({first_try})')
+
+
+FX_SHOWN = 0x8059259C                                   # the FX screen, from when it opens (stock clears it later)
+
+
+def screen_stay_checks(img, parent, man, st):
+    """Test12: HOLD + VALUE with the FX screen up holds it; the file waits until no FX screen is up."""
+    e = man['entries']
+    res = []
+    for image, man_ in ((parent, None), (img, man)):
+        mm, ss = fx_machine(image, man_)
+        ss.open(remain=False)                           # the FX button alone: the screen that goes after 2 s
+        mm.bus_effect(1, TAPE_ECHO)
+        hold_value(mm)
+        mm.bus_effect(1, TAPE_ECHO)
+        res.append((ss.flag(VIEW_REMAIN), mm.uc.mem_read(REMAIN_GLOBAL, 1)[0], bool(ss.run(2500))))
+    check(res[0] == (0, 0, True) and res[1] == (1, 1, False),
+          f'test12: with the FX screen up (opened by its button alone), HOLD + VALUE holds it (+0x1b3f, 0x80592320) and '
+          f'it stays past 2 s; on the parent it goes ({res})')
+    # the file: nothing written while the FX screen is up; at the first key release after it is gone
+    m = FileMachine(img, e)
+    m.set_bus(1, TAPE_ECHO)
+    sc = Screen(m)
+    sc.open()
+    m.bus_effect(1, TAPE_ECHO)
+    for _ in range(2):
+        sc.value()                                      # screen 2, then the first extra screen
+    m.dispatch(EV_KNOB, 1, 127)
+    sc.value()
+    sc.value()                                          # on past the last extra screens: screen 1 again
+    hold_value(m)
+    during = [f for f in m.fs if f[1] == SAVED and f[0] == 'write']
+    pending = m.state()['dirty']
+    m.call(0x800C4E50, m.r32(TOP_PAGE) + 0x38, 4, 1, count=20_000_000)   # the FX screen closed, as stock closes it
+    run_script(m, [(EV_KEY, KEY_SHIFT)])
+    on_press = [f for f in m.fs if f[1] == SAVED and f[0] == 'write']
+    run_script(m, [(EV_KEY_UP, KEY_SHIFT)])
+    got = read_saved(m.files.get(SAVED))
+    te = st.by_fx[TAPE_ECHO][0]
+    check(not during and pending == 1 and not on_press and got == (1, [(1, te['max'], te['id'])]),
+          f'an edit on the FX screen and HOLD + VALUE there: nothing written while the FX screen is up (it is still '
+          f'pending), nor on the next key press; the next key release after the screen is gone writes both ({got})')
+
+
+FX_UPDATE_SLOT, DRAWN_SCREEN2, POPUP_LEFT, CLOCK = 0x802269E8, 0x8059232C, 0x805922B4, 0x8059226C
+
+
+def chip_redraw_checks(img, parent, man, st):
+    """Test13: the effect the chip has (its FxTypes) gets the edits; the FX screen draws again after the popup."""
+    e = man['entries']
+    # the chip's effect, not 0x27c: after a restart the first event can be an FX button stock hasn't handled yet
+    x0 = st.by_fx[TAPE_ECHO][0]
+    good = saved_file([(1, x0['max'], x0['id'])])
+    m = FileMachine(img, e, {SAVED: good})
+    m.set_bus(1, TAPE_ECHO)                             # the boot: Tape Echo on BUS 1, on the chip
+    chip = m.uc.mem_read(e['fde_chip'], 5)
+    m.bus_effect(1, REVERB)                             # 0x27c[1] says otherwise for now
+    m.clear()
+    m.dispatch(EV_KEY, KEY_SHIFT)
+    got = m.frames()[0]
+    m.dispatch(EV_KEY_UP, KEY_SHIFT)
+    check(chip[1] == TAPE_ECHO and got == [fx_frame(TAPE_ECHO, 1, x0['aa'], x0['max'])],
+          f'test13: the module notes each FxType as the chip\'s effect ({list(chip)}); after a restart the saved edit '
+          f'goes to the effect the chip has on BUS 1 (Tape Echo), while 0x27c[1] says Reverb ({len(got)} DT1)')
+    # through the FX screen's vtable slot the update is stock's
+    out = []
+    for image, sym in ((parent, None), (img, e)):
+        mm, ss = fx_machine(image, {'entries': sym} if sym else None)
+        ss.open()
+        mm.bus_effect(1, TAPE_ECHO)
+        v = ss.view()
+        fn = mm.r32(FX_UPDATE_SLOT)
+        for _ in range(60):
+            mm.call(fn & ~1, v, count=20_000_000)
+        out.append((fn, bytes(mm.uc.mem_read(v + 0x1B10, 0x40)), bytes(mm.uc.mem_read(0x80592320, 0x40)),
+                    bool([c for c in mm.closes if c == v])))
+    check(out[0][0] == 0x80146599 and out[1][0] == e['fde_fx_update'] and out[0][1:] == out[1][1:],
+          f'the FX screen\'s vtable +0x28 is fde_fx_update ({out[1][0]:#x}); 3 s of its updates through it leave the '
+          f'screen and its globals as the stock update does')
+    # HOLD + VALUE on it: the screen draws again once the popup's time is over and no popup is up
+    m, sc = fx_machine(img, man)
+    sc.open()
+    m.bus_effect(1, TAPE_ECHO)
+    v = sc.view()
+    fn = m.r32(FX_UPDATE_SLOT) & ~1
+    for _ in range(3):
+        m.call(fn, v, count=20_000_000)
+    m.w32(CLOCK, 1000)
+    hold_value(m)
+    writes = []
+    m.uc.hook_add(UC_HOOK_MEM_WRITE, lambda uc, acc, a, size, value, _: writes.append((a, value)), None,
+                  begin=DRAWN_SCREEN2, end=DRAWN_SCREEN2)
+    m.uc.hook_add(UC_HOOK_MEM_WRITE, lambda uc, acc, a, size, value, _: writes.append((a, value)), None,
+                  begin=v + 0x1B15, end=v + 0x1B15)
+    seq = []
+    for clock, left in ((1000, 1500), (1000 + 24 * 900, 600), (1000 + 24 * 1700, 200), (1000 + 24 * 1700, -1),
+                        (1000 + 24 * 1800, -1)):
+        m.w32(CLOCK, clock)
+        m.w32(POPUP_LEFT, left)
+        del writes[:]
+        m.call(fn, v, count=20_000_000)
+        drawn = [x for a, x in writes if a == DRAWN_SCREEN2]
+        flag = [x for a, x in writes if a == v + 0x1B15]
+        seq.append((m.state()['redraws'], len(drawn) == 2 and drawn[0] == 0xFFFFFFFF and drawn[1] in (0, 1),
+                    1 in flag))
+    check(seq == [(0, False, False)] * 3 + [(1, True, True), (1, False, False)],
+          f'after HOLD + VALUE on the FX screen: no redraw while the popup\'s 1.6 s run or a popup is still up; the '
+          f'first update after both takes its screen as changed (0x8059232c set to -1, then back to what it draws) and '
+          f'asks to draw it (+0x1b15 = 1), once ({seq})')
+
+
+def pointer_checks(img, parent, man, st):
+    """Test14: another page's object built with the FX screen up on TOP (its constructor clears 0x8059259c): VALUE
+    on TOP still steps to the hidden settings."""
+    rt = Runtime(parent)
+    res = []
+    for image, man_ in ((parent, None), (img, man)):
+        mm, ss = fx_machine(image, man_)
+        ss.open()
+        mm.bus_effect(1, TAPE_ECHO)
+        v = ss.view()
+        reg = mm.r32(mm.r32(0x801F8F74 + 16 * 5))
+        mm.uc.mem_write(EVENT, struct.pack('<6h', 1, 0, 0, 0, 0, 0))
+        mm.call(reg & ~1, EVENT, count=20_000_000)      # START/END's page object, as on its entry; TOP stays
+        cleared = mm.r32(FX_SHOWN)
+        seq = []
+        for _ in range(2):
+            mm.clear()
+            ss.value()
+            seq.append((ss.flag(VIEW_SCREEN2), mm.popups))
+        res.append((cleared, ss.view() == v, mm.r32(FX_SHOWN) == v, seq))
+    p, i = res
+    want = [(1, []), (1, [(screen_text(rt, st, 1, TAPE_ECHO, 1), SCREEN_MS)])]
+    check(p[0] == 0 and p[1] and not p[2] and p[3] == [(0, []), (0, [])] and i[0] == 0 and i[1] and i[2] and
+          i[3] == want,
+          f'test14: a page\'s constructor clears 0x8059259c with TOP\'s FX screen still up; on the parent VALUE then '
+          f'reaches no FX screen (not even screen 2); here TOP\'s filter puts the pointer back and VALUE steps to screen '
+          f'2, then the hidden settings ({i[3]})')
+    m, sc = fx_machine(img, man)
+    m.clear()
+    run_script(m, [(EV_KEY, KEY_SHIFT), (EV_KEY_UP, KEY_SHIFT)])
+    check(m.r32(FX_SHOWN) == 0 and m.state()['repairs'] == 0,
+          'with no FX screen up, TOP\'s filter leaves stock\'s pointer alone')
+
+
 def main():
     out = Path(sys.argv[1])
     man = json.loads((out / 'manifest.json').read_text(encoding='utf-8'))
@@ -988,6 +1411,11 @@ def main():
     stop_checks(img, parent, man)
     passthrough_checks(img, parent, man)
     input_checks(img, parent, man, st)
+    toggle_checks(img, parent, man, st)
+    saved_checks(img, man, st)
+    screen_stay_checks(img, parent, man, st)
+    chip_redraw_checks(img, parent, man, st)
+    pointer_checks(img, parent, man, st)
     print(json.dumps(dict(cases=cases[0])))
     print('ALL PASS' if not fails else f'{len(fails)} FAILED')
     sys.exit(1 if fails else 0)

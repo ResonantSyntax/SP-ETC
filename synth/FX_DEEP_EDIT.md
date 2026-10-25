@@ -6,9 +6,114 @@ the effects chip (BMC); 142 of the 383 effect parameters are never sent. The FX 
 tried. This page lets you set them.
 
 It is a stage on top of the published Sound Generator + Kits v9.46 (APP1 `7b5fbcb4…684a`). The
-firmware's own state is never changed and nothing is saved: values live in RAM, per bus and effect,
-until power-off. Outside the page the build behaves as v9.46, except that an edited value goes to
+firmware's own state is never changed. Values live in RAM, per bus and effect, and (test 11) in one file of the
+module's own. Outside the page the build behaves as v9.46, except that an edited value goes to
 the chip again whenever the firmware selects that effect on that bus.
+
+## Test 14 (fx-deep-edit-test14): the hidden settings whatever page came in between
+
+On the unit (combined-test16, and v9.51, test 10's FX deep edit): sometimes, at random and long after a restart, DELAY
+and REMAIN + DELAY gave the FX screen but VALUE never reached the hidden settings until the effect was switched off and
+on. Run in Unicorn: the generic key handler sends VALUE to the FX screen only through stock's pointer to it
+(`[0x8059259c]`, among TOP's views), and the page base constructor (`0x800ce1d0`, every page's registry handler calls
+it) clears that pointer (`0x800ce27c`) while TOP keeps its FX screen up. Build any page's object (START/END's, in the
+check) and VALUE on TOP reaches no FX screen: not the hidden settings, not even stock's screen 2. An FX button press
+opens a new FX screen and sets the pointer again (`0x800bd800`), which is why off and on helped.
+
+- The module finds the FX screen by its vtable (`0x802269c0`) among TOP's views (`0x800a01c0(TOP + 0x38, i)`), and at
+  every event TOP's filter sees puts stock's pointer back on it if it isn't there, before the event goes on (so the
+  same VALUE press gets there). With no FX screen up the pointer is left alone.
+- Guard: the constructor's clear `0x800ce274..0x800ce284`.
+
+Checked in the emulator: 102 checks pass (test 13's 100, and: with START/END's page object built and TOP's FX screen
+up, the parent's VALUE reaches no FX screen while here the pointer comes back and VALUE steps to screen 2, then the
+hidden settings; with no FX screen up the pointer is left as it is).
+
+## Test 13 (fx-deep-edit-test13): the FX screen drawn again after the switch; edits to the chip's effect
+
+On the unit (combined-test15): "after switching it again on different fx (one with no hidden fx) when i went to try
+again on another fx it goes off again"; and "when u start machine, press delay then remain delay, no hidden
+parameters until u turn delay on and off".
+
+- **The screen.** In the emulator the locked FX screen survives HOLD + VALUE in every order, on the parent and on
+  test 12 alike (no lock cleared, no close, no pop), so what went wrong is in what the emulator doesn't do: drawing.
+  The FX screen's update (`0x80146598`, its vtable +0x28, every 50 ms through the view tick `0x80073b58`) only
+  draws on a change (screen 2 against `0x8059232c`, the CTRL values); when a popup ends the stock draws the page
+  under it. The extra screens' popups go with a change of the FX screen (VALUE steps it), so they never showed it;
+  the switch's 1.5 s popup ends on its own and the main screen showed while the FX screen was still up and locked
+  (its button lit; pressing it twice gave it back). Now the vtable slot points at `fde_fx_update`, which calls the
+  stock update and, after a HOLD + VALUE with an FX screen up, once 1.6 s have passed on the audio clock
+  (`0x8059226c`, 24 a ms) and no popup is on the screen (`[0x805922b4]` < 1: the popup tick past bounce's hook), sets
+  `0x8059232c` to -1: the update takes the screen as changed and draws it all (`+0x1b15`). Not proven on the unit.
+- **The chip's effect.** The saved edits went to the effect `0x27c` names on each slot, read at the main screen's
+  first event: when that event is an FX button stock hasn't handled yet, `0x27c` names the old effect, and the chip
+  (Delay since the boot) gets nothing until an FxType, as off and on gives. The module now notes every FxType it
+  sees (`fde_chip`), and the load and the switch send the edits for the effect the chip has.
+- Guards: the view tick `0x80073b58..0x80073b7c`, the popup tick `0x8006b95c..0x8006b9e8` (bounce hooks its first 12
+  bytes), the popup start `0x8006bc88..0x8006bca4` (its ms into `0x805922b4`), the clock step `0x80004f70..0x80004fae`;
+  the slot `0x802269e8` must hold `0x80146599`, the only place that does.
+
+Checked in the emulator: 100 checks pass (test 12's 97, and: after a restart a saved edit goes to the effect the
+chip has on BUS 1 while `0x27c` names another; through the vtable slot 3 s of updates leave the FX screen and its
+globals as the stock update does; after HOLD + VALUE on the FX screen no redraw while the popup's 1.6 s run or a popup
+is up, and the first update after both sets `0x8059232c` to -1, takes the screen as changed and asks to draw it, once).
+
+## Test 12 (fx-deep-edit-test12): no file write while an FX screen is up
+
+On the unit (combined-test14): "turn delay on, press remain delay, screen locked now, press hold+value to toggle
+hidden, screen goes to bpm with fx still lit. then later it stopped doing that". In the emulator the locked screen
+stays through HOLD + VALUE (no close request), but the emulator neither draws nor models the storage; what test 11
+newly did there was write `B:/_fx_hidden.bin` from the UI task with the FX screen up, the first time creating it
+(and "later it stopped" fits a first, slow creation). So:
+
+- The file is written at a key's release (`fde_key_up`), once no FX screen and no extra screen is up, after an edit
+  or a switch: on leaving the FX screen that is usually EXIT's release. Never while a screen is up, never on a pad.
+- HOLD + VALUE holds an FX screen that is up, as a VALUE press there does (`+0x1b3f`, `0x80592320`): one opened with
+  the FX button alone would otherwise close after its 2 s. The FX screen is found as the generic key handler finds
+  it for VALUE: `[0x8059259c]`, only if it is among TOP's views (`0x800a01c0(TOP + 0x38, i)`; the pointer stays after
+  the screen goes).
+- Guards: `0x800a01c0..0x800a01d8` and the generic key handler's VALUE lookup `0x800cab96..0x800cabd4`.
+
+Checked in the emulator: 97 checks pass (test 11's 95, and: with the FX screen opened by its button alone, HOLD + VALUE
+holds it and it stays past 2 s, where on the parent it goes; an edit on the FX screen and HOLD + VALUE there write
+nothing while the FX screen is up, nor on the next key press, and the next key release after it is gone writes both).
+Not known: whether the file write really was what sent the screen back; the emulator draws nothing.
+
+## Test 11 (fx-deep-edit-test11): a switch, and the edits kept over a restart
+
+From the user's test of v9.50: "Maybe an option to toggle the hidden effects too. could hold+value knob work", then
+"could the hidden paramter edits be saved upon restart?". Asked what off should do, the user chose that it undoes the
+edits too (an A/B).
+
+- **HOLD + VALUE** (press), on any page, caught in `fde_key_down` like the input FX's chord (VALUE's press and
+  release taken; HOLD itself goes on): **HIDDEN FX OFF**. On each slot the edited settings of the effect it has get
+  the firmware's default (one DT1 each, through the stock builder), so the effects sound as on stock; the FX screen's
+  VALUE is stock's toggle (`+0x1b40 ^= 1` with `+0x1b3f` set, what `0x801479a0` does), VALUE + EXT SOURCE is stock's,
+  and an FxType re-sends nothing. Again: **HIDDEN FX ON**, each slot's edits for its effect sent again. The edits are
+  kept either way. Stock has no HOLD + VALUE (the manual's VALUE chords are VALUE + GATE and SHIFT + VALUE). With note
+  repeat in the same image, a HOLD press while rolls go on also holds them, as it always does.
+- **Saved** in `B:/_fx_hidden.bin`, at the internal drive's root beside stock's own `B:/_emphasis.bin` and
+  `B:/_BackSamplingRec.bin` (stock keeps its system data, the FX parameters it retains included, in QSPI flash, so
+  there is no stock file to join): "FXHS", version 1, the switch, the record count (u16), FNV-1a 32 of the header's
+  first 8 bytes and the records; then a record per edited setting: slot, value, parameter ID (u16). A build whose
+  settings list differs drops IDs it doesn't have instead of putting a value on another setting; values are kept
+  inside the firmware's range. One file for the unit, like stock's retained FX parameters (manual p. 33), not one per
+  project.
+- **Read** once, at the first event TOP's filter sees after the boot (the main screen; the file system is up), or
+  at the first VALUE + EXT SOURCE or HOLD + VALUE if those come first; then, switched on, each slot's edits for the
+  effect it has go to the chip. A missing, short, long or bad file (magic, version, size, sum) changes nothing.
+- **Written** whole (open `0x601`, create and truncate; one write; close, as kits-save writes) on leaving an extra
+  screen after an edit, and on each HOLD + VALUE. Edits made on a screen still open at power-off are lost. A failed
+  open or short write is counted and the edits stay pending for the next leave. A factory reset leaves the file.
+- Guards: the file calls (`0x800dec48..0x800dec74` open and read, `0x800debd8..0x800dec48` close,
+  `0x800dd9b8..0x800dd9f8` write; the same bytes kits-save guards).
+
+Checked in the emulator: 95 checks pass (test 10's 81, and: HOLD + VALUE sends each slot's edited settings' defaults
+slot by slot, takes VALUE's press and release, HOLD as on the parent; off, an FxType sends the parent's frames only,
+VALUE + EXT SOURCE and the FX screen's VALUE are the parent's; on again, the edits sent again and re-sent after an
+FxType; no file: looked for once at the first event, an edit written on leaving with its one record; after a restart
+the first event reads it into RAM and sends it, an FxType re-sends it; off is kept over a restart and nothing is sent;
+bad files ignored; unknown IDs and slots dropped, values clamped; a failed write retried at the next leave).
 
 ## Test 10 (fx-deep-edit-test10): the chord where every key press arrives
 
