@@ -14,6 +14,8 @@ the edits and the switch are kept over a restart in B:/_fx_hidden.bin. Test12: t
 release once no FX screen is up (on the unit the FX screen went away when it was written there), and HOLD + VALUE
 holds an FX screen that is up. Test13: the FX screen's update (its vtable +0x28) goes through the module, which has
 the screen draw itself again once HOLD + VALUE's popup is gone; the edits go to the effect the chip has (its FxTypes).
+Test14: every page's constructor clears stock's pointer to the FX screen (0x8059259c) while TOP keeps it up, and VALUE
+then went nowhere; the module finds the FX screen by its vtable and puts the pointer back at TOP's next event.
 
 The settings of an effect are the parameters that are not in its six-ID knob record (0x802e5b40) and that
 DM-404's fxmap.json (MIT, bases from a boot capture) gives no boot value. IDs come from the firmware's name
@@ -56,7 +58,7 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'fx-deep-edit-test13'
+REVISION = 'fx-deep-edit-test14'
 SLOT = 0x4000                       # reserved: [base, base + SLOT)
 # Settings left out on purpose: (effect, fxmap name) -> why. test6 and test8: users' reports on v9.47 and v9.48.
 SUPER_FILTER_OUT = ('FLT SLOPE', 'FLT GAIN', 'MOD SW', 'MOD WAVE', 'ATTACK', 'LEVEL')
@@ -190,6 +192,8 @@ GUARDS = [
      'test13: a popup drawn: its ms into [0x805922b4]'),
     (0x80004F70, 0x80004FAE, 'acd6d5acdf0b4623f02909decb5047d875c0d041332b91135c7e475d412c75e1',
      'test13: clock step: 0x8059226c += 32 every 64-frame block'),
+    (0x800CE274, 0x800CE284, '205ec45d52b318c62694d552d27c9b8cd65b10defb8fb6770eb81caf1d1fa97d',
+     'test14: the page base constructor (0x800ce1d0, every page\'s): 0x8059259c and 0x805925a0 = 0'),
 ]
 MD = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB | capstone.CS_MODE_MCLASS)
 
@@ -591,6 +595,10 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
                'is up ([0x805922b4] < 1), its next update finds 0x8059232c (screen 2 as last drawn) at -1 and draws '
                'the whole screen again. The DT1s go to the effect the chip has on each slot: what its last FxType '
                '(through fde_dt1) selected',
+        fx_screen='test14: the FX screen is the view on TOP\'s list (TOP + 0x38, 0x800a01c0) whose vtable is 0x802269c0; '
+                  'at each event TOP\'s filter sees, stock\'s pointer 0x8059259c is put back on it if it isn\'t '
+                  '(every page constructor clears it while TOP keeps the FX screen up, and the generic key handler '
+                  'routes VALUE through it)',
         saved='test11: B:/_fx_hidden.bin (beside stock\'s B:/_emphasis.bin): "FXHS", version 1, the switch, the '
               'record count (u16), FNV-1a 32 of the header\'s first 8 bytes and the records; a record per edited '
               'setting: slot, value, parameter ID (u16). Read once, at TOP\'s first event after the boot (or the '

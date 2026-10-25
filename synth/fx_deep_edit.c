@@ -84,7 +84,8 @@ typedef unsigned char u8;
 #define VIEW_REMAIN 0x1B3F                               /* the FX screen: REMAIN held when it showed */
 #define REMAIN_MODE ((volatile u8 *)0x80592320u)          /* set with it by the show method (0x80146f7a) */
 #define VIEW_SCREEN2 0x1B40                              /* the FX screen: screen 2 (CTRL 4-6) */
-#define FX_SHOWN ((u8 *const volatile *)0x8059259Cu)       /* the FX screen, from when it opens (kept after it goes) */
+#define FX_SHOWN ((u8 *volatile *)0x8059259Cu)             /* stock's pointer to the FX screen, set when it opens */
+#define FX_VIEW_VTABLE 0x802269C0u                        /* the FX screen's vtable (its constructor 0x80147ba0) */
 #define TOP_OBJECT ((u8 *const volatile *)0x80CFD350u)      /* TOP's page object (its registry handler's) */
 #define VIEW_AT ((u8 *(*)(u8 *, s32))0x800A01C1u)          /* (TOP + 0x38, i): TOP's i-th view, 0 past the last */
 #define VIEWS 0x200                                      /* as far as the generic key handler looks */
@@ -148,6 +149,7 @@ struct fde_state {
     u32 loads, bad_files, saves, save_errors;
     u32 redraw_at;       /* ... at this audio clock or later */
     u32 redraws;
+    u32 repairs;         /* test14: stock's FX screen pointer put back */
 };
 
 EXPORT volatile struct fde_state fde;
@@ -386,19 +388,22 @@ static void leave(void) {
     POPUP(fde_text, GONE_MS);
 }
 
-/* The FX screen while it is on TOP's view stack (found as the generic key handler finds it for VALUE), else 0. */
+/* The FX screen while it is on TOP's view stack, found by its vtable, else 0. Test14: not by stock's pointer to it
+ * (0x8059259c), which every page's constructor clears (0x800ce27c) while TOP keeps its FX screen up; the generic key
+ * handler then sent VALUE to no FX screen, so the hidden settings (and stock's screen 2) didn't come until the FX
+ * button opened a new one. */
 static u8 *fx_screen(void) {
-    u8 *v = *FX_SHOWN, *top = *TOP_OBJECT;
-    if (!v || !top)
+    u8 *top = *TOP_OBJECT, *found = 0;
+    if (!top)
         return 0;
     for (s32 i = 0; i < VIEWS; i++) {
         u8 *w = VIEW_AT(top + 0x38, i);
         if (!w)
-            return 0;
-        if (w == v)
-            return v;
+            break;
+        if (*(const u32 *)w == FX_VIEW_VTABLE)
+            found = w;
     }
-    return 0;
+    return found;
 }
 
 /* VALUE pressed on the FX screen: stock's toggle of screens 1 and 2 (0x801479a0, called with the screen from
@@ -659,6 +664,11 @@ EXPORT void fde_fx_update(u8 *view) {
 EXPORT s32 fde_filter(void *page, const s16 *ev) {
     s32 type = ev[0], what = ev[1];
     ready();                                           /* test11: the saved edits, at the main screen's first event */
+    u8 *v = fx_screen();
+    if (v && *FX_SHOWN != v) {
+        *FX_SHOWN = v;                                 /* test14: stock's pointer back on the FX screen that is up */
+        fde.repairs++;
+    }
     if (fde.screen) {
         if (type == EV_KNOB && (u32)(what - 1) < PER_SCREEN) {
             knob((u32)(what - 1), ev[2]);

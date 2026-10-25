@@ -10,6 +10,25 @@ firmware's own state is never changed. Values live in RAM, per bus and effect, a
 module's own. Outside the page the build behaves as v9.46, except that an edited value goes to
 the chip again whenever the firmware selects that effect on that bus.
 
+## Test 14 (fx-deep-edit-test14): the hidden settings whatever page came in between
+
+On the unit (combined-test16, and v9.51, test 10's FX deep edit): sometimes, at random and long after a restart, DELAY
+and REMAIN + DELAY gave the FX screen but VALUE never reached the hidden settings until the effect was switched off and
+on. Run in Unicorn: the generic key handler sends VALUE to the FX screen only through stock's pointer to it
+(`[0x8059259c]`, among TOP's views), and the page base constructor (`0x800ce1d0`, every page's registry handler calls
+it) clears that pointer (`0x800ce27c`) while TOP keeps its FX screen up. Build any page's object (START/END's, in the
+check) and VALUE on TOP reaches no FX screen: not the hidden settings, not even stock's screen 2. An FX button press
+opens a new FX screen and sets the pointer again (`0x800bd800`), which is why off and on helped.
+
+- The module finds the FX screen by its vtable (`0x802269c0`) among TOP's views (`0x800a01c0(TOP + 0x38, i)`), and at
+  every event TOP's filter sees puts stock's pointer back on it if it isn't there, before the event goes on (so the
+  same VALUE press gets there). With no FX screen up the pointer is left alone.
+- Guard: the constructor's clear `0x800ce274..0x800ce284`.
+
+Checked in the emulator: 102 checks pass (test 13's 100, and: with START/END's page object built and TOP's FX screen
+up, the parent's VALUE reaches no FX screen while here the pointer comes back and VALUE steps to screen 2, then the
+hidden settings; with no FX screen up the pointer is left as it is).
+
 ## Test 13 (fx-deep-edit-test13): the FX screen drawn again after the switch; edits to the chip's effect
 
 On the unit (combined-test15): "after switching it again on different fx (one with no hidden fx) when i went to try
