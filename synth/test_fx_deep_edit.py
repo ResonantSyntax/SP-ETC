@@ -292,13 +292,14 @@ class Machine:
         self.uc.mem_write(SYSPRM + 0xC4 + 2 * bus, struct.pack('<h', fx))
 
     def state(self):
-        b = bytes(self.uc.mem_read(self.sym['fde'], 44))
+        b = bytes(self.uc.mem_read(self.sym['fde'], 48))
         return dict(screen=b[0], input=b[1], ext_held=b[2], value_down=b[3], bus=b[4], effect=b[5], off=b[6],
                     value_taken=b[7], sent=struct.unpack_from('<I', b, 8)[0],
                     resent=struct.unpack_from('<I', b, 12)[0], loaded=b[16], dirty=b[17], redraw=b[18],
                     loads=struct.unpack_from('<I', b, 20)[0], bad_files=struct.unpack_from('<I', b, 24)[0],
                     saves=struct.unpack_from('<I', b, 28)[0], save_errors=struct.unpack_from('<I', b, 32)[0],
-                    redraw_at=struct.unpack_from('<I', b, 36)[0], redraws=struct.unpack_from('<I', b, 40)[0])
+                    redraw_at=struct.unpack_from('<I', b, 36)[0], redraws=struct.unpack_from('<I', b, 40)[0],
+                    repairs=struct.unpack_from('<I', b, 44)[0])
 
 
 class Settings:
@@ -1279,7 +1280,7 @@ def screen_stay_checks(img, parent, man, st):
     hold_value(m)
     during = [f for f in m.fs if f[1] == SAVED and f[0] == 'write']
     pending = m.state()['dirty']
-    m.w32(FX_SHOWN, 0)                                  # the FX screen gone, as stock leaves it
+    m.call(0x800C4E50, m.r32(TOP_PAGE) + 0x38, 4, 1, count=20_000_000)   # the FX screen closed, as stock closes it
     run_script(m, [(EV_KEY, KEY_SHIFT)])
     on_press = [f for f in m.fs if f[1] == SAVED and f[0] == 'write']
     run_script(m, [(EV_KEY_UP, KEY_SHIFT)])
@@ -1357,6 +1358,40 @@ def chip_redraw_checks(img, parent, man, st):
           f'asks to draw it (+0x1b15 = 1), once ({seq})')
 
 
+def pointer_checks(img, parent, man, st):
+    """Test14: another page's object built with the FX screen up on TOP (its constructor clears 0x8059259c): VALUE
+    on TOP still steps to the hidden settings."""
+    rt = Runtime(parent)
+    res = []
+    for image, man_ in ((parent, None), (img, man)):
+        mm, ss = fx_machine(image, man_)
+        ss.open()
+        mm.bus_effect(1, TAPE_ECHO)
+        v = ss.view()
+        reg = mm.r32(mm.r32(0x801F8F74 + 16 * 5))
+        mm.uc.mem_write(EVENT, struct.pack('<6h', 1, 0, 0, 0, 0, 0))
+        mm.call(reg & ~1, EVENT, count=20_000_000)      # START/END's page object, as on its entry; TOP stays
+        cleared = mm.r32(FX_SHOWN)
+        seq = []
+        for _ in range(2):
+            mm.clear()
+            ss.value()
+            seq.append((ss.flag(VIEW_SCREEN2), mm.popups))
+        res.append((cleared, ss.view() == v, mm.r32(FX_SHOWN) == v, seq))
+    p, i = res
+    want = [(1, []), (1, [(screen_text(rt, st, 1, TAPE_ECHO, 1), SCREEN_MS)])]
+    check(p[0] == 0 and p[1] and not p[2] and p[3] == [(0, []), (0, [])] and i[0] == 0 and i[1] and i[2] and
+          i[3] == want,
+          f'test14: a page\'s constructor clears 0x8059259c with TOP\'s FX screen still up; on the parent VALUE then '
+          f'reaches no FX screen (not even screen 2); here TOP\'s filter puts the pointer back and VALUE steps to screen '
+          f'2, then the hidden settings ({i[3]})')
+    m, sc = fx_machine(img, man)
+    m.clear()
+    run_script(m, [(EV_KEY, KEY_SHIFT), (EV_KEY_UP, KEY_SHIFT)])
+    check(m.r32(FX_SHOWN) == 0 and m.state()['repairs'] == 0,
+          'with no FX screen up, TOP\'s filter leaves stock\'s pointer alone')
+
+
 def main():
     out = Path(sys.argv[1])
     man = json.loads((out / 'manifest.json').read_text(encoding='utf-8'))
@@ -1380,6 +1415,7 @@ def main():
     saved_checks(img, man, st)
     screen_stay_checks(img, parent, man, st)
     chip_redraw_checks(img, parent, man, st)
+    pointer_checks(img, parent, man, st)
     print(json.dumps(dict(cases=cases[0])))
     print('ALL PASS' if not fails else f'{len(fails)} FAILED')
     sys.exit(1 if fails else 0)
