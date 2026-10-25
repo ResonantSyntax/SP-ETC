@@ -24,7 +24,9 @@
  *                       down, or EXIT + ROLL; ROLL let go, tapped or unlatched and other pads leave it alone.
  *                       Its pad blinks (in the pad's bank, outside DOOM OS) and HOLD is lit. HOLD with
  *                       nothing rolling, and SHIFT + HOLD, are stock's
- *   chromatic mode      (test4) the pads play notes of one sample, so a chromatic roll takes only its division
+ *   EXIT + pad          (test6) that pad's rolls stop, held ones too (stock's EXIT + pad stops its sound): the
+ *                       rolls that pad started, or of the pad it plays in this bank; the others go on
+ *   chromatic mode     (test4) the pads play notes of one sample, so a chromatic roll takes only its division
  *                       from the pad under the finger: each pad has its own chromatic division (1/16 until
  *                       VALUE moves it, kept with the pad: PADCONF byte 0x70, bits 4-7) and repeats at the
  *                       tempo the sample's pad follows, always by re-hitting. The pad's Roll, LOOP, GATE and
@@ -40,7 +42,11 @@
  * at once. A LOOP pad without GATE toggles off when hit again, so it keeps the
  * stock ring roll: the module asks for it (0x800163a8, what 0x91 does) once the pad sounds and stops it as
  * stock does. SHIFT + ROLL (the division popup), EXIT + ROLL (all rolls off) and patterns' own rolls stay
- * stock. While DJ Mixer Mode is on everything is stock.
+ * stock. While DJ Mixer Mode is on everything is stock. On the screens where ROLL is the screen's own (test6:
+ * START/END, page 5, where ROLL held previews the sample's end; PITCH/SPEED, page 4, where ROLL opens and closes
+ * Groove) the module steps aside (rolls stop, ROLL shows stock's light) and keeps a latch for afterwards; a ROLL
+ * press from before the screen opened stays the module's until it is let go. (Test5 had page 0x16 for START/END:
+ * it is a recording screen, and the START/END screen never matched.)
  *
  * Bridges (build_note_repeat.py writes a 10-byte movw/movt/bx ip at each entry):
  *   0x8003b530 UI dispatcher   -> nr_event: pads and SUB PAD down/up (whatever the page), ROLL down/up,
@@ -112,6 +118,8 @@ typedef unsigned char u8;
 #define P_CHROMATIC 0xBF            /* project: chromatic mode (the stock pad note then sends notes, type 0xC) */
 #define P_SOURCE 0xC1               /* project: the pad whose sample chromatic mode plays */
 #define SG_PAGE 0x1E                /* the Sound Generator's page: its pads are its own */
+#define START_END_PAGE 0x05         /* the START/END screen (what START/END asks for): ROLL held previews the end */
+#define PITCH_PAGE 0x04             /* PITCH/SPEED (what PITCH/SPEED asks for): ROLL opens and closes Groove */
 #define CHROMA_SHIFT 4              /* byte 0x70 bits 4-7: a pad's chromatic division, along VALUE's order */
 #define CHROMA_FIRST 9              /* ... counted from nr_div_order[9], 1/16 (0, the default) */
 #define P_CUR_BANK 0
@@ -176,7 +184,7 @@ struct nr_state {
     u8 hold_led;     /* HOLD lit for held rolls */
 };
 
-EXPORT volatile u8 nr_enabled;     /* not DJ mode; read from other tasks by the gates */
+EXPORT volatile u8 nr_enabled;     /* not DJ mode, not ROLL's own screens; read from other tasks by the gates */
 EXPORT volatile struct nr_state nr;
 EXPORT struct nr_repeat nr_rep[REPEATS];
 EXPORT u8 nr_phys_down[PHYS];     /* pads 1-16 and SUB PAD, down as the UI dispatcher saw them */
@@ -214,8 +222,15 @@ static u32 clock_frames(void) {
     return nr.now = c * 2 + d * 64 / BLOCK_CYCLES;
 }
 
+/* The screens where ROLL is the screen's own: START/END's preview, PITCH/SPEED's Groove screen. */
+static u32 roll_page(void) {
+    return *PAGE == START_END_PAGE || *PAGE == PITCH_PAGE;
+}
+
+/* Off in DJ mode, and on ROLL's own screens (but for a ROLL press the module took before the screen opened, until
+ * it is let go). */
 static void update_enabled(void) {
-    nr_enabled = PROJECT_GET(PROJECT, DJ_MODE, -1) == 0;
+    nr_enabled = PROJECT_GET(PROJECT, DJ_MODE, -1) == 0 && (!roll_page() || nr.held);
 }
 
 static u32 follows(u32 pad) {
@@ -573,6 +588,14 @@ static void stop_released(void) {
             stop(&nr_rep[i]);
 }
 
+/* EXIT + pad (stock stops the pad's sound): the rolls pad i (0..15) started, or of the pad it plays in this bank. */
+static void exit_pad(u32 i) {
+    u32 pad = (u32)PAD_GET(SMPL, P_CUR_BANK, 0) * 16 + i;
+    for (u32 k = 0; k < REPEATS; k++)
+        if (nr_rep[k].kind && (nr_rep[k].phys == i || nr_rep[k].pad == pad))
+            stop(&nr_rep[k]);
+}
+
 /* Every UI event, before the stock dispatcher (0x8003b530); 1: the module took it. */
 EXPORT s32 nr_event_c(const s16 *ev) {
     s32 type = ev[0], what = ev[1];
@@ -583,6 +606,8 @@ EXPORT s32 nr_event_c(const s16 *ev) {
         if (nr.held)
             nr.tap = 0;                            /* a pad touched while ROLL is down: no tap */
         if (type == EV_PAD) {
+            if (i < 16 && key_down(KEY_EXIT))
+                exit_pad(i);                       /* and on to stock's EXIT + pad */
             nr_phys_down[i] = 1;
             nr_phys_pad[i] = NONE;                 /* the stock pad note says which pad it plays */
             nr.cur_phys = (u8)i;
@@ -705,7 +730,9 @@ EXPORT void nr_tick_c(s32 ms) {
     }
     update_enabled();
     if (!nr_enabled) {
-        nr.held = nr.latched = nr.tap = 0;
+        nr.held = nr.tap = 0;
+        if (!roll_page())
+            nr.latched = 0;                        /* DJ mode ends the latch; ROLL's screens keep it for afterwards */
         stop_all();
     }
     for (u32 i = 0; i < REPEATS; i++) {
@@ -743,11 +770,14 @@ EXPORT void nr_tick_c(s32 ms) {
             }
         }
     }
-    if (nr.latched) {
+    if (nr.latched && nr_enabled) {
         LED(KEY_ROLL, 1, 0xFF);                    /* cached: sent again only after something else wrote it */
         nr.led = 1;
     } else if (nr.led) {
-        LED(KEY_ROLL, 0, 0x1F);
+        if (nr.latched)
+            *REPAINT |= 0x10;                      /* latched on ROLL's screens: stock's key lights there */
+        else
+            LED(KEY_ROLL, 0, 0x1F);
         nr.led = 0;
     }
     held_lights();
