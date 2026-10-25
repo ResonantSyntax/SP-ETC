@@ -404,3 +404,22 @@ tick hook ends at `0x8006b95c`). The rest as in combined-test15, then the fast b
 `test_fx_deep_edit.py` 97 of 100 (the same 2 layout checks and ROLL's key), `test_note_repeat.py` 109 of 113 (the 4
 layout checks) and the kit suites pass. fx-deep-edit-test13 on its own parent passes all 100. Not proven on the unit:
 that the redraw is what was missing.
+
+**On the unit:** saving across a restart works. At random, long after a restart (and on v9.51 too), VALUE on the FX
+screen didn't reach the hidden settings until the effect was switched off and on.
+
+## 18. combined-test17
+
+FX deep edit at `fx-deep-edit-test14`. Every page's base constructor (`0x800ce1d0`) clears stock's pointer to the FX
+screen (`0x8059259c`) while TOP keeps the FX screen up, and the generic key handler routes VALUE only through that
+pointer; the module now finds the FX screen by its vtable among TOP's views and puts the pointer back at TOP's next
+event. New guard: the constructor's clear (`0x800ce274..0x800ce284`), which no step patches. The rest as in
+combined-test16, then the fast boot and the kit footer.
+
+- **APP1:** `e7b75421...be79`, 3,157,104 bytes, in `analysis/kit_pr1_audit/release/combined-test17` (the combined
+  build `2550ada6...2eb1`, after the fast boot `5a0eef88...3fca`). Every module byte for byte its own test build's;
+  the same 7 reviewed overlaps. Only the FX deep edit module differs from combined-test16.
+
+**Checked** (Unicorn, `analysis/kit_pr1_audit/dev_combined17/run_suites.py`): on the final APP1,
+`test_fx_deep_edit.py` 99 of 102 (the same 2 layout checks and ROLL's key), `test_note_repeat.py` 109 of 113 (the 4
+layout checks) and the kit suites pass. fx-deep-edit-test14 on its own parent passes all 102.
