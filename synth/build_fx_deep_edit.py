@@ -10,7 +10,9 @@ Values live in RAM per bus and effect, and go to the chip again whenever the fir
 that bus (an FxType write). (Test 1's TOP page, EXIT + VALUE, is gone; test 3 drops test 2's FX button hold,
 which kept MFX's effect choice away: an FX button alone is stock again.) Test11: HOLD + VALUE switches the hidden
 settings off (each slot's edits back to the firmware's defaults, VALUE and VALUE + EXT SOURCE stock's) and on again;
-the edits and the switch are kept over a restart in B:/_fx_hidden.bin.
+the edits and the switch are kept over a restart in B:/_fx_hidden.bin. Test12: the file is written at a key's
+release once no FX screen is up (on the unit the FX screen went away when it was written there), and HOLD + VALUE
+holds an FX screen that is up.
 
 The settings of an effect are the parameters that are not in its six-ID knob record (0x802e5b40) and that
 DM-404's fxmap.json (MIT, bases from a boot capture) gives no boot value. IDs come from the firmware's name
@@ -53,7 +55,7 @@ from build_start_fix import refs_into
 HERE = Path(__file__).resolve().parent
 FLASH, COPY, DECOMPRESS = 0x60080000, 0x600800E4, 0x60080088
 APP0_SHA = '3e35ff30137f741a715566e205384f9b434ca7ac3847e247bad3f0c9c8a2bd23'
-REVISION = 'fx-deep-edit-test11'
+REVISION = 'fx-deep-edit-test12'
 SLOT = 0x4000                       # reserved: [base, base + SLOT)
 # Settings left out on purpose: (effect, fxmap name) -> why. test6 and test8: users' reports on v9.47 and v9.48.
 SUPER_FILTER_OUT = ('FLT SLOPE', 'FLT GAIN', 'MOD SW', 'MOD WAVE', 'ATTACK', 'LEVEL')
@@ -170,6 +172,12 @@ GUARDS = [
      'test11: file close (fd)'),
     (0x800DD9B8, 0x800DD9F8, 'd204acf3596d8eab1eca7a6d4e1cf2aec6429890e0b05a88ed1357982cda0fb6',
      'test11: file write (fd, buf, n): bytes written'),
+    # test12: the FX screen as the generic key handler finds it for VALUE
+    (0x800A01C0, 0x800A01D8, '3bc4ce29b1296cab9716835efe4a5882e6bd89469d756e884a858981940aaee2',
+     'test12: a page\'s i-th view (list = page + 0x38: count at +0xc, views at +0x39c), 0 past the last'),
+    (0x800CAB96, 0x800CABD4, '7fc9c627cb29612f8c95292a3882483ba00d61b01b544e38cfbbbf4aeb85f5e0',
+     'test12: the generic key handler\'s VALUE: [0x8059259c] (the FX screen) if it is among the page\'s first '
+     '0x200 views, then 0x800cba44'),
 ]
 MD = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB | capstone.CS_MODE_MCLASS)
 
@@ -552,14 +560,17 @@ def build(inp: Path, out: Path, zig: Path, fxmap_path: Path, base: int, build_di
         switch='test11: HOLD + VALUE (press; the VALUE press and release taken), on any page: HIDDEN FX OFF, each '
                'slot\'s edited settings of the effect it has get the firmware\'s default (one DT1 each), the FX '
                'screen\'s VALUE is stock\'s toggle (+0x1b40 ^= 1 with +0x1b3f set), VALUE + EXT SOURCE is stock\'s, '
-               'an FxType re-sends nothing; again: HIDDEN FX ON and the edits sent again. The edits are kept',
+               'an FxType re-sends nothing; again: HIDDEN FX ON and the edits sent again. The edits are kept. '
+               'test12: an FX screen up (0x8059259c, on TOP\'s view list) is held (+0x1b3f, 0x80592320) so it stays',
         saved='test11: B:/_fx_hidden.bin (beside stock\'s B:/_emphasis.bin): "FXHS", version 1, the switch, the '
               'record count (u16), FNV-1a 32 of the header\'s first 8 bytes and the records; a record per edited '
               'setting: slot, value, parameter ID (u16). Read once, at TOP\'s first event after the boot (or the '
               'first VALUE + EXT SOURCE or HOLD + VALUE): records for IDs this build lacks are dropped, values '
               'kept inside the firmware\'s range, then (switched on) each slot\'s edits for its effect sent. '
-              'Written whole (open 0x601) on leaving an extra screen after an edit and on each HOLD + VALUE; a '
-              'missing, short or bad file changes nothing, a failed write leaves the edits pending',
+              'Written whole (open 0x601) after an edit or a HOLD + VALUE, at the next key release with no FX '
+              'screen and no extra screen up (test12; test11 wrote on leaving and on the switch, and on the unit '
+              'the FX screen went to the main screen then); never on a pad; a missing, short or bad file changes '
+              'nothing, a failed write leaves the edits pending',
         settings_total=sum(len(s) for s in settings), effects=effects,
         excluded=[dict(effect=fx, name=n, why=w) for (fx, n), w in EXCLUDED.items()],
         dt1='F0 41 10 00 00 00 00 08 12 a1 a2 a3 a4 hi lo sum F7 via the stock builder 0x800d8118 (link '

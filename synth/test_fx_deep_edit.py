@@ -1243,6 +1243,47 @@ def saved_checks(img, man, st):
           f'a write that can\'t open is counted and the edits stay pending; the next leave writes them ({first_try})')
 
 
+FX_SHOWN = 0x8059259C                                   # the FX screen, from when it opens (stock clears it later)
+
+
+def screen_stay_checks(img, parent, man, st):
+    """Test12: HOLD + VALUE with the FX screen up holds it; the file waits until no FX screen is up."""
+    e = man['entries']
+    res = []
+    for image, man_ in ((parent, None), (img, man)):
+        mm, ss = fx_machine(image, man_)
+        ss.open(remain=False)                           # the FX button alone: the screen that goes after 2 s
+        mm.bus_effect(1, TAPE_ECHO)
+        hold_value(mm)
+        mm.bus_effect(1, TAPE_ECHO)
+        res.append((ss.flag(VIEW_REMAIN), mm.uc.mem_read(REMAIN_GLOBAL, 1)[0], bool(ss.run(2500))))
+    check(res[0] == (0, 0, True) and res[1] == (1, 1, False),
+          f'test12: with the FX screen up (opened by its button alone), HOLD + VALUE holds it (+0x1b3f, 0x80592320) and '
+          f'it stays past 2 s; on the parent it goes ({res})')
+    # the file: nothing written while the FX screen is up; at the first key release after it is gone
+    m = FileMachine(img, e)
+    m.set_bus(1, TAPE_ECHO)
+    sc = Screen(m)
+    sc.open()
+    m.bus_effect(1, TAPE_ECHO)
+    for _ in range(2):
+        sc.value()                                      # screen 2, then the first extra screen
+    m.dispatch(EV_KNOB, 1, 127)
+    sc.value()
+    sc.value()                                          # on past the last extra screens: screen 1 again
+    hold_value(m)
+    during = [f for f in m.fs if f[1] == SAVED and f[0] == 'write']
+    pending = m.state()['dirty']
+    m.w32(FX_SHOWN, 0)                                  # the FX screen gone, as stock leaves it
+    run_script(m, [(EV_KEY, KEY_SHIFT)])
+    on_press = [f for f in m.fs if f[1] == SAVED and f[0] == 'write']
+    run_script(m, [(EV_KEY_UP, KEY_SHIFT)])
+    got = read_saved(m.files.get(SAVED))
+    te = st.by_fx[TAPE_ECHO][0]
+    check(not during and pending == 1 and not on_press and got == (1, [(1, te['max'], te['id'])]),
+          f'an edit on the FX screen and HOLD + VALUE there: nothing written while the FX screen is up (it is still '
+          f'pending), nor on the next key press; the next key release after the screen is gone writes both ({got})')
+
 
 def main():
     out = Path(sys.argv[1])
@@ -1265,6 +1306,7 @@ def main():
     input_checks(img, parent, man, st)
     toggle_checks(img, parent, man, st)
     saved_checks(img, man, st)
+    screen_stay_checks(img, parent, man, st)
     print(json.dumps(dict(cases=cases[0])))
     print('ALL PASS' if not fails else f'{len(fails)} FAILED')
     sys.exit(1 if fails else 0)

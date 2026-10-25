@@ -84,6 +84,10 @@ typedef unsigned char u8;
 #define VIEW_REMAIN 0x1B3F                               /* the FX screen: REMAIN held when it showed */
 #define REMAIN_MODE ((volatile u8 *)0x80592320u)          /* set with it by the show method (0x80146f7a) */
 #define VIEW_SCREEN2 0x1B40                              /* the FX screen: screen 2 (CTRL 4-6) */
+#define FX_SHOWN ((u8 *const volatile *)0x8059259Cu)       /* the FX screen, from when it opens (kept after it goes) */
+#define TOP_OBJECT ((u8 *const volatile *)0x80CFD350u)      /* TOP's page object (its registry handler's) */
+#define VIEW_AT ((u8 *(*)(u8 *, s32))0x800A01C1u)          /* (TOP + 0x38, i): TOP's i-th view, 0 past the last */
+#define VIEWS 0x200                                      /* as far as the generic key handler looks */
 
 #define EV_KEY 5
 #define EV_KEY_UP 6
@@ -103,7 +107,8 @@ typedef unsigned char u8;
  * there (B:/_emphasis.bin, B:/_BackSamplingRec.bin): a record per edited setting (slot, value, parameter ID), so a
  * build whose settings differ drops what it doesn't know rather than putting a value on another setting. Read the
  * first time TOP's filter sees an event (the main screen after the boot) or the user opens or switches anything;
- * written on leaving an extra screen after an edit, and on each HOLD + VALUE. */
+ * written after an edit or a switch at the next key release with no FX screen and no extra screen up (test12: on the
+ * unit, writing it with the FX screen up sent the display back to the main screen). */
 #define FILE_OPEN ((s32 (*)(const char *, s32))0x800DEC61u)    /* 0 read, 0x601 write (create, truncate); < 0 fails */
 #define FILE_READ ((s32 (*)(s32, void *, s32))0x800DEC49u)
 #define FILE_WRITE ((s32 (*)(s32, const void *, s32))0x800DD9B9u)
@@ -363,8 +368,21 @@ static void leave(void) {
     fde.screen = 0;
     fde.input = 0;
     POPUP(fde_text, GONE_MS);
-    if (fde.dirty)
-        save();
+}
+
+/* The FX screen while it is on TOP's view stack (found as the generic key handler finds it for VALUE), else 0. */
+static u8 *fx_screen(void) {
+    u8 *v = *FX_SHOWN, *top = *TOP_OBJECT;
+    if (!v || !top)
+        return 0;
+    for (s32 i = 0; i < VIEWS; i++) {
+        u8 *w = VIEW_AT(top + 0x38, i);
+        if (!w)
+            return 0;
+        if (w == v)
+            return v;
+    }
+    return 0;
 }
 
 /* VALUE pressed on the FX screen: stock's toggle of screens 1 and 2 (0x801479a0, called with the screen from
@@ -457,12 +475,19 @@ static u32 value_held(void) {
 }
 
 /* HOLD + VALUE (test11): the hidden settings off, or on again. Each slot's edited settings of the effect it has get
- * the firmware's default (off) or the edit (on) again, one DT1 each. */
+ * the firmware's default (off) or the edit (on) again, one DT1 each. An FX screen up stays, held as a VALUE press
+ * there holds it. The switch goes to the file with the edits, later (fde_key_up). */
 static void toggle(void) {
     ready();
     if (fde.screen)
         leave();
+    u8 *v = fx_screen();
+    if (v) {
+        v[VIEW_REMAIN] = 1;
+        *REMAIN_MODE = 1;
+    }
     fde.off ^= 1;
+    fde.dirty = 1;
     for (u32 bus = 0; bus < SLOTS; bus++) {
         s32 fx = SYS_GET(SYSPRM, BUS_EFFECT, (s32)bus);
         if ((u32)fx >= EFFECTS)
@@ -475,7 +500,6 @@ static void toggle(void) {
         }
     }
     POPUP(fde.off ? "HIDDEN FX OFF" : "HIDDEN FX ON", TOGGLE_MS);
-    save();
 }
 
 /* Every key press, on any page, before the dispatcher's own handling (test10): 1 takes it. HOLD + VALUE switches
@@ -512,9 +536,12 @@ EXPORT u32 fde_key_down(const s16 *ev) {
 }
 
 /* Every key release (test10): VALUE's hold ends; the release of an EXT SOURCE press the chord took is taken too (the
- * press never set its bit, so the bitmap stays right). */
+ * press never set its bit, so the bitmap stays right). Test11: edits or a switch not in the file yet are written here,
+ * once no FX screen and no extra screen is up (never while one is, never on a pad). */
 EXPORT u32 fde_key_up(const s16 *ev) {
     s32 key = ev[1];
+    if (fde.dirty && !fde.screen && !fx_screen())
+        save();
     if (key == KEY_VALUE && fde.value_taken) {
         fde.value_taken = 0;
         return 1;
