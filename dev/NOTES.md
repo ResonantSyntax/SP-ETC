@@ -88,3 +88,82 @@ Open questions:
 **Progressions (later, uncertain).** Recording and playing progressions with
 DOOM OS: DOOM OS is a closed binary. First experiment: record chord-pad presses
 in a DOOM pattern and check whether playback goes through the same note hook.
+
+## Feasibility (2026-10-27)
+
+Rule of thumb: a feature is cheap where earlier modules already mapped the firmware it touches, and
+expensive where nobody has looked yet (new reverse engineering).
+
+### Mapped building blocks
+
+| Block | Where | Gives |
+|---|---|---|
+| Tempo-synced clock, every 64 frames (~1.3 ms) | arp, note repeat | LFO timing, sequencer steps, swing |
+| Reading the tempo (project / bank / MIDI clock) | arp | sync |
+| Retriggering sample pads in time | note repeat | sequencing samples |
+| Starting Sound Generator notes | arp, scales, MIDI IN | synth parts |
+| Catching any key, pad, knob before stock | FX deep edit, note repeat | new gestures, knob takeover |
+| Pad LEDs (on/off, colour) | bounce (`F_LED` 0x800D4911) | a 16-step grid on the pads |
+| Popups, custom page drawing | most modules, pad envelopes | text, lines, fills on the screen |
+| Sending any FX parameter to the effects chip (DT1, within firmware min/max) | FX deep edit | modulating bus/input FX |
+| Per-pad pitch and filter | pad envelopes | modulating pad sound |
+| Saving with the project | kits save | persistence |
+
+### Assignable LFO
+Possible for a curated list of targets, not "any parameter" (each target family needs its own path).
+- FX parameters: moderate. Unknown: how fast DT1 can be resent before stepping/zipper. Measure first.
+  Safety: clamp ranges; some FX settings were already removed for dangerous loudness.
+- Sound Generator pitch/filter/level: moderate (fork's own code).
+- Sample pad pitch/filter: moderate (extend pad envelopes).
+- Mixer and other stock parameters: unknown, new reverse engineering each.
+- UI idea: hold a key + turn the knob to assign (Elektron style); pages for shape/rate/depth/target.
+
+### OP-1 Finger sequencer
+Best fit. Note repeat is close to a one-pattern version. Mapping: pads pick patterns; hold to play, HOLD
+latches; join/replace/fill as a setting; swing and length as settings; edit mode = 16 pads are 16 steps,
+LEDs show the hits. Hard parts: size (like bounce/pad env), gesture choice that doesn't clash with stock or
+DOOM OS, storing patterns with the project, behaviour next to DOOM OS patterns (device-only).
+Suggested first step: a trial with one pattern and pad-LED editing, to settle the gestures on the device.
+
+### Out of reach
+New DSP/effects on the effects chip (separate processor, no code); more than 4 SG voices (CPU headroom
+never measured); changing DOOM OS itself (closed binary).
+
+### Suggested order
+1. Chord pads (small; exercises the whole build → emulator → device loop).
+2. LFO on SG and FX targets (measure DT1 rate first).
+3. Finger sequencer.
+
+## UI: what the hardware gives
+
+- Screen: 128 x 64, 1-bit (on/off pixels). Known stock primitives (pad_env.c): text in stock fonts,
+  lines, filled rectangles, frame blit (BOOT_ANIM.md), popups. Pad envelopes already draws its own
+  8-page screen with these; DOOM OS draws a piano roll, mixer and automation lanes. So: small graphs,
+  lanes, grids, a playhead work. No colour, no greyscale, little room for text (about 3-4 rows).
+- Inputs: 16 pads (velocity), VALUE encoder (turn + press), CTRL 1-3 knobs, ~20 buttons with
+  combinations (SHIFT/HOLD/EXIT/VALUE + X). Taking a button or knob event before stock is solved.
+- Lights: pad LEDs with colour, some button LEDs. The pads make a natural 4x4 step/clip grid.
+- Constraints: every gesture must avoid stock and DOOM OS gestures; redraws cost CPU on the same
+  processor as audio; no touch, no scrolling list widgets beyond what's drawn by hand.
+
+## Why "only" the mapped blocks?
+
+Not a hard limit: the mapped blocks are just what's cheap today. New areas can be reverse engineered
+the same way this fork mapped hundreds of addresses (capstone disassembly, Ghidra, running real code in
+Unicorn). The cost: slow work, findings that need emulator proof, and behaviour that only the device
+shows (timing, CPU, the effects chip). No on-device debugger: each unknown can take several flash-test
+rounds. DOOM OS had the same path and the time to walk it.
+
+## Idea: song mode / arranger
+
+Linear tracks of clips, clips placed off-grid, automation spanning clips for transitions.
+- Data and timing: fine (the clock is fine-grained enough for off-grid placement).
+- Automation: same targets/limits as the LFO (FX via DT1 is the known route).
+- Core unknown: starting/stopping patterns from our code at exact times. DOOM OS patterns live in a
+  closed binary: arranging them means reverse engineering DOOM OS too, and a DOOM OS update would
+  break it. Alternative: our own clip engine driving pads/SG notes directly (bigger, but independent).
+- UI is the real bottleneck: a timeline with clips on 128 x 64 and pads is doable but painful to edit.
+- Lateral option: arrange in a browser (the patcher already runs there), write a song file to the SD
+  card, the SP plays it. Needs the SP's file reading (partly mapped: kits save, bounce write files).
+  Splits the big-screen editing from on-device playback (and maybe light on-device edits).
+- Size: the largest idea so far. Worth doing only after Finger or a smaller clock-driven feature.
