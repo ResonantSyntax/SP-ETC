@@ -11,3 +11,7 @@ __pycache__/
 .wave_toolchain/
 .zig-cache/
 venv/
+
+# Roland firmware: never commit it (keep your own copy in firmware/, outside git)
+*.bin
+firmware/
